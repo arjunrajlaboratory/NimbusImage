@@ -232,9 +232,9 @@ class TestAnnotationSchemaFastPath:
         # The corpus exercises both verdicts, not just one.
         assert 400 < accepted < 3600
 
-    def testRealPolygonsTakeTheFastPath(self):
+    def testRealPolygonsTakeTheFastPath(self, monkeypatch):
         """Without this the equivalence tests would pass trivially if the
-        fast path never ran."""
+        fast path never ran, and the speedup could be reverted unnoticed."""
         document = copy.deepcopy(VALID_ANNOTATION)
         document["coordinates"] = [
             {"x": 13799.0009765625, "y": 1913.0001220703125},
@@ -242,6 +242,13 @@ class TestAnnotationSchemaFastPath:
             {"x": 13790.5, "y": 1920.25, "z": 0},
         ]
         assert coordinatesMatchSchema(document["coordinates"])
+
+        def fullValidatorMustNotRun(annotation):
+            raise AssertionError("fell back to the full validator")
+
+        monkeypatch.setattr(
+            Annotation, "jsonValidate", staticmethod(fullValidatorMustNotRun)
+        )
         assert Annotation.validateSchema(document) is document
 
 
@@ -264,6 +271,10 @@ def parseCreatedResponse(resp):
     # isJson=False keeps the raw body: the test client would otherwise
     # consume the stream to parse it.
     body = getResponseBody(resp, text=False)
+    # Girder's encoder separates with ", " and ": "; orjson writes neither,
+    # so this fails if an endpoint goes back to Girder's encoder. (No test
+    # string value contains those separators.)
+    assert b", " not in body and b": " not in body
     # Girder sorted keys; the orjson response keeps them sorted.
     json.loads(body, object_pairs_hook=keysInOrder)
     return json.loads(body)

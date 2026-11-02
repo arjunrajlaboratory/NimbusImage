@@ -78,9 +78,12 @@ def createdDocumentsResponse(documents):
     array instead of through Girder's default encoder, which runs stdlib
     json with sort_keys and spent ~3.5 s of a 100K-annotation create.
 
-    The JSON parses to the same value Girder's encoder produced: keys stay
-    sorted, ObjectIds and other unknown types become their str(), and
-    naive datetimes get Girder's "+00:00" suffix. Only the spelling
+    For documents decoded from a JSON body or from Mongo, the JSON parses to
+    the same value Girder's encoder produced: keys stay sorted, ObjectIds
+    and other unknown types become their str(), and naive datetimes get
+    Girder's "+00:00" suffix. Python-computed values are not covered (a
+    numpy float would become a string; Enums, dataclasses and non-UTC
+    aware datetimes encode differently). Only the spelling
     differs: no whitespace, `1e-06` written `1e-6`, and non-ASCII text as
     UTF-8 rather than `\\u` escapes. One deliberate difference: Girder
     refuses a non-finite float (allow_nan=False), so a create whose body

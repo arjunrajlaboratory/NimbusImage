@@ -721,7 +721,10 @@ costs were pure Python overhead, not Mongo:
   cls=JsonEncoder)`: ~3.5 s for 100K annotations, orjson ~0.25 s. An endpoint that
   returns a large list of documents should return `createdDocumentsResponse(docs)`
   (`helpers/serialization.py`): a streamed orjson array with sorted keys and
-  Girder's `str()` fallback, so it parses to the same value Girder sent. Remember
+  Girder's `str()` fallback, so it parses to the same value Girder sent for
+  documents decoded from a JSON body or from Mongo. Python-computed values are
+  not covered: a numpy float becomes a string, and Enums, dataclasses and
+  non-UTC aware datetimes encode differently. Remember
   that orjson writes NaN/Infinity as `null`, where Girder raised (a 500).
 - **fastjsonschema costs ~1 µs per array item** (it builds key sets per object).
   For a schema with a large array of small objects (coordinates), a hand-written
