@@ -67,24 +67,27 @@ function notifyDrainIfIdle() {
   }, DRAIN_DEBOUNCE_MS);
 }
 
-// Avoid "navigation cancelled" errors by doing calls to router.replace() one at a time
-const setUrlParamsOrQuery = awaitPreviousCallsDecorator(
+// Avoid "navigation cancelled" errors by doing calls to router.replace() one
+// at a time. Every URL write goes through this one lock (each
+// awaitPreviousCallsDecorator wrap has its own chain), and `edit` reads
+// `route` when the write runs, so a queued write never undoes an earlier one.
+// `edit` changes the copied params/query and returns false for no change.
+const writeUrl = awaitPreviousCallsDecorator(
   async (
-    type: "query" | "params",
-    key: string,
-    value: string,
     router: Router,
     route: RouteLocationNormalized,
+    edit: (replacement: {
+      params: RouteLocationNormalized["params"];
+      query: RouteLocationNormalized["query"];
+    }) => boolean,
   ) => {
-    const stringifiedValue = String(value);
-    if (stringifiedValue === route[type][key]) {
-      return;
-    }
     const replacement = {
       params: { ...route.params },
       query: { ...route.query },
     };
-    replacement[type][key] = stringifiedValue;
+    if (!edit(replacement)) {
+      return;
+    }
     pendingUrlWrites++;
     try {
       await router.replace(replacement);
@@ -95,34 +98,42 @@ const setUrlParamsOrQuery = awaitPreviousCallsDecorator(
   },
 );
 
+function setUrlParamsOrQuery(
+  type: "query" | "params",
+  key: string,
+  value: string,
+  router: Router,
+  route: RouteLocationNormalized,
+) {
+  return writeUrl(router, route, (replacement) => {
+    const stringifiedValue = String(value);
+    if (stringifiedValue === route[type][key]) {
+      return false;
+    }
+    replacement[type][key] = stringifiedValue;
+    return true;
+  });
+}
+
 /**
- * Remove query keys from the URL, serialized with the mappers' own writes
- * (and counted in pendingUrlWrites), so it never cancels one in flight or
- * writes back a value one of them just changed: `route.query` is read when
- * the removal runs, not when it was asked for.
+ * Remove query keys from the URL through the same lock as the mappers'
+ * writes (and counted in pendingUrlWrites), so neither cancels the other.
  */
-export const removeQueryKeys = awaitPreviousCallsDecorator(
-  async (
-    keys: readonly string[],
-    router: Router,
-    route: RouteLocationNormalized,
-  ) => {
-    if (!keys.some((key) => key in route.query)) {
-      return;
+export function removeQueryKeys(
+  keys: readonly string[],
+  router: Router,
+  route: RouteLocationNormalized,
+) {
+  return writeUrl(router, route, (replacement) => {
+    if (!keys.some((key) => key in replacement.query)) {
+      return false;
     }
-    const query = { ...route.query };
     for (const key of keys) {
-      delete query[key];
+      delete replacement.query[key];
     }
-    pendingUrlWrites++;
-    try {
-      await router.replace({ params: { ...route.params }, query });
-    } finally {
-      pendingUrlWrites--;
-      notifyDrainIfIdle();
-    }
-  },
-);
+    return true;
+  });
+}
 
 // Call the setter for this mapper if needed, using the value from the URL
 function setMapperValueFromUrl(

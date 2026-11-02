@@ -21,7 +21,7 @@ vi.mock("@/store/properties", () => ({
 }));
 
 import { routeProvider, routerProvider } from "@/test/helpers";
-import { useRouteMapper } from "./useRouteMapper";
+import { removeQueryKeys, useRouteMapper } from "./useRouteMapper";
 
 describe("useRouteMapper", () => {
   let mockRouter: any;
@@ -248,5 +248,66 @@ describe("useRouteMapper", () => {
     // The skipped sync should have been replayed and the store updated to
     // match the current URL value.
     expect(setter).toHaveBeenCalledWith("v3");
+  });
+
+  it("removes query keys after a mapper write in flight, keeping its value", async () => {
+    // Both writers share one lock and read the route when they run: the
+    // removal must neither cancel the z write nor put back what it changed.
+    const storeZ = ref("1");
+    const route = reactive({
+      name: "root",
+      params: {},
+      query: { z: "1", x: "5", y: "6" } as Record<string, string>,
+      path: "/",
+      hash: "",
+      fullPath: "/?z=1&x=5&y=6",
+      matched: [],
+      meta: {},
+      redirectedFrom: undefined,
+    });
+    const replaced: any[] = [];
+    let resolveFirst: () => void = () => {};
+    mockRouter.replace = vi.fn((location: any) => {
+      replaced.push(location.query);
+      return new Promise<void>((resolve) => {
+        const done = () => {
+          route.query = { ...location.query };
+          resolve();
+        };
+        if (replaced.length === 1) resolveFirst = done;
+        else done();
+      });
+    });
+    const TestComponent = defineComponent({
+      template: "<div />",
+      setup() {
+        useRouteMapper(
+          {},
+          { z: { parse: String, get: () => storeZ.value, set: vi.fn() } },
+        );
+      },
+    });
+    shallowMount(TestComponent, {
+      global: {
+        provide: {
+          [routeLocationKey as symbol]: route,
+          ...routerProvider(mockRouter),
+        },
+      },
+    });
+    await nextTick();
+    await nextTick();
+
+    storeZ.value = "4";
+    await nextTick();
+    await nextTick();
+    const removal = removeQueryKeys(["x", "y"], mockRouter, route as any);
+    await nextTick();
+    // The removal waits for the z write.
+    expect(replaced).toHaveLength(1);
+    resolveFirst();
+    await removal;
+
+    expect(replaced[1]).toEqual({ z: "4" });
   });
 });

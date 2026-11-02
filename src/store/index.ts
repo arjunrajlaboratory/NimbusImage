@@ -845,6 +845,10 @@ export class Main extends VuexModule {
   // drawn. ImageViewer clears it when it applies it, so it applies once per
   // navigation. See utils/cameraDeepLink.ts.
   pendingCameraDeepLink: IPendingCameraDeepLink | null = null;
+  // Counts targets ImageViewer has applied, so the routes can drop the
+  // camera keys from the URL then (and only then: a navigation also clears
+  // pendingCameraDeepLink, while its own target is still loading).
+  appliedCameraDeepLinks: number = 0;
 
   drawAnnotations: boolean = true;
   filteredDraw: boolean = true;
@@ -1889,6 +1893,13 @@ export class Main extends VuexModule {
   @Mutation
   public setPendingCameraDeepLink(value: IPendingCameraDeepLink | null) {
     this.pendingCameraDeepLink = value;
+  }
+
+  /** ImageViewer has centered on the pending target: it is used up. */
+  @Mutation
+  public consumeCameraDeepLink() {
+    this.pendingCameraDeepLink = null;
+    this.appliedCameraDeepLinks++;
   }
 
   /**

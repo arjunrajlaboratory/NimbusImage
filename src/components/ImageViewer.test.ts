@@ -151,6 +151,7 @@ vi.mock("@/store", () => {
       setCameraInfo: vi.fn(),
       pendingCameraDeepLink: null as any,
       setPendingCameraDeepLink: vi.fn(),
+      consumeCameraDeepLink: vi.fn(),
       setDrawAnnotations: vi.fn(),
       setShowTooltips: vi.fn(),
       setXY: vi.fn(),
@@ -416,6 +417,9 @@ describe("ImageViewer", () => {
         mockedStore.pendingCameraDeepLink = v;
       },
     );
+    (mockedStore.consumeCameraDeepLink as any).mockImplementation(() => {
+      mockedStore.pendingCameraDeepLink = null;
+    });
   });
 
   afterEach(() => {
@@ -1019,7 +1023,7 @@ describe("ImageViewer", () => {
 
       expect(map1.bounds).toHaveBeenCalled();
       expect(map1.zoom).not.toHaveBeenCalledWith(7);
-      expect(mockedStore.setPendingCameraDeepLink).not.toHaveBeenCalled();
+      expect(mockedStore.consumeCameraDeepLink).not.toHaveBeenCalled();
     });
   });
 

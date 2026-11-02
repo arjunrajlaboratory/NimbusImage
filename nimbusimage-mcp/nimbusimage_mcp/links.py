@@ -69,10 +69,11 @@ def api_link(path: str, params: dict) -> str | None:
     return f"{base}/{path}?{query}"
 
 
-def region_link(ds, style: dict, crop=None, filename="image.png",
+def region_link(ds, style: dict, crop=None, suffix: str = ".png",
                 frame: int = 0) -> str | None:
     """The image a style draws, as a PNG at full resolution (capped at
-    MAX_DOWNLOAD_SIZE on the longer side), optionally cropped."""
+    MAX_DOWNLOAD_SIZE on the longer side), optionally cropped, saved as
+    the dataset's name plus `suffix`."""
     if _common.settings().browser_api_url is None:
         return None
     params = {
@@ -80,8 +81,9 @@ def region_link(ds, style: dict, crop=None, filename="image.png",
         "style": json.dumps(style, separators=(",", ":")),
         "encoding": "PNG",
         "contentDisposition": "attachment",
-        "contentDispositionFilename": download_filename(
-            filename.rsplit(".", 1)[0], ".png"),
+        # The dataset name is cut, never the suffix that tells a
+        # composite from each channel.
+        "contentDispositionFilename": download_filename(ds.name, suffix),
     }
     height, width = ds.shape
     if crop is not None:

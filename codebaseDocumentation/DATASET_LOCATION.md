@@ -77,9 +77,10 @@ apply):
    applies it right after its fit; on an unchanged dataset a watcher applies it
    when loading ends. It zooms, centers map 0, and syncs `cameraInfo`, so
    every map in a multi-map layout follows.
-3. Applying clears the target, so it runs once per navigation, and
-   `DatasetView.vue` (and `SharedView.vue`) then removes the camera keys from the
-   URL with `removeQueryKeys`, serialized with the route mapper's writes,
+3. Applying consumes the target (`consumeCameraDeepLink`), so it runs once per
+   navigation, and `DatasetView.vue` (and `SharedView.vue`) then removes the
+   camera keys from the URL with `removeQueryKeys`, under the route mapper's
+   one write lock,
    so a reload or a copied URL keeps where the user moved to instead of jumping
    back to the linked point.
 4. Changing only the camera keys on the open view (`DatasetView.vue` watches
@@ -122,7 +123,7 @@ Run `pnpm test src/utils/datasetLocation.test.ts src/store/__tests__/datasetLoca
 - [ ] **A same-dataset view switch still applies it**, when loading ends. — *"waits for loading to end when the dataset is unchanged"*
 - [ ] **The view switcher drops the camera keys.** — *"goToView keeps the location but drops a camera deep link"*
 - [ ] **A link can size the view by image width**; an explicit zoom wins. — *"shows a link's width, and its zoom wins over it"*
-- [ ] **Applied keys leave the URL**, so a reload keeps where the user moved, through the route mapper's serialized writer (on the dataset view and share routes alike). — *"is true once a target stops pending"*, *"is false while pending or when there was none"*
+- [ ] **Applied keys leave the URL**, so a reload keeps where the user moved: only on apply (a navigation's reset would strip a loading view's own target), through the route mapper's one write lock (on the dataset view and share routes alike). — *"consuming a target clears it and counts the apply"*, *"removes query keys after a mapper write in flight, keeping its value"*
 - [ ] **A superseded navigation never commits its target**, even when its view fetch resolves last. — *"a superseded navigation does not commit its target when its fetch resolves last"*
 
 ### Known limitation

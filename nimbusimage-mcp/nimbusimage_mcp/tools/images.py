@@ -293,7 +293,7 @@ def ni_image_get_composite(
     style = ds.images.composite_style(xy=xy, z=z, time=time) \
         if links.downloads_enabled() else None
     download = links.region_link(
-        ds, style, crop, filename=f"{ds.name} composite.png"
+        ds, style, crop, suffix=" composite.png"
     ) if style else None
     return [
         Image(data=encode_jpeg(rgb), format="jpeg"),
@@ -380,7 +380,7 @@ def ni_image_get_channel(
         notes.append(outline_note(outline_tags, len(drawn), matched, scanned))
     download = links.region_link(
         ds, channel_style(ds, channel, xy, zs, time, low, high), crop,
-        filename=f"{ds.name} channel {channel}.png",
+        suffix=f" channel {channel}.png",
     ) if links.downloads_enabled() else None
     return [
         Image(data=encode_jpeg(pixels), format="jpeg"),

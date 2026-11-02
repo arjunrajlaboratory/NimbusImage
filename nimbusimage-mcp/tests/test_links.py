@@ -268,6 +268,14 @@ def test_export_links_with_a_very_long_name_end(ds, downloads):
     assert len(query(result["csv"])["filename"]) == links.MAX_FILENAME
 
 
+def test_long_names_keep_the_download_suffix(ds, downloads):
+    ds.name = "x" * 500
+    url = links.region_link(ds, {"bands": []}, suffix=" channel 3.png")
+    name = query(url)["contentDispositionFilename"]
+    assert name.endswith(" channel 3.png")
+    assert len(name) == links.MAX_FILENAME
+
+
 def test_black_composite_has_no_too_long_note(ds, downloads):
     ds.images.get_composite.return_value = np.zeros((8, 8, 3), np.uint8)
     ds.images.composite_style.return_value = None

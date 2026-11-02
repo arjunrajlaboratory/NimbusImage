@@ -7,10 +7,7 @@ import { TLayerMode } from "@/store/model";
 import { removeQueryKeys, useRouteMapper } from "@/utils/useRouteMapper";
 import { useRoute, useRouter } from "vue-router";
 import { watch } from "vue";
-import {
-  CAMERA_DEEP_LINK_QUERY_KEYS,
-  cameraDeepLinkSettled,
-} from "@/utils/cameraDeepLink";
+import { CAMERA_DEEP_LINK_QUERY_KEYS } from "@/utils/cameraDeepLink";
 
 const route = useRoute();
 const router = useRouter();
@@ -29,17 +26,14 @@ watch(
   },
 );
 
-// Once a target is applied (or superseded), drop its keys from the URL: left
+// Once ImageViewer has applied a target, drop its keys from the URL: left
 // there, a reload or a copied URL would jump back to the linked point after
-// the user has moved on. The target was parsed when the view loaded, so
-// removing the keys does not cancel it.
+// the user has moved on. Only on apply: a navigation also clears the pending
+// target, and stripping then would re-sync the route while its own view is
+// still loading and drop the target it carries.
 watch(
-  () => store.pendingCameraDeepLink,
-  (pending, previous) => {
-    if (cameraDeepLinkSettled(pending, previous)) {
-      removeQueryKeys(CAMERA_DEEP_LINK_QUERY_KEYS, router, route);
-    }
-  },
+  () => store.appliedCameraDeepLinks,
+  () => removeQueryKeys(CAMERA_DEEP_LINK_QUERY_KEYS, router, route),
 );
 
 useRouteMapper(

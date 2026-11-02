@@ -2433,7 +2433,7 @@ function applyCameraDeepLink() {
   ) {
     return;
   }
-  store.setPendingCameraDeepLink(null);
+  store.consumeCameraDeepLink();
   const point = { x: link.x, y: link.y };
   // Unrolled, the current frame is drawn in its own grid cell: aim at the
   // point within that cell, as annotation navigation does.

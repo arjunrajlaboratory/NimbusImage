@@ -392,10 +392,12 @@ results carry links, and the server instructions tell the model to pass them on.
 | `ni_property_pairs` | `analysis/histogram2d` with `sample` | Pearson and Spearman over up to 100,000 pairs, a 1,000-point sample |
 | `ni_projects_list`, `ni_dataset_access` | `list_projects`, `sharing.get_access` | Access drops emails |
 
-Three prompts (`prompts.py`) start common workflows. Tag filters match ALL the given tags
-in every counting and acting tool (the list endpoint gained `tags.all` for this), so a
-count from one tool is the count another deletes; only `outline_tags` matches ANY, for
-display. Not built: an MCP Apps viewer, Xenium tools, share links, snapshots.
+Three prompts (`prompts.py`) start common workflows. `ni_annotations_count`, `_list`,
+`_in_region`, and `_delete` match ALL the given tags (the list endpoint gained `tags.all`
+for the last two), so a count from `ni_annotations_count` is what a delete acts on.
+`ni_annotations_summary`, `ni_property_values_summary`, and `ni_property_pairs` match ANY
+(or exactly, with `exclusive`), and `outline_tags` matches ANY, for display; each
+docstring says which. Not built: an MCP Apps viewer, Xenium tools, share links, snapshots.
 
 ## 6. Authentication design
 

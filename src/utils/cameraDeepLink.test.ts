@@ -3,7 +3,6 @@ import {
   cameraDeepLinkZoom,
   omitCameraDeepLinkQuery,
   parseCameraDeepLink,
-  cameraDeepLinkSettled,
   zoomToShowImageWidth,
 } from "./cameraDeepLink";
 
@@ -130,19 +129,5 @@ describe("default zoom", () => {
         { ...map, viewportWidth: 0 },
       ),
     ).toBe(0);
-  });
-});
-
-describe("cameraDeepLinkSettled", () => {
-  const target = { x: 1, y: 2, zoom: null, datasetId: "d" };
-
-  it("is true once a target stops pending", () => {
-    expect(cameraDeepLinkSettled(null, target)).toBe(true);
-  });
-
-  it("is false while pending or when there was none", () => {
-    expect(cameraDeepLinkSettled(target, null)).toBe(false);
-    expect(cameraDeepLinkSettled(null, null)).toBe(false);
-    expect(cameraDeepLinkSettled(target, target)).toBe(false);
   });
 });

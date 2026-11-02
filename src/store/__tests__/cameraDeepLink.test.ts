@@ -174,6 +174,21 @@ describe("camera deep link", () => {
     expect(main.pendingCameraDeepLink).toBeNull();
   });
 
+  it("consuming a target clears it and counts the apply", async () => {
+    views.v = makeView("v", "ds1");
+    await main.setDatasetViewId({ id: "v", routeQuery: { x: "1", y: "2" } });
+    const applied = main.appliedCameraDeepLinks;
+
+    main.consumeCameraDeepLink();
+
+    expect(main.pendingCameraDeepLink).toBeNull();
+    expect(main.appliedCameraDeepLinks).toBe(applied + 1);
+    // A navigation's reset is not an apply: the routes keep its keys.
+    await main.setDatasetViewId({ id: "v", routeQuery: { x: "3", y: "4" } });
+    await main.setDatasetViewId({ id: "v" });
+    expect(main.appliedCameraDeepLinks).toBe(applied + 1);
+  });
+
   it("requestCameraDeepLink re-targets the loaded view", async () => {
     views.v = makeView("v", "ds1");
     await main.setDatasetViewId({ id: "v" });

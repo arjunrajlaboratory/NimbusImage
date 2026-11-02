@@ -112,11 +112,3 @@ export function cameraDeepLinkZoom(
     );
   return Math.min(map.zoomRange.max, Math.max(map.zoomRange.min, zoom));
 }
-
-/** Whether a target just stopped pending (applied or superseded). */
-export function cameraDeepLinkSettled(
-  pending: IPendingCameraDeepLink | null,
-  previous: IPendingCameraDeepLink | null | undefined,
-): boolean {
-  return !!previous && !pending;
-}

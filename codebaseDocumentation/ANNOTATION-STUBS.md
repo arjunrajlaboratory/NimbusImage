@@ -88,7 +88,7 @@ What the **backend already supports**: `annotation_property_values/histogram` co
 What shipped:
 - **Backend** `POST /upenn_annotation/list` (a page of stub-shaped rows + the requested property values + `total`) and `POST /upenn_annotation/list/ids` (all matching ids, for `Select All` / `Delete Unselected`). Annotation-driven aggregation: `$match` (datasetId/shape/tags/location/idSubstring/idConstraints) → property `$lookup`+`$unwind` (only when a property column/sort/filter needs it) → property filters → centroid `$addFields` + missing-last sort → `$skip`/`$limit` → project. Filter/sort/path shape is validated → 400. Backend in `server/{api,models}/annotation.py`; tests in `test/test_server_list.py` (18 cases).
 - **Frontend** `AnnotationsAPI.fetchAnnotationListPage/Ids`, the `annotationListServer` store module (`buildListFilters` translates the client filter store → backend filters), and dual-mode `AnnotationList.vue`. In server mode the component is **fully decoupled** from `filterStore.filteredAnnotations` (it would iterate all stubs and apply property filters without values loaded — both a perf and correctness hazard); refetch is debounced (~300 ms).
-- **Filters applied server-side:** tags (inclusive `$in` / exclusive `$all`+`$size`, matching `tagCloudFilterFunction`), location (onlyCurrentFrame), idSubstring, property range/values, **and** selection + annotation-id filters (translated to `idConstraints` = AND of `_id $in` sets). **ROI is the only filter NOT applied server-side** (shows an inline notice).
+- **Filters applied server-side:** tags (inclusive `$in` / exclusive `$all`+`$size`, matching `tagCloudFilterFunction`; `all: true` gives `$all`, every tag with others allowed, which the MCP region and delete tools use), location (onlyCurrentFrame), idSubstring, property range/values, **and** selection + annotation-id filters (translated to `idConstraints` = AND of `_id $in` sets). **ROI is the only filter NOT applied server-side** (shows an inline notice).
 - **Real-data validated:** HCR 26K (16/16 checks), idConstraints (7/7), Xenium 708K (functionally correct).
 
 **Deferred (NOT done — see design spec §8):**
@@ -1535,7 +1535,7 @@ POST (not GET) so many property paths / filter values don't hit URL length limit
   "datasetId": "ObjectId",
   "filters": {
     "shape": "polygon",                       // optional
-    "tags": { "values": ["DAPI"], "exclusive": false },  // inclusive=$in (has any); exclusive=$all+$size (exactly that set) — matches tagCloudFilterFunction (NOT find's $all superset)
+    "tags": { "values": ["DAPI"], "exclusive": false },  // inclusive=$in (has any); exclusive=$all+$size (exactly that set) — matches tagCloudFilterFunction (NOT find's $all superset); "all": true = $all (find's superset rule)
     "location": { "XY": 0, "Z": 0, "Time": 0 },          // optional (onlyCurrentFrame)
     "idSubstring": "abc",                     // optional
     "propertyFilters": [                      // optional
@@ -1572,7 +1572,7 @@ POST (not GET) so many property paths / filter values don't hit URL length limit
 ```
 
 **Page aggregation pipeline (annotation-driven):**
-1. `$match` — `datasetId` + shape + tags (inclusive `$in` / exclusive `$all`+`$size`) + location + `idSubstring` (`$regexMatch` on stringified `_id`) + `idConstraints` (`$and` of `_id $in` sets). Built by `Annotation._buildListMatchStages`.
+1. `$match` — `datasetId` + shape + tags (inclusive `$in` / `all` `$all` / exclusive `$all`+`$size`) + location + `idSubstring` (`$regexMatch` on stringified `_id`) + `idConstraints` (`$and` of `_id $in` sets). Built by `Annotation._buildListMatchStages`.
 2. `$lookup` `annotation_property_values` on `_id` ↔ `annotationId` → `pv` (needed only if there are property filters, a property sort, or requested `propertyPaths`; skip otherwise).
 3. `$unwind` `{ path: "$pv", preserveNullAndEmptyArrays: true }` (1:1; null when no values doc).
 4. `$match` property filters (range / values) on `pv.values.<path>` — only if present.
