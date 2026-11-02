@@ -51,11 +51,12 @@ it, and must parse it unconditionally. `annotation_property_values` find
 checked access only `if "datasetId" in params`, so omitting it dropped both
 the filter and the check. `annotation_connection` find required the parameter
 but checked only when it was truthy, so `datasetId=` did the same. Either way
-an anonymous caller could list every dataset's values or connections. Parse with `requireObjectId(params.get(...))`
-(missing or empty → 400), then `Folder().load(..., exc=True)`, then build the
-query from that id. Test anonymously, against a **private** dataset, with the
-parameter missing and empty (`testFindPropertyValuesRequiresDatasetId`,
-`testFindConnectionsWithEmptyDatasetIdDenied`).
+an anonymous caller could list every dataset's values or connections. Parse
+with `requireObjectId(params.get(...))` (missing or empty → 400), then
+`Folder().load(..., exc=True)`, then build the query from that id. Test
+anonymously, against a **private** dataset, with whichever input bypassed the
+check: missing for property values (`testFindPropertyValuesRequiresDatasetId`),
+empty for connections (`testFindConnectionsWithEmptyDatasetIdDenied`).
 
 ### Ids that match nothing get no access check
 
@@ -711,7 +712,11 @@ dataset Girder grew ~1.6 GiB per 100K documents until the container was
 OOM-killed (fixed 2026-11). A public reader of a large public dataset can do
 that to production.
 
-Return a generator instead, so Girder streams the body:
+Return a generator *function* (any callable) instead. Girder's `endpoint`
+streams only when the value is callable. It runs `list()` on a generator
+object just as it does on a cursor, so returning `gen()` rather than `gen`
+buffers everything again. `streamJsonArray` returns its inner function
+uncalled:
 
 ```python
 setResponseHeader("Content-Type", "application/json")
@@ -723,7 +728,9 @@ Girder 5 ASGI bridge passes chunks through a one-slot queue, so a slow client
 gets backpressure rather than a growing buffer. In tests `resp.json` still
 works, because the test client joins the chunks. To check that an endpoint
 streams, pass `isJson=False` and read `list(resp.body)`: more than one chunk
-means it streamed (`test_list_streaming.py`). Measure with
+means it streamed (`test_list_streaming.py`). Use more than ~500 documents,
+since `streamJsonArray` flushes every 1000 list entries (commas included) and a
+smaller result is a single chunk either way. Measure with
 the container's cgroup `anon` memory (`/sys/fs/cgroup/memory.stat`), which is
 what the OOM killer acts on and counts every process in the container, the
 celery workers included. Sample it while the request runs and abort past a cap.
