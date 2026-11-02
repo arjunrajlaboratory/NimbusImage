@@ -238,9 +238,9 @@ class Annotation(AccessControlMixin, ProxiedModel):
     def validateSchema(cls, annotation):
         """Validate against AnnotationSchema, raising an error with the same
         message, path and rule as jsonValidate (only `.definition` may name
-        the reduced schema), but with a fast path for
-        the per-vertex coordinates rule. The two agree on every document:
-        when the coordinates certainly pass, the rest of the schema decides
+        the reduced schema), but with a fast path for the per-vertex
+        coordinates rule. The two agree on every document: when the
+        coordinates certainly pass, the rest of the schema decides
         (properties are checked independently, so its first error is the
         full validator's); otherwise the full validator runs."""
         if type(annotation) is dict and coordinatesMatchSchema(
