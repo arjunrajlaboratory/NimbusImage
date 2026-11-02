@@ -1253,18 +1253,18 @@ describe("loadLargeImages", () => {
     expect(logError).toHaveBeenCalledWith("Store", "No large images found");
   });
 
-  it("logs and keeps the list when listing large images fails", async () => {
-    const original = image("original");
-    state().allLargeImages = [original];
-    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue(undefined);
+  it("drops the outgoing dataset's large images on a dataset switch", async () => {
+    // Without this, loadLargeImages in the next dataset finds the old image
+    // still current, keeps it, and never fetches that dataset's selection.
+    const outgoing = image("outgoing");
+    state().allLargeImages = [outgoing];
+    state().currentLargeImage = outgoing;
 
-    expect(await main.loadLargeImages()).toBeNull();
+    // null takes the same dataset-changed path as another id, without a load.
+    await main.setSelectedDataset(null);
 
-    expect(main.allLargeImages).toEqual([original]);
-    expect(logError).toHaveBeenCalledWith(
-      "Store",
-      "Could not list large images",
-    );
+    expect(main.currentLargeImage).toBeNull();
+    expect(main.allLargeImages).toEqual([]);
   });
 
   it("switches to and returns a newly created large image", async () => {

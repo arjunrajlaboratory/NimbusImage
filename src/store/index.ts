@@ -1741,10 +1741,6 @@ export class Main extends VuexModule {
     const newAllLargeImages = await this.girderResources.getAllLargeImages(
       this.dataset.id,
     );
-    if (!newAllLargeImages) {
-      logError("Store", "Could not list large images");
-      return null;
-    }
     // Set even when empty, so deleting the last image clears the list
     this.setAllLargeImages(newAllLargeImages);
     if (newAllLargeImages.length === 0) {
@@ -1763,8 +1759,8 @@ export class Main extends VuexModule {
       return newLargeImage ?? null;
     }
 
-    // Already showing one: nothing to change. This is the normal path when
-    // a dataset loads, so it must not log.
+    // Already showing one of this dataset's images (setSelectedDataset clears
+    // it on a dataset switch): nothing to change, and nothing to log.
     if (this.currentLargeImage) {
       return null;
     }
@@ -2333,6 +2329,11 @@ export class Main extends VuexModule {
       // state like the filters above; the unconditional connection-list reset
       // deliberately leaves them alone.
       this.context.dispatch("resetConnectionTrackFilters");
+      // The outgoing dataset's large images. loadLargeImages keeps a current
+      // image it finds set, so a stale one would stay selected in the new
+      // dataset and its own selection would never be fetched.
+      this.setCurrentLargeImage(null);
+      this.setAllLargeImages([]);
     }
     if (!id) {
       this.setDataset({ id, data: null });
