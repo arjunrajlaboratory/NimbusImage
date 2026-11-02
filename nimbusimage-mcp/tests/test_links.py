@@ -118,26 +118,6 @@ def test_large_downloads_are_capped(ds, downloads):
     assert query(url)["width"] == str(links.MAX_DOWNLOAD_SIZE)
 
 
-def test_a_failed_slice_stops_the_projection(ds, monkeypatch):
-    ds.num_z = 40
-    fetched = []
-
-    def get(**kw):
-        fetched.append(kw["z"])
-        if kw["z"] == 0:
-            raise ValueError("slice 0 is unreadable")
-        import time
-        time.sleep(0.05)
-        return np.zeros((4, 4), np.uint16)
-
-    ds.images.get.side_effect = get
-    with pytest.raises(ToolError, match="slice 0 is unreadable"):
-        images.ni_image_get_channel(
-            dataset_id="d1", channel=0, projection="max")
-    # The rest were dropped rather than fetched before reporting.
-    assert len(fetched) < 40
-
-
 def test_too_long_a_download_link_is_left_out(ds, downloads):
     ds.images.get_composite.return_value = np.full((8, 8, 3), 9, np.uint8)
     ds.images.composite_style.return_value = {"bands": [
@@ -149,18 +129,16 @@ def test_too_long_a_download_link_is_left_out(ds, downloads):
 
 
 def test_projection_matches_the_raw_maximum(ds, downloads):
-    """A dim slice must not outshine a bright one: the projection is of
-    raw values, stretched once."""
-    ds.num_z = 2
-    dim = np.array([[0, 10], [10, 10]], np.uint16)
-    bright = np.array([[1000, 0], [0, 0]], np.uint16)
-    ds.images.get.side_effect = lambda **kw: [dim, bright][kw["z"]]
-    ds.images.frame_index.side_effect = lambda **kw: kw["z"]
+    """A dim slice must not outshine a bright one: the download's bands
+    share the bounds of the raw projection the preview stretched."""
+    projected = np.array([[1000, 10], [10, 10]], np.uint16)
+    ds.images.projection_frames.return_value = [4, 9]
+    ds.images.get_max_projection.return_value = projected
     result = images.ni_image_get_channel(
         dataset_id="d1", channel=0, projection="max")
     download = result[-1].split("full resolution): ")[1].split("\n")[0]
     bands = json.loads(query(download)["style"])["bands"]
-    expected = images.contrast_bounds(np.maximum(dim, bright))
+    expected = images.contrast_bounds(projected)
     assert expected[1] > 900  # the bright slice's 1000 sets the top
     assert {(b["min"], b["max"]) for b in bands} == {expected}
 
@@ -235,29 +213,31 @@ def test_capped_outlines_are_an_even_sample(ds, nc, monkeypatch):
     assert (matched, complete) == (9, True)
 
 
-def test_channel_max_projection_over_every_slice(ds, downloads,
-                                                 monkeypatch):
-    ds.num_z = 3
-    ds.images.get.side_effect = lambda **kw: np.full(
-        (4, 4), kw["z"] * 10, np.uint16)
-    ds.images.frame_index.side_effect = lambda **kw: kw["z"] * 2 + 1
+def test_channel_max_projection_is_one_server_request(ds, downloads,
+                                                      monkeypatch):
+    """The server projects the slices this channel has (a sparse stack
+    may lack some) in one request; the slices are not fetched one by one."""
+    ds.images.projection_frames.return_value = [1, 5]
+    ds.images.get_max_projection.return_value = np.full((4, 4), 20,
+                                                        np.uint16)
     result = images.ni_image_get_channel(
         dataset_id="d1", channel=1, z=1, projection="max")
-    assert sorted(c.kwargs["z"] for c in ds.images.get.call_args_list) \
-        == [0, 1, 2]
-    assert "Maximum projection over all 3 z-slices." in result
+    ds.images.get_max_projection.assert_called_once()
+    ds.images.get.assert_not_called()
+    assert "Maximum projection over the 2 z-slices of this channel." \
+        in result
     assert "Z 2 of" not in result[-1]
-    monkeypatch.setattr(images, "MAX_PROJECTION_SLICES", 2)
-    with pytest.raises(ToolError, match="limited to 2"):
-        images.ni_image_get_channel(
-            dataset_id="d1", channel=1, projection="max")
     download = result[-1].split("full resolution): ")[1].split("\n")[0]
     bands = json.loads(query(download)["style"])["bands"]
-    assert [b["frame"] for b in bands] == [1, 3, 5]
+    assert [b["frame"] for b in bands] == [1, 5]
     # Every band shares the preview's bounds (the projection is all 20s).
     assert {(b["min"], b["max"]) for b in bands} == {(20.0, 21.0)}
     # The preview shows a source's first band; so must the download.
     assert {b["band"] for b in bands} == {1}
+    monkeypatch.setattr(images, "MAX_PROJECTION_SLICES", 1)
+    with pytest.raises(ToolError, match="limited to 1"):
+        images.ni_image_get_channel(
+            dataset_id="d1", channel=1, projection="max")
 
 
 def test_export_links_use_registered_measurement_paths(

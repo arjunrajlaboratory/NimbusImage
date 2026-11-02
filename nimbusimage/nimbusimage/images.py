@@ -166,6 +166,54 @@ class ImageAccessor:
             raise ValueError(f"axis must be 'z' or 'time', got '{axis}'")
         return np.stack(images, axis=0)
 
+    def projection_frames(
+        self, channel: int = 0, xy: int = 0, time: int = 0
+    ) -> list[int]:
+        """The frame numbers of one channel's z-slices at this XY position
+        and time, in z order; only slices that exist (a sparse dataset can
+        lack some)."""
+        self._ensure_frame_map()
+        by_z = self._frame_map.get(channel, {}).get(time, {})
+        return [by_z[z][xy] for z in sorted(by_z) if xy in by_z[z]]
+
+    def get_max_projection(
+        self,
+        channel: int = 0,
+        xy: int = 0,
+        time: int = 0,
+        crop: tuple[float, float, float, float] | None = None,
+        max_size: int | None = None,
+    ) -> np.ndarray:
+        """The maximum intensity over a channel's z-slices, in the source
+        dtype, computed by the server in one request (a "lighten" band per
+        slice, unscaled), not by fetching every slice.
+
+        Returns a 2D array (the first band of a multi-band source).
+        """
+        frames = self.projection_frames(channel, xy, time)
+        if not frames:
+            raise ValueError(
+                f"No z-slices of channel {channel} at xy={xy}, time={time}"
+            )
+        dtype = np.dtype(self._dataset.dtype)
+        if not np.issubdtype(dtype, np.integer):
+            # Unscaled styling needs integer bounds; read slices instead.
+            planes = [self._get_region(frame, **self._region_params(
+                crop, max_size)) for frame in frames]
+            return _drop_single_band(np.max(planes, axis=0))
+        top = int(np.iinfo(dtype).max)
+        style = {"dtype": "source", "bands": [
+            {"frame": frame, "band": 1, "min": 0, "max": top}
+            for frame in frames
+        ]}
+        projected = self._get_region(
+            frames[0], style=json.dumps(style, separators=(",", ":")),
+            **self._region_params(crop, max_size),
+        )
+        # The styled result has color (and alpha) bands; the first holds
+        # the value.
+        return projected[..., 0] if projected.ndim == 3 else projected
+
     def get_composite(
         self,
         xy: int = 0,

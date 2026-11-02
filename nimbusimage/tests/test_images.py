@@ -469,6 +469,50 @@ class TestGetComposite:
         assert result.shape == (192, 256, 3)  # 1024x768 scaled to fit
 
 
+class TestMaxProjection:
+    def test_one_request_returns_the_raw_maximum(
+        self, mock_gc, sample_tiles_metadata,
+    ):
+        ds, regions = _composite_dataset(
+            mock_gc, sample_tiles_metadata, [_layer()], {},
+        )
+        frames = ds.images.projection_frames(channel=0)
+        assert frames == sorted(frames, key=frames.index)
+        images = {
+            f: np.full((4, 4), 10 * (i + 1), dtype=np.uint16)
+            for i, f in enumerate(frames)
+        }
+
+        def get(path, parameters=None, jsonResp=True):
+            regions.append(parameters)
+            style = json.loads(parameters["style"])
+            assert style["dtype"] == "source"
+            stacked = np.max([images[b["frame"]] for b in style["bands"]], 0)
+            response = MagicMock()
+            response.content = pickle.dumps(np.stack([stacked] * 4, -1))
+            return response
+
+        mock_gc.get.side_effect = get
+        result = ds.images.get_max_projection(channel=0)
+        assert len(regions) == 1
+        assert result.dtype == np.uint16
+        assert result.max() == 10 * len(frames)
+
+    def test_only_existing_slices_are_projected(
+        self, mock_gc, sample_tiles_metadata,
+    ):
+        ds, _ = _composite_dataset(
+            mock_gc, sample_tiles_metadata, [_layer()], {},
+        )
+        ds.images._ensure_frame_map()
+        by_z = ds.images._frame_map[0][0]
+        missing = sorted(by_z)[0]
+        del by_z[missing]
+        assert len(ds.images.projection_frames(channel=0)) == len(by_z)
+        with pytest.raises(ValueError, match="No z-slices"):
+            ds.images.get_max_projection(channel=99)
+
+
 class TestCompositeStyle:
     def test_matches_get_composite(self, mock_gc, sample_tiles_metadata):
         """The style get_composite's server path would send, one band per

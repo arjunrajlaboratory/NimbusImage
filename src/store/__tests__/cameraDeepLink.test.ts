@@ -283,4 +283,14 @@ describe("camera deep link", () => {
     await main.requestCameraDeepLink({ x: "7" });
     expect(main.pendingCameraDeepLink).toBeNull();
   });
+
+  it("requestCameraDeepLink drops an unapplied target once the URL no longer names it", async () => {
+    views.v = makeView("v", "ds1");
+    await main.setDatasetViewId({ id: "v", routeQuery: { x: "1", y: "2" } });
+    expect(main.pendingCameraDeepLink).not.toBeNull();
+
+    await main.requestCameraDeepLink({ z: "3" });
+
+    expect(main.pendingCameraDeepLink).toBeNull();
+  });
 });

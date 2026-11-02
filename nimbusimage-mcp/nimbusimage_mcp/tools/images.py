@@ -4,7 +4,6 @@ annotation outlines on request and links to the app and a download."""
 from __future__ import annotations
 
 import io
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Literal
 
 import numpy as np
@@ -22,9 +21,9 @@ MAX_OUTLINES = 3000
 LIST_PAGE = 10_000
 MAX_OUTLINE_SCAN = 20_000
 OUTLINE_COLOR = (255, 255, 0)
-# A z max projection reads every slice (PROJECTION_WORKERS at a time).
+# A z max projection is one server request with a style band per slice;
+# past this many, the request (and its download link) grows too long.
 MAX_PROJECTION_SLICES = 100
-PROJECTION_WORKERS = 6
 MAX_IMAGE_SIZE = 2048
 # Percentiles of the returned pixels used to stretch a raw channel.
 CHANNEL_CONTRAST = (0.5, 99.5)
@@ -343,32 +342,25 @@ def ni_image_get_channel(
         raise ValueError(
             f"channel={channel} is out of range (0..{ds.num_channels - 1})"
         )
-    zs = range(ds.num_z) if projection == "max" else [z]
-    if len(zs) > MAX_PROJECTION_SLICES:
-        raise ValueError(
-            f"This stack has {ds.num_z} z-slices; a projection here is "
-            f"limited to {MAX_PROJECTION_SLICES}. Open it in the app "
-            "instead, where a layer can show a z max projection."
+    if projection == "max":
+        # Only the slices this channel has here (a sparse stack can lack
+        # some), projected by the server in one request.
+        frames = ds.images.projection_frames(
+            channel=channel, xy=xy, time=time)
+        if len(frames) > MAX_PROJECTION_SLICES:
+            raise ValueError(
+                f"This channel has {len(frames)} z-slices here; a projection "
+                f"is limited to {MAX_PROJECTION_SLICES}. Open it in the app "
+                "instead, where a layer can show a z max projection."
+            )
+        frame = ds.images.get_max_projection(
+            channel=channel, xy=xy, time=time, crop=crop, max_size=max_size
         )
-
-    def fetch(zi):
-        return ds.images.get(xy=xy, z=zi, time=time, channel=channel,
-                             crop=crop, max_size=max_size)
-
-    # The slices are independent; fetch a few at a time, folding each into
-    # a running maximum as it lands, so at most a few planes are held.
-    frame = None
-    pool = ThreadPoolExecutor(max_workers=PROJECTION_WORKERS)
-    try:
-        for future in as_completed([pool.submit(fetch, zi) for zi in zs]):
-            plane = future.result()
-            frame = plane if frame is None else np.maximum(frame, plane)
-            del plane
-    finally:
-        # On a failed slice, report it now: drop the slices not yet
-        # started instead of fetching them all first (as leaving a `with`
-        # block would).
-        pool.shutdown(wait=False, cancel_futures=True)
+    else:
+        frames = [ds.images.frame_index(
+            xy=xy, z=z, time=time, channel=channel)]
+        frame = ds.images.get(xy=xy, z=z, time=time, channel=channel,
+                              crop=crop, max_size=max_size)
     if frame.ndim == 3:
         # A multi-band (e.g. RGB brightfield) frame: show its first band.
         frame = frame[..., 0]
@@ -377,7 +369,8 @@ def ni_image_get_channel(
     notes = []
     if projection == "max":
         notes.append(
-            f"Maximum projection over all {ds.num_z} z-slices."
+            f"Maximum projection over the {len(frames)} z-slices of this "
+            "channel."
         )
     if outline_tags:
         drawn, matched, scanned = outlines(
@@ -388,7 +381,7 @@ def ni_image_get_channel(
         )
         notes.append(outline_note(outline_tags, len(drawn), matched, scanned))
     download = links.region_link(
-        ds, channel_style(ds, channel, xy, zs, time, low, high), crop,
+        ds, channel_style(frames, low, high), crop,
         suffix=f" channel {channel}.png",
     ) if links.downloads_enabled() else None
     return [
@@ -398,19 +391,17 @@ def ni_image_get_channel(
     ]
 
 
-def channel_style(ds, channel: int, xy: int, zs, time: int,
-                  low: float, high: float) -> dict:
-    """One channel in gray at the preview's contrast, its frames combined
-    by maximum (a projection when there are several). Every band shares
-    the bounds: windowing each frame on its own range would let a dim
-    slice outshine a bright one."""
+def channel_style(frames: list[int], low: float, high: float) -> dict:
+    """One channel's frames in gray at the preview's contrast, combined by
+    maximum (a projection when there are several). Every band shares the
+    bounds: windowing each frame on its own range would let a dim slice
+    outshine a bright one."""
     return {"bands": [
         # band 1 (large_image counts from 1): the band the preview shows
         # for a multi-band (e.g. RGB) source; a no-op for one band.
-        {"frame": ds.images.frame_index(
-            xy=xy, z=zi, time=time, channel=channel), "band": 1,
+        {"frame": frame, "band": 1,
          "min": low, "max": high, "palette": ["#000000", "#ffffff"]}
-        for zi in zs
+        for frame in frames
     ]}
 
 

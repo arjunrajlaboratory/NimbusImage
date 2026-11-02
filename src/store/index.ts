@@ -1911,20 +1911,24 @@ export class Main extends VuexModule {
 
   /**
    * Center on a `?x=&y=&zoom=` target for the view that is already loaded
-   * (the query changed without the view changing). Ignored while no view is
-   * loaded or the query holds no valid target.
+   * (the query changed without the view changing). A query with no valid
+   * target drops a pending one. Ignored while no view is loaded.
    */
   @Action
   requestCameraDeepLink(
     routeQuery: Record<string, string | null | (string | null)[]>,
   ) {
-    const cameraDeepLink = parseCameraDeepLink(routeQuery);
-    if (cameraDeepLink && this.datasetView) {
-      this.setPendingCameraDeepLink({
-        ...cameraDeepLink,
-        datasetId: this.datasetView.datasetId,
-      });
+    if (!this.datasetView) {
+      return;
     }
+    const cameraDeepLink = parseCameraDeepLink(routeQuery);
+    // No valid target in the URL any more: an unapplied one it named is
+    // obsolete, so it must not still jump the view once loading ends.
+    this.setPendingCameraDeepLink(
+      cameraDeepLink
+        ? { ...cameraDeepLink, datasetId: this.datasetView.datasetId }
+        : null,
+    );
   }
 
   @Mutation

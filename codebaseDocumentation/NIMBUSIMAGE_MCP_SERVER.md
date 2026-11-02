@@ -382,7 +382,7 @@ results carry links, and the server instructions tell the model to pass them on.
 |---|---|---|
 | `ni_view_link` | `default_view` + `dataset_view_url` | Location, point, or `annotation_id` (centered on its vertex mean) |
 | `ni_export_links` | `GET export/*` | CSV columns: the registered measurements' sampled value paths (max 100, the encoded link kept under 7,500 characters; file names capped at 100) |
-| `ni_image_get_composite` / `_channel` | + `upenn_annotation/list` and `hydrate` | `outline_tags` (any of the tags, at that location, centers near the crop; max 3,000 drawn, says when capped); `projection="max"` on the channel |
+| `ni_image_get_composite` / `_channel` | + `upenn_annotation/list` and `hydrate` | `outline_tags` (any of the tags, at that location, centers near the crop; max 3,000 drawn, says when capped); `projection="max"` on the channel (one styled `tiles/region` request at the source dtype, `ds.images.get_max_projection`) |
 | `ni_annotations_in_region` | `upenn_annotation/list` with a location filter | Center inside a region; scans at most 20,000 at the location (client-side region test, so on a 700K-object frame a small region can be missed: a server-side region filter is follow-up work) |
 | `ni_annotations_create` | `create_many` | **Destructive hint.** Max 1,000; validates shapes and bounds first, creates nothing on any error |
 | `ni_annotations_delete` | `list/ids` + `DELETE multiple` | **Destructive hint.** Requires a filter and the confirmed `expected_count`; max 50,000; one request, so one undo |
@@ -1517,9 +1517,9 @@ Tests are in `devops/girder/plugins/McpOAuthPlugin/nimbus_mcp_oauth/test/`.
       *"testGeoJsonLinkRequiresReadAccess"*; a share-link bearer cannot use them, as with the
       POST exports. *"testBearerReadsOnlyTheSharedDataset"*, *"testNonAdminOwnerCanStillDownload"*
 - [x] A projection is of raw values with one set of bounds and the same band, preview and
-      download alike, and a failed slice is reported without fetching the rest.
-      *"test_projection_matches_the_raw_maximum"*, *"test_channel_max_projection_over_every_slice"*,
-      *"test_a_failed_slice_stops_the_projection"*; a link too long for a proxy is left out.
+      download alike, made by the server in one request over the slices the channel has.
+      *"test_projection_matches_the_raw_maximum"*, *"test_channel_max_projection_is_one_server_request"*,
+      *"test_one_request_returns_the_raw_maximum"*, *"test_only_existing_slices_are_projected"*; a link too long for a proxy is left out.
       *"test_too_long_a_download_link_is_left_out"*
 - [x] The composite download style is the composite's (colors, contrast, hidden layers).
       *"test_matches_get_composite"*, *"test_hidden_layers_and_nothing_drawn"*
