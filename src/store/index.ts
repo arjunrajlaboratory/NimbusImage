@@ -2433,9 +2433,17 @@ export class Main extends VuexModule {
       this.setDatasetViewImpl(datasetView);
       const promises: Promise<any>[] = [];
 
-      // Only update lastViewed if user has write access to the view
+      // Only update lastViewed if user has write access to the view. It is
+      // bookkeeping: a failed PUT must not reject the batch below, which
+      // would skip clearing datasetLoading and leave the overlay up.
       if (this.canEditDatasetView) {
-        promises.push(this.api.updateDatasetView(datasetView));
+        promises.push(
+          this.api
+            .updateDatasetView(datasetView)
+            .catch((err) =>
+              logError(`Failed to record lastViewed for view ${id}:`, err),
+            ),
+        );
       }
 
       const newLocation = datasetView.lastLocation;
