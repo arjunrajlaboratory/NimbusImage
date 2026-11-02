@@ -280,7 +280,7 @@ def parseCreatedResponse(resp):
     body = getResponseBody(resp, text=False)
     # Byte-identical to orjson's sorted encoding of its own value: fails if
     # an endpoint goes back to Girder's encoder (its ", " separators and
-    # \\u escapes) or stops sorting keys, whatever the strings contain.
+    # \u escapes) or stops sorting keys, whatever the strings contain.
     created = json.loads(body)
     assert body == orjson.dumps(created, option=orjson.OPT_SORT_KEYS)
     return created
@@ -413,7 +413,8 @@ class TestBulkCreateResponses:
             {"annotationId": annotation["_id"]}
         ))
         assert stored[0]["values"]["area"] == float("inf")
-        # The endpoint already answered infinity as null (jsonSafe).
+        # Master answered infinity as null here (jsonSafe); orjson now
+        # writes the same null.
         stored[0]["values"]["area"] = None
         assert created == girderEncoding(stored)
 
