@@ -3,9 +3,11 @@
 Two parts of POST /upenn_annotation/multiple were rewritten for speed:
 
 * Schema validation skips fastjsonschema's per-vertex coordinates rule when a
-  cheap check proves the coordinates pass (Annotation.validateSchema). The
-  equivalence tests below hold it to the compiled full schema: same accepted
-  documents, same error (message, path and rule) for every rejected one.
+  cheap check proves the coordinates pass (Annotation.validateSchema). It
+  runs for every annotation save, not only bulk create: single create, PUT,
+  PUT /multiple and the server-side import. The equivalence tests below
+  hold it to the compiled full schema: same accepted documents, same error
+  (message, path and rule) for every rejected one.
 * The created documents are answered through orjson instead of Girder's
   stdlib encoder (createdDocumentsResponse), also for the connection and
   property-value bulk creates. The response tests hold the JSON to what
@@ -193,8 +195,9 @@ class TestAnnotationSchemaFastPath:
             "coordinates"] is AnnotationSchema.coordsSchema
 
     def testFastPathMatchesFullSchemaOnRandomDocuments(self):
-        """Seeded fuzz over the value kinds a JSON body can carry, placed
-        anywhere in the coordinates or the rest of the document."""
+        """Seeded fuzz over the value kinds a JSON body can carry, plus a
+        Decimal and an int subclass that the full validator also accepts,
+        placed anywhere in the coordinates or the rest of the document."""
         rng = random.Random(1389)
         values = [
             0, -7, 2.5, float("inf"), True, False, None, "s", "",
@@ -341,7 +344,7 @@ class TestBulkCreateResponses:
         """The one deliberate difference: a body number too large for a
         float parses to infinity, which the schema accepts and Mongo
         stores. Girder's encoder then refused it (a 500 after the write);
-        the response now carries null, as the GET endpoints do."""
+        the response now carries null, as the orjson list endpoints do."""
         dataset = self._dataset(admin)
         annotation = upenn_utilities.getSampleAnnotation(str(dataset["_id"]))
         body = json.dumps([annotation]).replace(

@@ -697,7 +697,7 @@ of `(annotationId, value)` pairs):
   bytes without marking the response raw ships a JSON *string* containing JSON — the
   client's `resp.json` is a `str`. Call `setRawResponse()` (from `girder.api.rest`)
   and set the `Content-Type` header yourself, or return a generator (the annotation
-  plugin's `_streamJsonArray` pattern).
+  plugin's `streamJsonArray` pattern in `helpers/serialization.py`).
 - **`orjson.OPT_SERIALIZE_NUMPY` takes numeric and bool arrays only.** A unicode
   (`U24`) array of ids raises `TypeError: unsupported datatype in numpy array`;
   `.tolist()` the string array, keep the numeric one as numpy. Cast integral floats

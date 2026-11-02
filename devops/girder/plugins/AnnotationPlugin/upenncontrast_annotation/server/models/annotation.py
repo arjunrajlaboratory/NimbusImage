@@ -123,9 +123,10 @@ class AnnotationSchema:
         ],
     }
 
-    # The same schema with no rule on the coordinates' contents (still
+    # The same schema with no rule on coordinates at all (the key is still
     # required), for documents whose coordinates already passed
-    # coordinatesMatchSchema.
+    # coordinatesMatchSchema, which checks the type, minItems and
+    # per-vertex rules itself. It accepts any coordinates value on its own.
     annotationSchemaWithoutCoordinates = {
         **annotationSchema,
         "properties": {**annotationSchema["properties"], "coordinates": {}},

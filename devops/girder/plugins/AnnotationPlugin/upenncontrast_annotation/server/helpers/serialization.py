@@ -81,14 +81,15 @@ def createdDocumentsResponse(documents):
     For documents decoded from a JSON body or from Mongo, the JSON parses to
     the same value Girder's encoder produced: keys stay sorted, ObjectIds
     and other unknown types become their str(), and naive datetimes get
-    Girder's "+00:00" suffix. Python-computed values are not covered (a
-    numpy float would become a string; Enums, dataclasses and non-UTC
-    aware datetimes encode differently). Only the spelling
-    differs: no whitespace, `1e-06` written `1e-6`, and non-ASCII text as
-    UTF-8 rather than `\\u` escapes. One deliberate difference: Girder
-    refuses a non-finite float (allow_nan=False), so a create whose body
-    held `1e999` stored its documents and then answered 500. orjson writes
-    null, the same as the GET endpoints return for that stored value."""
+    Girder's "+00:00" suffix. Only the spelling differs: no whitespace,
+    `1e-06` written `1e-6`, and non-ASCII text as UTF-8 rather than `\\u`
+    escapes. Python-computed values are not covered (a numpy float would
+    become a string; Enums, dataclasses and non-UTC aware datetimes encode
+    differently). One deliberate difference: Girder refuses a non-finite
+    float (allow_nan=False), so a create whose body held `1e999` stored its
+    documents and then answered 500. orjson writes null, as the orjson list
+    endpoints (GET /upenn_annotation, POST /upenn_annotation/list) do for
+    that stored value; GET by id, still Girder-encoded, answers 500."""
     setResponseHeader("Content-Type", "application/json")
     return streamJsonArray(
         documents,
