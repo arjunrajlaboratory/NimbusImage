@@ -1,7 +1,8 @@
 /**
- * setDatasetViewId's lastViewed PUT is bookkeeping: its failure must not keep
- * the view from loading. Dispatches the REAL main-store actions; only fetches
- * are stubbed (same harness as datasetLocationClamp.test.ts).
+ * The dataset_view PUTs for lastViewed and lastLocation are bookkeeping: a
+ * failed one must not keep a view from loading or go unhandled. Dispatches the
+ * REAL main-store actions; only fetches are stubbed (same harness as
+ * datasetLocationClamp.test.ts).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import main from "../index";
@@ -28,6 +29,7 @@ function stubAction(name: string, handler: (payload: any) => any) {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.mocked(logError).mockClear();
   savedActions = {};
   stubAction(
     "getDataset",
@@ -48,6 +50,7 @@ beforeEach(() => {
         _accessLevel: 2,
       }) as IDatasetView,
   );
+  vi.spyOn(main.api, "updateDatasetView").mockResolvedValue(undefined as any);
   Object.assign(state(), {
     girderUser: { _id: "user", login: "user" },
     dataset: null,
@@ -76,7 +79,7 @@ afterEach(() => {
   });
 });
 
-describe("setDatasetViewId lastViewed save", () => {
+describe("dataset view bookkeeping saves", () => {
   it("a failed lastViewed PUT still ends loading and applies the view", async () => {
     const updateDatasetView = vi
       .spyOn(main.api, "updateDatasetView")
@@ -90,5 +93,41 @@ describe("setDatasetViewId lastViewed save", () => {
     expect(main.datasetView?.id).toBe("v");
     expect(main.dataset?.id).toBe("ds1");
     expect([main.xy, main.z, main.time]).toEqual([1, 2, 0]);
+  });
+
+  it("a failed lastViewed PUT still ends loading when the dataset is already loaded", async () => {
+    await main.setDatasetViewId({ id: "v" });
+    vi.spyOn(main.api, "updateDatasetView").mockRejectedValue(
+      new Error("PUT failed"),
+    );
+    const getDataset = vi.fn(
+      ({ id }) => ({ id, xy: [0, 1], z: [0, 1, 2], time: [0] }) as IDataset,
+    );
+    stubAction("getDataset", getDataset);
+
+    // Same dataset: setSelectedDataset is skipped, so only setDatasetViewId
+    // can end the loading it started.
+    await main.setDatasetViewId({ id: "w" });
+
+    expect(getDataset).not.toHaveBeenCalled();
+    expect(sync.datasetLoading).toBe(false);
+    expect(main.datasetView?.id).toBe("w");
+  });
+
+  it("a failed lastLocation save is logged, not left unhandled", async () => {
+    await main.setDatasetViewId({ id: "v" });
+    vi.spyOn(main.api, "updateDatasetView").mockRejectedValue(
+      new Error("PUT failed"),
+    );
+
+    await main.setXY(0);
+    await expect(main.flushLastLocationInDatasetView()).resolves.toBe(
+      undefined,
+    );
+
+    expect(logError).toHaveBeenCalledWith(
+      expect.stringContaining("lastLocation"),
+      expect.any(Error),
+    );
   });
 });

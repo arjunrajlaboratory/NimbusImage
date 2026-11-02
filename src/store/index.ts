@@ -2898,7 +2898,16 @@ export class Main extends VuexModule {
     }
     this.setLastLocationInDatasetView(location);
     if (this.canEditDatasetView) {
-      await this.api.updateDatasetView(datasetView);
+      // Callers (the debounce timer, navigation flushes) don't await this,
+      // so a failed PUT would otherwise be an unhandled rejection.
+      try {
+        await this.api.updateDatasetView(datasetView);
+      } catch (err) {
+        logError(
+          `Failed to save lastLocation for view ${datasetView.id}:`,
+          err,
+        );
+      }
     }
   }
 
