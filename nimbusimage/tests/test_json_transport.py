@@ -7,6 +7,7 @@ must still be rejected before sending.
 
 import dataclasses
 import datetime
+import enum
 import json
 import math
 import random
@@ -73,6 +74,8 @@ class TestDumpsJson:
     @pytest.mark.parametrize("bad", [
         float("nan"), float("inf"), np.float32("nan"),
         np.array([0.0, -np.inf]),
+        # orjson encodes a plain Enum by its value; stdlib raised TypeError.
+        enum.Enum("Measurement", {"MISSING": float("nan")}).MISSING,
     ])
     def test_non_finite_raises(self, bad):
         with pytest.raises(ValueError, match="not JSON compliant"):

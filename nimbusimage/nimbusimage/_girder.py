@@ -7,6 +7,7 @@ and error handling are centralized.
 
 from __future__ import annotations
 
+import enum
 import inspect
 import json
 import math
@@ -85,7 +86,11 @@ _ORJSON_OPTIONS = (
 
 
 def _contains_non_finite(value) -> bool:
-    """Whether value holds a NaN or infinite float anywhere inside it."""
+    """Whether value holds a NaN or infinite float anywhere inside it.
+
+    Walks dicts, lists, tuples and Enum values: everything orjson encodes
+    that can hold a float, except dataclasses, which go to stdlib.
+    """
     # numpy objects can only be present if numpy was imported already.
     np = sys.modules.get("numpy")
     stack = [value]
@@ -98,6 +103,9 @@ def _contains_non_finite(value) -> bool:
             stack.extend(item.values())
         elif isinstance(item, (list, tuple)):
             stack.extend(item)
+        elif isinstance(item, enum.Enum):
+            # orjson encodes a plain Enum by its value, so check that.
+            stack.append(item.value)
         elif np is not None and isinstance(item, (np.ndarray, np.floating)):
             if item.dtype.kind == "f" and not np.isfinite(item).all():
                 return True

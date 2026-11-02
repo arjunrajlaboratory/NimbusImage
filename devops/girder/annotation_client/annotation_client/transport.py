@@ -23,7 +23,8 @@ Compatibility with the stdlib path is deliberate:
 - numpy scalars and arrays are serialized (OPT_SERIALIZE_NUMPY). np.float64
   worked before because it subclasses float; np.float32, numpy ints and
   C-contiguous native-order ndarrays now work too, where stdlib raised
-  TypeError. orjson also accepts plain Enums and UUIDs, which stdlib did not.
+  TypeError. orjson also accepts plain Enums (encoded by value, which the
+  NaN check covers) and UUIDs, which stdlib did not.
 - Dataclasses and datetimes are passed through to the stdlib path, which
   rejects them as before (orjson would encode them, and a NaN inside a
   dataclass would slip out as null).
@@ -37,6 +38,7 @@ Compatibility with the stdlib path is deliberate:
 - Without orjson installed everything still works, at stdlib speed.
 """
 
+import enum
 import http.cookiejar
 import inspect
 import json
@@ -117,8 +119,10 @@ def buildRetrySession():
 def containsNonFinite(value):
     """Whether value holds a NaN or infinite float anywhere inside it.
 
-    Walks dicts, lists and tuples, and checks Python floats (np.float64
-    included), numpy floating scalars and float arrays.
+    Walks dicts, lists, tuples and Enum values (everything orjson encodes
+    that can hold a float, dataclasses aside: those go to stdlib), and
+    checks Python floats (np.float64 included), numpy floating scalars and
+    float arrays.
     """
     # numpy objects can only be present if numpy was imported already.
     np = sys.modules.get("numpy")
@@ -132,6 +136,9 @@ def containsNonFinite(value):
             stack.extend(item.values())
         elif isinstance(item, (list, tuple)):
             stack.extend(item)
+        elif isinstance(item, enum.Enum):
+            # orjson encodes a plain Enum by its value, so check that.
+            stack.append(item.value)
         elif np is not None and isinstance(item, (np.ndarray, np.floating)):
             if item.dtype.kind == "f" and not np.isfinite(item).all():
                 return True

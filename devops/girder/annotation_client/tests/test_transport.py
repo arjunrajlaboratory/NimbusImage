@@ -7,6 +7,7 @@ anything it rejected before sending (NaN/Infinity) must still be rejected.
 
 import dataclasses
 import datetime
+import enum
 import json
 import math
 import random
@@ -25,6 +26,13 @@ from annotation_client.tiles import UPennContrastDataset
 from annotation_client.workers import UPennContrastWorkerPreviewClient
 
 DATASET_ID = "6a18de9586eb377626a51daf"
+
+
+class Measurement(enum.Enum):
+    # orjson encodes a plain Enum by its value; stdlib raised TypeError.
+    MISSING = float("nan")
+    UNBOUNDED = {"limit": float("inf")}
+    AREA = 2.5
 
 
 def polygon(index, rng):
@@ -128,6 +136,8 @@ class TestDumpsJson:
         np.float64("nan"),
         np.float32("inf"),
         np.array([1.0, np.nan]),
+        Measurement.MISSING,
+        Measurement.UNBOUNDED,
     ])
     def test_non_finite_values_raise_before_sending(self, bad):
         payload = [{"values": {"prop": {"nested": [1.0, bad]}}}]
@@ -145,6 +155,12 @@ class TestDumpsJson:
         body = transport.dumpsJson(payload)
         assert b"null" in body
         assert json.loads(body) == json.loads(stdlibBody(payload))
+
+    def test_finite_enum_values_are_sent(self):
+        payload = {"m": Measurement.AREA, "missing": None}
+        assert json.loads(transport.dumpsJson(payload)) == {
+            "m": 2.5, "missing": None,
+        }
 
     def test_finite_integer_arrays_with_nulls_are_sent(self):
         payload = {"ids": np.arange(4), "missing": None}
