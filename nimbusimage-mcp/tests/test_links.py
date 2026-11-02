@@ -116,6 +116,12 @@ def test_large_downloads_are_capped(ds, downloads):
     ds.shape = (60_000, 90_000)
     url = links.region_link(ds, {"bands": []})
     assert query(url)["width"] == str(links.MAX_DOWNLOAD_SIZE)
+    # And say so: the file is not the source's resolution.
+    assert links.download_label(ds) == (
+        "PNG, reduced from 90000 x 60000 to at most 8192 pixels on its "
+        "longer side")
+    assert links.download_label(ds, (0, 0, 500, 400)) == \
+        "PNG, full resolution"
 
 
 def test_too_long_a_download_link_is_left_out(ds, downloads):

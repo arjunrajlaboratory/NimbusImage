@@ -2,7 +2,7 @@
 
 import json
 import pickle
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
 import pytest
@@ -522,6 +522,35 @@ class TestMaxProjection:
         assert len(regions) == len(frames)
         assert result.dtype == np.uint16
         assert int(result.max()) == 100 + len(frames) - 1
+
+    def test_float_slices_are_downsampled_here_not_by_the_server(
+        self, mock_gc, sample_tiles_metadata,
+    ):
+        """The server would downsample float data through 8 bits (values
+        in 0..1 become 0): read full-resolution slices, sample by index."""
+        ds, regions = _composite_dataset(
+            mock_gc, sample_tiles_metadata, [_layer()], {},
+        )
+        frames = ds.images.projection_frames(channel=0)
+        height, width = ds.shape
+
+        def get(path, parameters=None, jsonResp=True):
+            regions.append(parameters)
+            assert "width" not in parameters and "style" not in parameters
+            response = MagicMock()
+            plane = np.full((height, width), 0.25, np.float32)
+            plane[0, 0] = 0.5 + frames.index(parameters["frame"]) / 100
+            response.content = pickle.dumps(plane)
+            return response
+
+        mock_gc.get.side_effect = get
+        with patch.object(type(ds), "dtype", new_callable=PropertyMock,
+                          return_value="float32"):
+            result = ds.images.get_max_projection(channel=0, max_size=64)
+        assert result.dtype == np.float32
+        assert max(result.shape) == 64
+        assert result[0, 0] == np.float32(0.5 + (len(frames) - 1) / 100)
+        assert float(result.min()) == 0.25
 
     def test_only_existing_slices_are_projected(
         self, mock_gc, sample_tiles_metadata,

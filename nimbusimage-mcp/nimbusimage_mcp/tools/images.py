@@ -224,7 +224,8 @@ def footer(ds, xy, z, time, crop, download: str | None,
         f"{links.view_link(ds, xy=xy, z=z, time=time, **center)}",
     ]
     if download:
-        lines.append(f"Download (PNG, full resolution): {download}")
+        lines.append(
+            f"Download ({links.download_label(ds, crop)}): {download}")
         lines.append(links.DOWNLOAD_NOTE)
     elif can_download and links.downloads_enabled():
         # The style was built but its link would be too long.
@@ -262,7 +263,8 @@ def ni_image_get_composite(
 
     The result also has a link that opens the app at this location
     (centered on the crop) and, when available, a link to download the
-    composite as a full-resolution PNG. The user may not see the image
+    composite as a PNG (full resolution, or reduced to 8,192 pixels on
+    its longer side for larger images). The user may not see the image
     itself (clients often fold it into the tool call): when they ask to
     see, open, or download it, give them these links.
     """
@@ -331,7 +333,8 @@ def ni_image_get_channel(
     annotations having any of those tags at this location in yellow (for
     a projection, those on slice z).
     The result links to the app at this location and, when available, to
-    a full-resolution PNG download of the channel; give the user these
+    a PNG download of the channel (full resolution, or reduced to 8,192
+    pixels on its longer side); give the user these
     links when they ask to see, open, or download the image.
     """
     nc = client()

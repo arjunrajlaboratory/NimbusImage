@@ -504,6 +504,7 @@ def ni_connections_summary(dataset_id: str) -> dict:
         }
     edges = []
     after_id = None
+    complete = True
     while True:
         params = {
             "datasetId": dataset_id, "limit": CONNECTION_PAGE,
@@ -514,8 +515,12 @@ def ni_connections_summary(dataset_id: str) -> dict:
         # A stable _id cursor, so pages never skip or repeat.
         page = nc.girder.get("annotation_connection", parameters=params)
         edges += [(c["parentId"], c["childId"]) for c in page]
-        if len(page) < CONNECTION_PAGE or \
-                len(edges) > MAX_CONNECTIONS_SCANNED:
+        if len(page) < CONNECTION_PAGE:
+            break
+        if len(edges) > MAX_CONNECTIONS_SCANNED:
+            # Connections were added since the count (e.g. a worker is
+            # still linking): the groups below would be partial.
+            complete = False
             break
         after_id = page[-1]["_id"]
     # A connection from an annotation to itself links nothing.
@@ -524,6 +529,15 @@ def ni_connections_summary(dataset_id: str) -> dict:
     for component_size, number in sizes.items():
         key = str(component_size) if component_size < 6 else "6+"
         histogram[key] += number
+    if not complete:
+        return {
+            "connections": f"more than {MAX_CONNECTIONS_SCANNED}",
+            "message": (
+                "Connections were still being added while they were read "
+                "(e.g. a linking worker is running), past what one call "
+                "groups; try again once it finishes."
+            ),
+        }
     return {
         "connections": len(edges),
         "linked_objects": sum(sizes.values()),

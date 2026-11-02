@@ -1521,7 +1521,10 @@ Tests are in `devops/girder/plugins/McpOAuthPlugin/nimbus_mcp_oauth/test/`.
       (one server request where that is exact, a bounded running maximum otherwise).
       *"test_projection_matches_the_raw_maximum"*, *"test_channel_max_projection_is_one_server_request"*,
       *"test_one_request_returns_the_raw_maximum"*, *"test_only_existing_slices_are_projected"*,
-      *"test_downsampled_or_other_dtypes_fold_raw_slices"*; a link too long for a proxy is left out.
+      *"test_downsampled_or_other_dtypes_fold_raw_slices"*,
+      *"test_float_slices_are_downsampled_here_not_by_the_server"* (the server downsamples
+      dtypes other than 8/16-bit unsigned through 8-bit PIL, so those are read at full
+      resolution, up to 4M pixels a slice, and sampled by index here); a link too long for a proxy is left out.
       *"test_too_long_a_download_link_is_left_out"*
 - [x] The composite download style is the composite's (colors, contrast, hidden layers).
       *"test_matches_get_composite"*, *"test_hidden_layers_and_nothing_drawn"*
@@ -1533,6 +1536,10 @@ Tests are in `devops/girder/plugins/McpOAuthPlugin/nimbus_mcp_oauth/test/`.
       *"test_region_tags_match_all_and_shape_filters"*, *"testListIdsFilterByAllTags"*
 - [x] A long dataset name never decides whether a link exists or loops the budget.
       *"test_export_links_with_a_very_long_name_end"*
+- [x] A connection summary whose scan grew past its cap (a worker still linking) claims no
+      statistics. *"test_connections_summary_says_when_connections_grew_past_its_cap"*
+- [x] A download larger than 8,192 pixels says it is reduced, not "full resolution".
+      *"test_large_downloads_are_capped"*
 - [x] A delete needs a filter and the confirmed count, and is one request.
       *"test_delete_counts_first_and_then_deletes_in_one_request"*,
       *"test_delete_refuses_a_wrong_count_and_names_the_real_one"*, *"test_delete_needs_a_filter"*

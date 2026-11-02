@@ -485,6 +485,31 @@ def test_connections_summary_only_counts_past_its_cap(girder, monkeypatch):
     assert count(girder, "GET", "annotation_connection") == 0
 
 
+def test_connections_summary_says_when_connections_grew_past_its_cap(
+        girder, monkeypatch):
+    """Counted under the cap, then a worker added more while paging: the
+    groups would be partial, so no statistics are claimed."""
+    monkeypatch.setattr(regions, "MAX_CONNECTIONS_SCANNED", 3)
+    monkeypatch.setattr(regions, "CONNECTION_PAGE", 2)
+    ids = [girder.add(i, i) for i in range(6)]
+    girder.connect(ids[0], ids[1])
+    girder.connect(ids[1], ids[2])
+    original_get = girder.get
+
+    def get(path, parameters=None):
+        result = original_get(path, parameters)
+        if path == "annotation_connection" and len(girder.connections) < 5:
+            for a, b in ((ids[2], ids[3]), (ids[3], ids[4]),
+                         (ids[4], ids[5])):
+                girder.connect(a, b)
+        return result
+
+    monkeypatch.setattr(girder, "get", get)
+    result = loads(regions.ni_connections_summary(dataset_id=DATASET))
+    assert "linked_objects" not in result
+    assert "still being added" in result["message"]
+
+
 def test_connections_summary_without_connections(girder):
     result = loads(regions.ni_connections_summary(dataset_id=DATASET))
     assert result["connections"] == 0

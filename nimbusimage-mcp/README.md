@@ -22,7 +22,8 @@ Phase 0 measurements: [`eval/PHASE0_RESULTS.md`](eval/PHASE0_RESULTS.md).
 
 All names start with `ni_`. Results are compact JSON, capped, and summary-first;
 images are downsampled JPEGs. Image results also carry a link that opens the app
-at that place and, when `NI_MCP_BROWSER_API_URL` is set, a full-resolution PNG
+at that place and, when `NI_MCP_BROWSER_API_URL` is set, a PNG (full resolution,
+or reduced to 8,192 pixels on its longer side for larger images)
 download link (see [Links](#links)). XY, z, and time indices are 0-based; the app
 numbers them from 1.
 

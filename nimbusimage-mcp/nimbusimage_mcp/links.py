@@ -96,6 +96,19 @@ def region_link(ds, style: dict, crop=None, suffix: str = ".png",
     return url if url is None or len(url) <= MAX_LINK_LENGTH else None
 
 
+def download_label(ds, crop=None) -> str:
+    """How the region_link download is sized: full resolution, or
+    reduced to MAX_DOWNLOAD_SIZE on its longer side."""
+    height, width = ds.shape
+    if crop is not None:
+        left, top, right, bottom = crop
+        width, height = right - left, bottom - top
+    if max(width, height) > MAX_DOWNLOAD_SIZE:
+        return (f"PNG, reduced from {width} x {height} to at most "
+                f"{MAX_DOWNLOAD_SIZE} pixels on its longer side")
+    return "PNG, full resolution"
+
+
 def slice_label(ds, xy: int, z: int, time: int,
                 projected: bool = False) -> str:
     """The location as the app labels it (1-based), with the 0-based
