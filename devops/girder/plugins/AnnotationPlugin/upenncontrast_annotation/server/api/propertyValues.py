@@ -1,5 +1,3 @@
-from bson import ObjectId
-
 from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.api.rest import Resource, setResponseHeader
@@ -204,7 +202,7 @@ class PropertyValues(Resource):
         .param(
             "datasetId",
             "Get all property values for this dataset",
-            required=False,
+            required=True,
         )
         .param(
             "annotationId",
@@ -216,28 +214,25 @@ class PropertyValues(Resource):
         .errorResponse()
     )
     def find(self, params):
-        limit, offset, sort = self.getPagingParameters(params, "lowerName")
-        query = {}
-
-        # Check dataset permissions if datasetId is provided
-        if "datasetId" in params:
-            datasetId = ObjectId(params["datasetId"])
-            dataset = Folder().load(
-                datasetId, user=self.getCurrentUser(), level=AccessType.READ
-            )
-            if not dataset:
-                raise RestException(
-                    code=403, message="Access denied to dataset"
-                )
-            query["datasetId"] = datasetId
+        limit, offset, sort = self.getPagingParameters(params, "_id")
+        # datasetId is required: it is what the READ check is made against.
+        # Optional, a request without it listed every dataset's values.
+        datasetId = requireObjectId(params.get("datasetId"), "datasetId")
+        Folder().load(
+            datasetId, user=self.getCurrentUser(), level=AccessType.READ,
+            exc=True,
+        )
+        query = {"datasetId": datasetId}
 
         if "annotationId" in params:
-            query["annotationId"] = ObjectId(params["annotationId"])
+            query["annotationId"] = requireObjectId(
+                params["annotationId"], "annotationId"
+            )
 
         # Support cursor pagination
         after_id = params.get("afterId")
         if after_id:
-            query["_id"] = {"$gt": ObjectId(after_id)}
+            query["_id"] = {"$gt": requireObjectId(after_id, "afterId")}
             offset = 0  # Ignore offset when using cursor
 
         # Use regular find instead of findWithPermissions
@@ -262,9 +257,7 @@ class PropertyValues(Resource):
         .errorResponse()
     )
     def count(self, params):
-        if "datasetId" not in params:
-            raise RestException(code=400, message="Dataset ID is required")
-        datasetId = ObjectId(params["datasetId"])
+        datasetId = requireObjectId(params.get("datasetId"), "datasetId")
         Folder().load(
             datasetId, user=self.getCurrentUser(), level=AccessType.READ,
             exc=True

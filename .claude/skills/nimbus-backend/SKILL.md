@@ -44,6 +44,19 @@ doc = Model().load(id, force=True)  # Admin bypass
 For detailed access patterns including sharing: read `references/access-control-patterns.md`
 When modifying sharing/access code: read `codebaseDocumentation/SHARING.md`
 
+### An optional dataset filter is an optional access check
+
+List endpoints that check READ on the `datasetId` they filter by must require
+it, and must parse it unconditionally. `annotation_property_values` find
+checked access only `if "datasetId" in params`, and `annotation_connection`
+find only when it was truthy. Omitting it (or sending `datasetId=`) dropped
+both the filter and the check, so an anonymous caller could list every
+dataset's values or connections. Parse with `requireObjectId(params.get(...))`
+(missing or empty → 400), then `Folder().load(..., exc=True)`, then build the
+query from that id. Test anonymously, against a **private** dataset, with the
+parameter missing and empty (`testFindPropertyValuesRequiresDatasetId`,
+`testFindConnectionsWithEmptyDatasetIdDenied`).
+
 ### Ids that match nothing get no access check
 
 Bulk endpoints usually check access on the datasets of the documents an id list resolves to (`distinctDatasetIds` → `requireDatasetsAccess`). An id that matches no document resolves to no dataset, so nothing about it is checked. That is harmless only if nothing downstream acts on the raw id. The bulk-delete cleanup cascade did: it removed connections and property values pointing at the id in **any** dataset. Leftover orphans in other users' datasets could therefore be deleted by naming their dangling ids. Anything that fans out from caller-supplied ids (cascades, events, follow-up queries keyed on the id rather than the loaded document) must run only for ids that resolved to a document the caller was checked against. `Annotation.multipleAnnotationsRemovedEvent` filters to existing annotations before triggering cleanup (#1418, Codex P2).
@@ -710,8 +723,9 @@ Girder 5 ASGI bridge passes chunks through a one-slot queue, so a slow client
 gets backpressure rather than a growing buffer. In tests, a streamed body is a
 generator of chunks: pass `isJson=False` and read `list(resp.body)`. More than
 one chunk shows the endpoint streamed (`test_list_streaming.py`). Measure with
-the container's cgroup `anon` memory, not `/proc/1/status` (that is rosetta's
-view on Apple silicon). Sample it while the request runs and abort past a cap.
+the container's cgroup `anon` memory (`/sys/fs/cgroup/memory.stat`), which is
+what the OOM killer acts on and counts every process in the container, the
+celery workers included. Sample it while the request runs and abort past a cap.
 
 ## Returning a large JSON body from numpy (orjson + raw response)
 
