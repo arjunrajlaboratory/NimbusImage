@@ -2,11 +2,12 @@
 
 `limit=0` asks for every document in a dataset. Built as one list and one
 JSON string, 709K property values took Girder past 13.5 GiB and the
-container was OOM-killed. Streamed, Girder holds one Mongo batch at a time
-(`streamRawJsonArray`: one chunk per raw batch of up to 16 MB, plus `[`,
-`,` and `]`). The Girder test server hands a streamed body back as a
-generator of chunks and a serialized one as a single chunk, so more than
-one chunk means the response was not materialized.
+container was OOM-killed. Streamed, Girder holds a few Mongo batches at a
+time (`STREAM_PREFETCH_BATCHES` queued ahead; `streamRawJsonArray` yields
+one chunk per raw batch of up to 16 MB, plus `[`, `,` and `]`). The
+Girder test server hands a streamed body back as a generator of chunks and
+a serialized one as a single chunk, so more than one chunk means the
+response was not materialized.
 """
 import json
 

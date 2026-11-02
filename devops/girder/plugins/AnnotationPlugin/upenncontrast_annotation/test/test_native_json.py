@@ -156,8 +156,8 @@ def wideDocument(width, repeatAt=None):
     if repeatAt is None:
         return raw
     extra = bson.encode({"values": {"zzzzzzzzzzzzzzzzzzzzzzzz": -1.0}})
-    # Splice one more int-free element into the values subdocument: the
-    # last element's key is rewritten to the repeated key.
+    # Append one more element (a double, copied from a second encoded
+    # document) to the values subdocument, renamed to the repeated key.
     element = extra[extra.index(b"\x01zzzz"):-2]
     element = element.replace(
         b"zzzzzzzzzzzzzzzzzzzzzzzz", keys[repeatAt].encode()
@@ -277,7 +277,12 @@ class TestTranscoder:
         for width in (31, 32, 33, 2000):
             batch = wideDocument(width) * 3
             assert transcoder.transcode(batch) == expectedJson(batch), width
-        for width, repeatAt in ((40, 0), (40, 32), (2000, 1999)):
+        # (31, 0) and (32, 31): the repeat is caught by the linear scan,
+        # before or exactly at the switch; the rest after it, including a
+        # repeat of the key that triggers the switch (40, 32).
+        for width, repeatAt in (
+            (31, 0), (32, 31), (40, 0), (40, 32), (2000, 1999),
+        ):
             batch = wideDocument(width, repeatAt)
             assert bson.decode(batch)["values"][
                 "6a18de9586eb3776%08x" % repeatAt

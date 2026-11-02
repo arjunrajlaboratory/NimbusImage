@@ -43,6 +43,15 @@ Status values: `fixed <commit>`, `not real` (with the evidence), `declined` (rea
 | R2-B4 | branch-review | Nit | `test_list_streaming.py` (#1458's file) described ~1000-document chunks, stale since raw-batch streaming | fixed here, because #1460 made it stale |
 | Codex | Codex | — | Ran on `07ca44bf`: "No actionable regressions were found" | — |
 
+## Round 3 (head `3edeaf28`)
+
+| # | Pass | Severity | Finding | Status |
+|---|---|---|---|---|
+| R3-B1 | branch-review | Nit | *testWideDocumentsMatchOrjson* only repeated keys above the switch, though the checklist cites it for both sides; its splice comment misdescribed the helper | fixed: added (31, 0) and (32, 31), both caught by the scan (the second at the trigger position); comment reworded |
+| R3-B2 | branch-review | Nit | Round 2's rewrite of `test_list_streaming.py`'s docstring said Girder holds "one Mongo batch at a time", but the endpoints prefetch `STREAM_PREFETCH_BATCHES` ahead (~4 batches in flight) | fixed |
+| — | /code-review | — | No findings. Checked: `wideDocument` builds valid BSON (lengths, element slice, last-value decode), the test cases hit the intended branches, runtime import shadowing, Docker stage consistency, ImportError-only fallback, edge-case types | — |
+| — | Codex | — | Ran on `3edeaf28`: "No actionable regressions were found" | — |
+
 ## Not in this PR's lines
 
 No finding fell in #1458's commit `15bcc1c8`.
