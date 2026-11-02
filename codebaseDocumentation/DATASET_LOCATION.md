@@ -42,7 +42,7 @@ export then failed with "Image not found for channel …" (issue #1388, PR #1389
   (`setDatasetViewId`) or the dataset (`setSelectedDataset`) flushes the pending
   save first, while the two still match. Every clamp site schedules a save.
 
-## Camera deep links (`?x=&y=&zoom=`)
+## Camera deep links (`?x=&y=&zoom=&width=`)
 
 `#/datasetView/<viewId>/view?xy=0&z=3&time=0&x=1520&y=860&zoom=6` opens the
 view on frame (0, 3, 0) centered on image pixel (1520, 860). External tools
@@ -56,12 +56,13 @@ view on frame (0, 3, 0) centered on image pixel (1520, 860). External tools
 - **`zoom`**: optional GeoJS zoom level, the same number `store.cameraInfo.zoom`
   holds. At `zoom = maxLevel` of the image's tile pyramid one image pixel is one
   screen pixel; each step up or down doubles or halves the magnification.
-  Without it the viewer zooms so about 512 image pixels span the viewport's
-  width (`DEFAULT_DEEP_LINK_VIEW_WIDTH`). Either way the zoom is clamped to the
-  map's zoom range.
+  Without it the viewer zooms so `width` image pixels (a positive number, for
+  callers such as the MCP server that know a region but not the map's
+  pyramid), else about 512 (`DEFAULT_DEEP_LINK_VIEW_WIDTH`), span the
+  viewport's width. Either way the zoom is clamped to the map's zoom range.
 - **Invalid values are ignored.** A missing, empty, non-numeric or non-finite
   `x` or `y` opens the view as if neither were given (fitted to the image as
-  usual); an invalid `zoom` falls back to the default.
+  usual); an invalid `zoom` or `width` falls back to the default.
 
 How it flows (`src/utils/cameraDeepLink.ts` parses; the store and ImageViewer
 apply):
@@ -75,12 +76,12 @@ apply):
    applies it right after its fit; on an unchanged dataset a watcher applies it
    when loading ends. It zooms, centers map 0, and syncs `cameraInfo`, so
    every map in a multi-map layout follows.
-3. Applying clears the target, so it runs once per navigation. The `x`/`y`/
-   `zoom` keys stay in the URL (the route mapper's writes copy the query), but
-   nothing re-reads them on z/time/xy changes. A reload re-applies them, which
-   is what a link should do.
-4. Changing only `x`/`y`/`zoom` on the open view (`DatasetView.vue` watches
-   those three keys) re-targets it through `requestCameraDeepLink`.
+3. Applying clears the target, so it runs once per navigation, and
+   `DatasetView.vue` then removes the camera keys from the URL (`router.replace`),
+   so a reload or a copied URL keeps where the user moved to instead of jumping
+   back to the linked point.
+4. Changing only the camera keys on the open view (`DatasetView.vue` watches
+   them) re-targets it through `requestCameraDeepLink`.
 5. The breadcrumb view switcher keeps `xy`/`z`/`time` but drops the camera
    keys, since the point belongs to the view being left.
 
@@ -118,6 +119,8 @@ Run `pnpm test src/utils/datasetLocation.test.ts src/store/__tests__/datasetLoca
 - [ ] **It applies once per navigation.** — *"applies once: a later fit or frame change does not re-center"*
 - [ ] **A same-dataset view switch still applies it**, when loading ends. — *"waits for loading to end when the dataset is unchanged"*
 - [ ] **The view switcher drops the camera keys.** — *"goToView keeps the location but drops a camera deep link"*
+- [ ] **A link can size the view by image width**; an explicit zoom wins. — *"shows a link's width, and its zoom wins over it"*
+- [ ] **Applied keys leave the URL**, so a reload keeps where the user moved. — *"drops the camera keys once a target stops pending"*, *"leaves the URL alone while pending or without camera keys"*
 
 ### Known limitation
 

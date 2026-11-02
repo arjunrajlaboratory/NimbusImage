@@ -488,6 +488,17 @@ class TestCompositeStyle:
              "palette": ["#000000", "#00ff00"]},
         ]}
 
+    def test_reuses_get_composites_histograms(
+        self, mock_gc, sample_tiles_metadata,
+    ):
+        ds, _ = _composite_dataset(
+            mock_gc, sample_tiles_metadata, [_layer()], {0: _skewed()},
+        )
+        ds.images.get_composite()
+        calls = mock_gc.get.call_count
+        ds.images.composite_style()
+        assert mock_gc.get.call_count == calls
+
     def test_hidden_layers_and_nothing_drawn(
         self, mock_gc, sample_tiles_metadata,
     ):

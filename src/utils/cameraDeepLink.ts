@@ -5,9 +5,11 @@
  *
  * - `x`, `y`: full-resolution image pixel coordinates, origin top-left, the
  *   same coordinates annotations are stored in. Both are required.
+ * - `width`: optional image pixels to show across the viewport, for callers
+ *   that know a region but not the map (an MCP image result links its crop).
  * - `zoom`: optional GeoJS zoom level, the value `store.cameraInfo.zoom`
- *   holds. Without it the viewer zooms so about `DEFAULT_DEEP_LINK_VIEW_WIDTH`
- *   image pixels span the viewport's width.
+ *   holds; it wins over `width`. Without either the viewer zooms so about
+ *   `DEFAULT_DEEP_LINK_VIEW_WIDTH` image pixels span the viewport's width.
  *
  * Invalid values (missing, empty, non-numeric, non-finite) are ignored: a link
  * with an unusable `x` or `y` opens the view as if neither were given, and an
@@ -18,6 +20,8 @@ export interface ICameraDeepLink {
   x: number;
   y: number;
   zoom: number | null;
+  /** Image pixels across the viewport; set only when the link gives one. */
+  width?: number;
 }
 
 /** A parsed link, tied to the dataset it was made for. */
@@ -25,7 +29,7 @@ export interface IPendingCameraDeepLink extends ICameraDeepLink {
   datasetId: string;
 }
 
-export const CAMERA_DEEP_LINK_QUERY_KEYS = ["x", "y", "zoom"] as const;
+export const CAMERA_DEEP_LINK_QUERY_KEYS = ["x", "y", "zoom", "width"] as const;
 
 /** Image pixels across the viewport when a link gives no `zoom`. */
 export const DEFAULT_DEEP_LINK_VIEW_WIDTH = 512;
@@ -54,7 +58,12 @@ export function parseCameraDeepLink(
   if (x === null || y === null) {
     return null;
   }
-  return { x, y, zoom: finiteQueryNumber(query.zoom) };
+  const link: ICameraDeepLink = { x, y, zoom: finiteQueryNumber(query.zoom) };
+  const width = finiteQueryNumber(query.width);
+  if (width !== null && width > 0) {
+    link.width = width;
+  }
+  return link;
 }
 
 /** `query` without the camera deep-link keys, for links that change view. */
@@ -82,8 +91,8 @@ export function zoomToShowImageWidth(
 }
 
 /**
- * The zoom a deep link should open at: its own `zoom`, or the default width,
- * clamped to the map's zoom range.
+ * The zoom a deep link should open at: its own `zoom`, else its `width` (or
+ * the default width) across the viewport, clamped to the map's zoom range.
  */
 export function cameraDeepLinkZoom(
   link: ICameraDeepLink,
@@ -95,6 +104,30 @@ export function cameraDeepLinkZoom(
 ): number {
   const zoom =
     link.zoom ??
-    zoomToShowImageWidth(map.unitsPerPixelAtZoom0, map.viewportWidth);
+    zoomToShowImageWidth(
+      map.unitsPerPixelAtZoom0,
+      map.viewportWidth,
+      link.width ?? DEFAULT_DEEP_LINK_VIEW_WIDTH,
+    );
   return Math.min(map.zoomRange.max, Math.max(map.zoomRange.min, zoom));
+}
+
+/**
+ * The query to replace the route's with once a target stops pending (applied
+ * or superseded): without the camera keys, so a reload or a copied URL does
+ * not jump back to the linked point. null when nothing needs to change.
+ */
+export function queryAfterCameraDeepLink<T extends Record<string, unknown>>(
+  pending: IPendingCameraDeepLink | null,
+  previous: IPendingCameraDeepLink | null | undefined,
+  query: T,
+): Partial<T> | null {
+  if (
+    !previous ||
+    pending ||
+    !CAMERA_DEEP_LINK_QUERY_KEYS.some((key) => key in query)
+  ) {
+    return null;
+  }
+  return omitCameraDeepLinkQuery(query);
 }

@@ -27,12 +27,14 @@ def ni_view_link(
     x: float | None = None,
     y: float | None = None,
     zoom: float | None = None,
+    width: float | None = None,
     annotation_id: str | None = None,
 ) -> dict:
     """A link that opens the dataset in the NimbusImage app at one XY
     position, z-slice, and time point (0-based indices; the app's "Z=2"
     is z=1), optionally centered on (x, y) in full-resolution image
-    pixels at a zoom level. Pass annotation_id instead to open at that
+    pixels, showing `width` image pixels across the viewer (or at a
+    viewer zoom level). Pass annotation_id instead to open at that
     annotation's location, centered on it. Give the URL to the user when
     they want to open, see, or share a place in the app; it opens in
     their own (signed-in) app, with their annotations and settings.
@@ -59,6 +61,7 @@ def ni_view_link(
             ds, xy=xy, z=z, time=time,
             x=None if x is None else round(x, 1),
             y=None if y is None else round(y, 1), zoom=zoom,
+            width=width,
         ),
         "location": links.slice_label(ds, xy, z, time),
     }

@@ -31,7 +31,7 @@ def app_base() -> str:
 
 
 def view_link(ds, xy=None, z=None, time=None, x=None, y=None,
-              zoom=None) -> str:
+              zoom=None, width=None) -> str:
     """The app at this location, in the caller's view of the dataset;
     the dataset's page (where a view is made) when they have none."""
     view = ds.collections.default_view()
@@ -39,7 +39,12 @@ def view_link(ds, xy=None, z=None, time=None, x=None, y=None,
         return dataset_info_url(ds.id, app_base())
     return dataset_view_url(
         view["_id"], app_base(), xy=xy, z=z, time=time, x=x, y=y, zoom=zoom,
+        width=width,
     )
+
+
+def downloads_enabled() -> bool:
+    return _common.settings().browser_api_url is not None
 
 
 def api_link(path: str, params: dict) -> str | None:

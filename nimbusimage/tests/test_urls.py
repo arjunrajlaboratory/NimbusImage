@@ -51,6 +51,8 @@ class TestDatasetViewUrl:
     def test_center_and_zoom(self):
         url = dataset_view_url("view_001", z=1, x=120.5, y=40, zoom=3)
         assert url.endswith("view?z=1&x=120.5&y=40&zoom=3")
+        assert dataset_view_url("v", x=1, y=2, width=800).endswith(
+            "view?x=1&y=2&width=800")
 
     def test_none_params_excluded(self):
         url = dataset_view_url("view_001", z=5, time=None)

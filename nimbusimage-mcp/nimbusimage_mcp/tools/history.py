@@ -30,8 +30,10 @@ def ni_history_list(dataset_id: str, limit: int = 10) -> dict:
     """The user's own recent changes to a dataset that undo can reverse,
     newest first: creating, editing (including tagging), or deleting
     annotations and connections, and imports. Worker runs and computed
-    measurements are not recorded and cannot be undone. Use this before
-    ni_history_undo to say what would be undone.
+    measurements are not recorded and cannot be undone. History keeps
+    each user's last 10 actions, and recording a new action drops entries
+    older than an hour. Use this before ni_history_undo to say what would
+    be undone.
     """
     rows = entries(client(), dataset_id)
     limit = clamp(limit, 1, MAX_HISTORY)

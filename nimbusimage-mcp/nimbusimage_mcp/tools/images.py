@@ -4,6 +4,7 @@ annotation outlines on request and links to the app and a download."""
 from __future__ import annotations
 
 import io
+from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
 import numpy as np
@@ -21,6 +22,9 @@ MAX_OUTLINES = 3000
 LIST_PAGE = 10_000
 MAX_OUTLINE_SCAN = 20_000
 OUTLINE_COLOR = (255, 255, 0)
+# A z max projection reads every slice (PROJECTION_WORKERS at a time).
+MAX_PROJECTION_SLICES = 100
+PROJECTION_WORKERS = 6
 MAX_IMAGE_SIZE = 2048
 # Percentiles of the returned pixels used to stretch a raw channel.
 CHANNEL_CONTRAST = (0.5, 99.5)
@@ -101,7 +105,8 @@ def outlines(nc, ds, tags, xy, z, time, crop) -> tuple[list, int, bool]:
     """Annotations with any of `tags` at this location whose center is in
     the shown region (with a margin, so edge objects are drawn): two
     requests, the list's centers then the chosen ones' coordinates.
-    Returns (annotations, matched, capped)."""
+    Returns (annotations, matched near the region, whether every
+    annotation at the location was scanned)."""
     height, width = ds.shape
     left, top, right, bottom = crop or (0, 0, width, height)
     margin = 0.1 * max(right - left, bottom - top)
@@ -127,11 +132,18 @@ def outlines(nc, ds, tags, xy, z, time, crop) -> tuple[list, int, bool]:
         if not page["rows"]:
             break
         offset += len(page["rows"])
-    capped = len(ids) > MAX_OUTLINES or (total or 0) > offset
+    scan_complete = offset >= (total or 0)
+    if len(ids) > MAX_OUTLINES:
+        # An even spread over the list, not its first entries, which
+        # would cluster in one part of the image.
+        step = len(ids) / MAX_OUTLINES
+        ids_drawn = [ids[int(i * step)] for i in range(MAX_OUTLINES)]
+    else:
+        ids_drawn = ids
     drawn = nc.girder.post(
-        "upenn_annotation/hydrate", json=ids[:MAX_OUTLINES]
-    ) if ids else []
-    return drawn, len(ids), capped
+        "upenn_annotation/hydrate", json=ids_drawn
+    ) if ids_drawn else []
+    return drawn, len(ids), scan_complete
 
 
 def draw_outlines(pixels: np.ndarray, annotations: list, crop,
@@ -166,12 +178,19 @@ def draw_outlines(pixels: np.ndarray, annotations: list, crop,
     return np.asarray(image)
 
 
-def outline_note(tags, drawn: int, matched: int, capped: bool) -> str:
+def outline_note(tags, drawn: int, matched: int,
+                 scan_complete: bool = True) -> str:
     note = f"Outlined in yellow: {drawn} annotation(s) tagged any of {tags}"
-    if capped:
+    if not scan_complete:
         note += (
-            f" (not all: {matched}+ match here and at most {MAX_OUTLINES} "
-            "are drawn; crop to a smaller region to see every outline)"
+            f" (an even sample: more than {matched} are in view, since "
+            f"only the first {MAX_OUTLINE_SCAN} at this location were "
+            "read; crop to a smaller region to see every outline)"
+        )
+    elif drawn < matched:
+        note += (
+            f" (an even sample of the {matched} in view; at most "
+            f"{MAX_OUTLINES} are drawn, so crop to see every outline)"
         )
     return note + "."
 
@@ -184,8 +203,10 @@ def footer(ds, xy, z, time, crop, download: str | None,
     center = {}
     if crop is not None:
         left, top, right, bottom = crop
+        # The crop's center and width, so the app shows what the image did.
         center = {"x": round((left + right) / 2, 1),
-                  "y": round((top + bottom) / 2, 1)}
+                  "y": round((top + bottom) / 2, 1),
+                  "width": right - left}
     lines = [
         links.slice_label(ds, xy, z, time, projected),
         f"Open in NimbusImage: "
@@ -247,12 +268,15 @@ def ni_image_get_composite(
         # and say so, rather than refuse a frame that may really be dark.
         notes.append(BLACK_NOTE)
     if outline_tags:
-        drawn, matched, capped = outlines(
+        drawn, matched, scanned = outlines(
             nc, ds, outline_tags, xy, z, time, crop
         )
         rgb = draw_outlines(rgb, drawn, crop, ds.shape)
-        notes.append(outline_note(outline_tags, len(drawn), matched, capped))
-    style = ds.images.composite_style(xy=xy, z=z, time=time)
+        notes.append(outline_note(outline_tags, len(drawn), matched, scanned))
+    # Only when a link can be made: building the style reads each layer's
+    # histogram (cached from get_composite above).
+    style = ds.images.composite_style(xy=xy, z=z, time=time) \
+        if links.downloads_enabled() else None
     download = links.region_link(
         ds, style, crop, filename=f"{ds.name} composite.png"
     ) if style else None
@@ -301,11 +325,20 @@ def ni_image_get_channel(
             f"channel={channel} is out of range (0..{ds.num_channels - 1})"
         )
     zs = range(ds.num_z) if projection == "max" else [z]
-    frames = [
-        ds.images.get(xy=xy, z=zi, time=time, channel=channel, crop=crop,
-                      max_size=max_size)
-        for zi in zs
-    ]
+    if len(zs) > MAX_PROJECTION_SLICES:
+        raise ValueError(
+            f"This stack has {ds.num_z} z-slices; a projection here is "
+            f"limited to {MAX_PROJECTION_SLICES}. Open it in the app "
+            "instead, where a layer can show a z max projection."
+        )
+
+    def fetch(zi):
+        return ds.images.get(xy=xy, z=zi, time=time, channel=channel,
+                             crop=crop, max_size=max_size)
+
+    # The slices are independent; fetch a few at a time.
+    with ThreadPoolExecutor(max_workers=PROJECTION_WORKERS) as pool:
+        frames = list(pool.map(fetch, zs))
     frame = np.max(frames, axis=0) if len(frames) > 1 else frames[0]
     if frame.ndim == 3:
         # A multi-band (e.g. RGB brightfield) frame: show its first band.
@@ -317,13 +350,13 @@ def ni_image_get_channel(
             f"Maximum projection over all {ds.num_z} z-slices."
         )
     if outline_tags:
-        drawn, matched, capped = outlines(
+        drawn, matched, scanned = outlines(
             nc, ds, outline_tags, xy, z, time, crop
         )
         pixels = draw_outlines(
             np.stack([pixels] * 3, axis=-1), drawn, crop, ds.shape
         )
-        notes.append(outline_note(outline_tags, len(drawn), matched, capped))
+        notes.append(outline_note(outline_tags, len(drawn), matched, scanned))
     download = links.region_link(
         ds, channel_style(ds, channel, xy, zs, time), crop,
         filename=f"{ds.name} channel {channel}.png",

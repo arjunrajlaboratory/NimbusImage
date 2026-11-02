@@ -50,6 +50,7 @@ def dataset_view_url(
     x: float | None = None,
     y: float | None = None,
     zoom: float | None = None,
+    width: float | None = None,
 ) -> str:
     """URL for the dataset image viewer.
 
@@ -66,6 +67,7 @@ def dataset_view_url(
         x, y: Center the viewer on this point, in full-resolution image
             pixels (origin top-left, as annotation coordinates).
         zoom: Viewer zoom level for the centered point.
+        width: Instead of zoom, image pixels to show across the viewer.
     """
     query = {
         "xy": xy,
@@ -78,6 +80,7 @@ def dataset_view_url(
         "x": x,
         "y": y,
         "zoom": zoom,
+        "width": width,
     }
     return _build_url(frontend_url, f"datasetView/{view_id}/view", query)
 

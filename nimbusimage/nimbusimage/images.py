@@ -37,6 +37,9 @@ class ImageAccessor:
     def __init__(self, dataset: Dataset):
         self._dataset = dataset
         self._frame_map: dict | None = None
+        # Histograms by frame: get_composite and composite_style both
+        # need them.
+        self._histograms: dict[int, list] = {}
 
     def _ensure_frame_map(self):
         """Build channel→time→z→xy→frame_index map lazily."""
@@ -341,6 +344,15 @@ class ImageAccessor:
             if xyi in by_time.get(t, {}).get(zi, {})
         ]
 
+    def _histogram(self, frame: int):
+        """A frame's histogram, fetched once per accessor."""
+        if frame not in self._histograms:
+            self._histograms[frame] = self._dataset._gc.get(
+                f"item/{self._dataset._item_id}/tiles/histogram",
+                parameters={**_HISTOGRAM_PARAMS, "frame": frame},
+            )
+        return self._histograms[frame]
+
     def _contrast_range(
         self, contrast: dict, frames: list[int]
     ) -> tuple[float, float] | None:
@@ -352,13 +364,7 @@ class ImageAccessor:
             return float(black), float(white)
         # Percentile mode: a linear percent of the histogram's range,
         # rounded like the app's scaleLinear().rangeRound().
-        histograms = [
-            self._dataset._gc.get(
-                f"item/{self._dataset._item_id}/tiles/histogram",
-                parameters={**_HISTOGRAM_PARAMS, "frame": frame},
-            )
-            for frame in frames
-        ]
+        histograms = [self._histogram(frame) for frame in frames]
         if not all(histograms):
             return None
         lo = min(h[0]["min"] for h in histograms)

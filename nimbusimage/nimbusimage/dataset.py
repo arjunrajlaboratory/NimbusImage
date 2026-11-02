@@ -449,6 +449,7 @@ class Dataset:
         x: float | None = None,
         y: float | None = None,
         zoom: float | None = None,
+        width: float | None = None,
     ) -> str:
         """URL for the dataset image viewer.
 
@@ -463,6 +464,9 @@ class Dataset:
             x, y: Center the viewer on this point, in full-resolution
                 image pixels (origin top-left, as annotation coordinates).
             zoom: Viewer zoom level for the centered point.
+            width: Instead of zoom, image pixels to show across the
+                viewer.
+        width: Instead of zoom, image pixels to show across the viewer.
 
         Returns:
             URL string for the image viewer.
@@ -479,7 +483,7 @@ class Dataset:
             view_id, self._frontend_url,
             xy=xy, z=z, time=time, layer=layer,
             unroll_xy=unroll_xy, unroll_z=unroll_z, unroll_t=unroll_t,
-            x=x, y=y, zoom=zoom,
+            x=x, y=y, zoom=zoom, width=width,
         )
 
     def configuration_url(self) -> str:

@@ -100,6 +100,7 @@ def test_composite_links_the_app_and_a_styled_download(ds, downloads):
     assert "Showing Z 2 of 7" in footer
     app = footer.split("Open in NimbusImage: ")[1].split("\n")[0]
     assert query(app)["x"] == "200.0" and query(app)["y"] == "50.0"
+    assert query(app)["width"] == "200"
     download = footer.split("full resolution): ")[1].split("\n")[0]
     assert download.startswith(f"{BROWSER_API}/item/item1/tiles/region?")
     params = query(download)
@@ -164,21 +165,42 @@ def test_draw_outlines_scales_to_the_shown_region():
     assert tuple(drawn[ys[0], xs[0]]) == images.OUTLINE_COLOR
 
 
-def test_outline_note_says_when_capped():
-    assert "not all" in images.outline_note(["a"], 3000, 5000, True)
-    assert "not all" not in images.outline_note(["a"], 2, 2, False)
+def test_outline_note_says_how_it_was_capped():
+    drawn = images.outline_note(["a"], 3000, 5000, True)
+    assert "even sample of the 5000 in view" in drawn
+    scan = images.outline_note(["a"], 3000, 19000, False)
+    assert "more than 19000" in scan
+    assert "sample" not in images.outline_note(["a"], 2, 2, True)
 
 
-def test_channel_max_projection_over_every_slice(ds, downloads):
+def test_capped_outlines_are_an_even_sample(ds, nc, monkeypatch):
+    monkeypatch.setattr(images, "MAX_OUTLINES", 3)
+    rows = [{"_id": str(i), "centroid": {"x": 1, "y": 1}} for i in range(9)]
+    nc.girder.post.side_effect = lambda path, json: (
+        {"total": 9, "offset": 0, "rows": rows}
+        if path == "upenn_annotation/list" else [])
+    _, matched, complete = images.outlines(
+        nc, ds, ["a"], 0, 0, 0, None)
+    assert nc.girder.post.call_args.kwargs["json"] == ["0", "3", "6"]
+    assert (matched, complete) == (9, True)
+
+
+def test_channel_max_projection_over_every_slice(ds, downloads,
+                                                 monkeypatch):
     ds.num_z = 3
     ds.images.get.side_effect = lambda **kw: np.full(
         (4, 4), kw["z"] * 10, np.uint16)
     ds.images.frame_index.side_effect = lambda **kw: kw["z"] * 2 + 1
     result = images.ni_image_get_channel(
         dataset_id="d1", channel=1, z=1, projection="max")
-    assert [c.kwargs["z"] for c in ds.images.get.call_args_list] == [0, 1, 2]
+    assert sorted(c.kwargs["z"] for c in ds.images.get.call_args_list) \
+        == [0, 1, 2]
     assert "Maximum projection over all 3 z-slices." in result
     assert "Z 2 of" not in result[-1]
+    monkeypatch.setattr(images, "MAX_PROJECTION_SLICES", 2)
+    with pytest.raises(ToolError, match="limited to 2"):
+        images.ni_image_get_channel(
+            dataset_id="d1", channel=1, projection="max")
     download = result[-1].split("full resolution): ")[1].split("\n")[0]
     bands = json.loads(query(download)["style"])["bands"]
     assert [b["frame"] for b in bands] == [1, 3, 5]

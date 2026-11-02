@@ -3,6 +3,7 @@ import {
   cameraDeepLinkZoom,
   omitCameraDeepLinkQuery,
   parseCameraDeepLink,
+  queryAfterCameraDeepLink,
   zoomToShowImageWidth,
 } from "./cameraDeepLink";
 
@@ -56,8 +57,16 @@ describe("parseCameraDeepLink", () => {
 });
 
 describe("omitCameraDeepLinkQuery", () => {
-  it("drops x, y and zoom and keeps everything else", () => {
-    const query = { x: "1", y: "2", zoom: "3", xy: "4", z: "5", layer: "a" };
+  it("drops x, y, zoom and width and keeps everything else", () => {
+    const query = {
+      x: "1",
+      y: "2",
+      zoom: "3",
+      width: "6",
+      xy: "4",
+      z: "5",
+      layer: "a",
+    };
     expect(omitCameraDeepLinkQuery(query)).toEqual({
       xy: "4",
       z: "5",
@@ -88,6 +97,24 @@ describe("default zoom", () => {
     ).toBe(4);
   });
 
+  it("shows a link's width, and its zoom wins over it", () => {
+    const map = {
+      unitsPerPixelAtZoom0: 4096,
+      viewportWidth: 1024,
+      zoomRange: { min: -2, max: 20 },
+    };
+    const link = parseCameraDeepLink({ x: "1", y: "2", width: "2000" })!;
+    expect(link.width).toBe(2000);
+    expect(cameraDeepLinkZoom(link, map)).toBeCloseTo(
+      zoomToShowImageWidth(4096, 1024, 2000),
+    );
+    expect(cameraDeepLinkZoom({ ...link, zoom: 4 }, map)).toBe(4);
+    // A non-positive width is ignored.
+    expect(
+      parseCameraDeepLink({ x: "1", y: "2", width: "0" })!.width,
+    ).toBeUndefined();
+  });
+
   it("clamps to the map's zoom range", () => {
     const map = {
       unitsPerPixelAtZoom0: 4096,
@@ -103,5 +130,21 @@ describe("default zoom", () => {
         { ...map, viewportWidth: 0 },
       ),
     ).toBe(0);
+  });
+});
+
+describe("queryAfterCameraDeepLink", () => {
+  const target = { x: 1, y: 2, zoom: null, datasetId: "d" };
+
+  it("drops the camera keys once a target stops pending", () => {
+    expect(
+      queryAfterCameraDeepLink(null, target, { x: "1", y: "2", z: "3" }),
+    ).toEqual({ z: "3" });
+  });
+
+  it("leaves the URL alone while pending or without camera keys", () => {
+    expect(queryAfterCameraDeepLink(target, null, { x: "1" })).toBeNull();
+    expect(queryAfterCameraDeepLink(null, null, { x: "1" })).toBeNull();
+    expect(queryAfterCameraDeepLink(null, target, { z: "3" })).toBeNull();
   });
 });
