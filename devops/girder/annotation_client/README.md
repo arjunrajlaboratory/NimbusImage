@@ -25,7 +25,8 @@ code path:
   retried, because it arrives after the server timeout and a retry would
   rerun the slow request. A POST is never retried once sent, and it goes out
   on a fresh connection, as before. Any request that fails to connect at all
-  (Girder restarting) is retried, since nothing reached the server. The session keeps no cookies, so the load
-  balancer's sticky cookie doesn't pin a worker to one backend.
+  (Girder restarting) is retried, since nothing reached the server. The
+  session keeps no cookies, so the load balancer's sticky cookie doesn't pin
+  a worker to one backend.
 
 Tests: `pip install -e . numpy pytest && pytest tests`.
