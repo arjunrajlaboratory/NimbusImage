@@ -54,7 +54,7 @@ from ..models.rasterFilter import (
     RasterFilter as RasterFilterModel,
     UnknownRasterFilter,
 )
-from ..helpers.aggregation import prefetchedBatches
+from ..helpers.aggregation import STREAM_PREFETCH_BATCHES, prefetchedBatches
 from ..helpers.serialization import (
     orJsonDefaults,
     streamJsonArray,
@@ -476,13 +476,9 @@ class Annotation(Resource):
         setResponseHeader("Content-Type", "application/json")
         if callable(getattr(cursor, 'count', None)):
             cherrypy.response.headers['Girder-Total-Count'] = cursor.count()
-        # Fetching overlaps transcoding, which releases the GIL. A queue of
-        # two batches keeps it busy (fetching is the faster half) and bounds
-        # a request at ~4 batches of up to 16 MB in flight, plus the JSON of
-        # the one being transcoded: still well under the decoded dicts the
-        # previous path held.
+        # Fetching overlaps transcoding, which releases the GIL.
         return streamRawJsonArray(
-            prefetchedBatches(cursor, depth=2),
+            prefetchedBatches(cursor, depth=STREAM_PREFETCH_BATCHES),
             self._annotationModel.collection.codec_options,
         )
 

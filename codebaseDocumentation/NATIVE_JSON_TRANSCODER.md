@@ -97,6 +97,9 @@ Fallbacks:
 - Girder's real codec options still pass that gate (otherwise every read silently drops to the slow path): *"testGirderCodecOptionsUseTheTranscoder"*.
 - Malformed BSON is an error, never a crash or different output: *"testRefusesMalformedBson"* (plus the crate's `cargo test`, which truncates and corrupts every byte).
 
+Cost:
+- Repeated-key detection stays linear for wide documents, such as a gene panel with thousands of keys in one dict: a level switches from a linear scan to a hash set past 16 keys (crate test `wide_documents_stay_linear_and_still_refuse_repeats`; the 2026-11 review measured 500 keys at 11× slower than orjson before the fix). Reviews: `NATIVE_JSON_TRANSCODER-REVIEW.md`.
+
 Mongo access:
 - `findRawBatches` builds the same cursor as Girder's `Model.find`, so a Girder upgrade that changes `find` fails here: *"testFindRawBatchesMatchesFind"*, *"testFindRawBatchesReturnsTheSameDocuments"*.
 - A dropped response closes the cursor and stops the prefetch thread, including through the endpoints' `streamRawJsonArray(prefetchedBatches(...))`: *"testClosingEarlyClosesTheCursor"*, *"testClosingEarlyThroughPrefetchStopsTheThread"*, *"testClosingEarlyStopsTheThreadAndClosesTheCursor"*.

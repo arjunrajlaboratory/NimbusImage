@@ -18,6 +18,13 @@ AGGREGATION_MAX_TIME_MS = 300000
 
 # Raw batches a prefetch thread may hold ahead of the consumer.
 PREFETCH_BATCHES = 4
+# The same for the find-based list endpoints that stream raw batches to JSON
+# (annotations, property values, connections). Fetching is the faster half
+# there, so two keep the transcoder busy, and they bound a request at ~4
+# batches of up to 16 MB in flight (two queued, one in the fetch thread's
+# put, one being transcoded) plus that batch's JSON: still well under the
+# decoded dicts the old path held.
+STREAM_PREFETCH_BATCHES = 2
 # How often a blocked prefetch thread checks whether its consumer left.
 _PREFETCH_POLL_SECONDS = 0.5
 _END = object()

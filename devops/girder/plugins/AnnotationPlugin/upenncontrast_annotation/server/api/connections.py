@@ -7,7 +7,7 @@ from girder.models.folder import Folder
 
 from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
-from ..helpers.aggregation import prefetchedBatches
+from ..helpers.aggregation import STREAM_PREFETCH_BATCHES, prefetchedBatches
 from ..helpers.serialization import streamRawJsonArray
 from ..helpers.validation import requireBulkCreateBody
 from ..models.annotation import Annotation as AnnotationModel
@@ -286,7 +286,7 @@ class AnnotationConnection(Resource):
         # memory with the dataset.
         setResponseHeader("Content-Type", "application/json")
         return streamRawJsonArray(
-            prefetchedBatches(cursor, depth=2),
+            prefetchedBatches(cursor, depth=STREAM_PREFETCH_BATCHES),
             self._connectionModel.collection.codec_options,
         )
 

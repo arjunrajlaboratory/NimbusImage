@@ -734,7 +734,7 @@ documents to JSON" above):
 cursor = self._model.findRawBatches(query, sort=sort, limit=limit,
                                     offset=offset).hint(...)
 setResponseHeader("Content-Type", "application/json")
-return streamRawJsonArray(prefetchedBatches(cursor, depth=2),
+return streamRawJsonArray(prefetchedBatches(cursor, depth=STREAM_PREFETCH_BATCHES),
                           self._model.collection.codec_options)
 ```
 

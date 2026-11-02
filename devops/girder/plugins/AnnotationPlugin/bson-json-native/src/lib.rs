@@ -16,6 +16,7 @@
 //! and `$id` keys (pymongo decodes it to a DBRef, which orjson can't
 //! serialize), and nesting deeper than MongoDB allows.
 
+use std::collections::HashSet;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +71,11 @@ fn type_name(t: u8) -> &'static str {
 /// (only possible from hand-built BSON) goes through Python, which reproduces
 /// orjson's behavior exactly instead of this code approximating it.
 const MAX_DEPTH: u32 = 100;
+
+/// Keys in one document level checked for repeats by a linear scan; a wider
+/// level switches to a hash set, so a document with thousands of keys (a
+/// gene panel) stays linear.
+const LINEAR_KEY_SCAN: usize = 16;
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
@@ -258,7 +264,7 @@ struct Writer<'o, 'i> {
     out: &'o mut Vec<u8>,
     fbuf: ryu::Buffer,
     /// Keys of the documents being written, innermost last; each level
-    /// checks its own keys for repeats.
+    /// checks its own keys for repeats (up to LINEAR_KEY_SCAN of them).
     keys: Vec<&'i [u8]>,
 }
 
@@ -279,6 +285,8 @@ impl<'i> Writer<'_, 'i> {
             return Err(Error::Malformed("document overruns buffer", at));
         }
         let keys_base = self.keys.len();
+        // Replaces the linear scan once this level passes LINEAR_KEY_SCAN keys.
+        let mut wide_keys: Option<HashSet<&'i [u8]>> = None;
         let (mut has_ref, mut has_id) = (false, false);
         self.out.push(if array { b'[' } else { b'{' });
         let mut first = true;
@@ -295,12 +303,25 @@ impl<'i> Writer<'_, 'i> {
             }
             first = false;
             if !array {
-                // Documents here have a handful of keys, so a linear scan
-                // beats hashing.
-                if self.keys[keys_base..].contains(&key) {
+                // Most documents have a handful of keys per level, where a
+                // linear scan beats hashing; a wide one switches to a set.
+                let repeated = if let Some(set) = wide_keys.as_mut() {
+                    !set.insert(key)
+                } else if self.keys[keys_base..].contains(&key) {
+                    true
+                } else if self.keys.len() - keys_base < LINEAR_KEY_SCAN {
+                    self.keys.push(key);
+                    false
+                } else {
+                    let mut set: HashSet<&'i [u8]> =
+                        self.keys[keys_base..].iter().copied().collect();
+                    set.insert(key);
+                    wide_keys = Some(set);
+                    false
+                };
+                if repeated {
                     return Err(Error::DuplicateKey(kpos));
                 }
-                self.keys.push(key);
                 has_ref |= key == b"$ref";
                 has_id |= key == b"$id";
                 write_str(self.out, key, kpos)?;
@@ -522,6 +543,29 @@ mod tests {
         assert_eq!(json(&dbref).unwrap(), r#"{"$ref":"c","$id":5}"#);
         let only_ref = doc(&[(0x03, "p", doc(&[(0x02, "$ref", bstr("c"))]))]);
         assert_eq!(json(&only_ref).unwrap(), r#"{"p":{"$ref":"c"}}"#);
+    }
+
+    #[test]
+    fn wide_documents_stay_linear_and_still_refuse_repeats() {
+        fn wide(keys: &[String]) -> Vec<u8> {
+            let elements: Vec<(u8, &str, Vec<u8>)> =
+                keys.iter().map(|k| (0x10, k.as_str(), vec![1, 0, 0, 0])).collect();
+            doc(&elements)
+        }
+        let keys: Vec<String> = (0..20_000).map(|i| format!("6a18de9586eb3776{i:08x}")).collect();
+        // Quadratic scanning took seconds here; linear takes milliseconds.
+        let started = std::time::Instant::now();
+        assert!(json(&wide(&keys)).is_ok());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1), "{:?}", started.elapsed());
+        // A repeat is still found before and after the switch to hashing.
+        for repeat_at in [3, LINEAR_KEY_SCAN, LINEAR_KEY_SCAN + 1, 5_000] {
+            let mut with_repeat = keys[..6_000].to_vec();
+            with_repeat.insert(repeat_at, keys[repeat_at / 2].clone());
+            assert!(
+                matches!(json(&wide(&with_repeat)), Err(Error::DuplicateKey(_))),
+                "repeat at {repeat_at}"
+            );
+        }
     }
 
     #[test]

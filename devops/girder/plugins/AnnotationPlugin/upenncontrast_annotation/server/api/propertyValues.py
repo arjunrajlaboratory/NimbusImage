@@ -12,7 +12,7 @@ from ..helpers.access_helpers import (
     requireDatasetsAccess,
 )
 from ..helpers import valueProviders
-from ..helpers.aggregation import prefetchedBatches
+from ..helpers.aggregation import STREAM_PREFETCH_BATCHES, prefetchedBatches
 from ..helpers.serialization import (
     jsonSafe,
     orJsonDefaults,
@@ -278,7 +278,7 @@ class PropertyValues(Resource):
         # overlaps transcoding, as in the annotation list.
         setResponseHeader("Content-Type", "application/json")
         return streamRawJsonArray(
-            prefetchedBatches(cursor, depth=2),
+            prefetchedBatches(cursor, depth=STREAM_PREFETCH_BATCHES),
             self._annotationPropertyValuesModel.collection.codec_options,
         )
 
