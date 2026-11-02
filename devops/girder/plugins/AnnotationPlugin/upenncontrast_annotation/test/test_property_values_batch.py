@@ -65,11 +65,10 @@ class TestPropertyValuesBatch:
         assert stored["values"]["probe"]["x"] == float("inf")
         resp = server.request(
             path="/annotation_property_values", method="GET", user=admin,
-            params={"datasetId": str(folder["_id"])}, isJson=False,
+            params={"datasetId": str(folder["_id"])},
         )
         assertStatusOk(resp)
-        listed = json.loads(b"".join(resp.body))
-        assert listed[0]["values"]["probe"]["x"] is None
+        assert resp.json[0]["values"]["probe"]["x"] is None
         resp = server.request(
             path="/annotation_property_values/histogram", method="GET",
             user=admin, params={
