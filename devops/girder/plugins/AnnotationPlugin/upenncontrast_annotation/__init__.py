@@ -34,6 +34,7 @@ from .server.models.project import Project as ProjectModel
 from .server.helpers import last_admin_guard
 from .server.models.shareLink import ShareLink as ShareLinkModel
 from .server.helpers import shareLinkGuards
+from .server.helpers.compression import enableResponseCompression
 
 
 # Taken from HistomicsUI
@@ -188,6 +189,9 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         info["apiRoot"].share_link = ShareLink()
         shareLinkGuards.bind()
         system.addSystemEndpoints(info["apiRoot"])
+        # Gzip JSON/CSV responses here, on the Girder instances, rather than
+        # at the load balancer. See `server/helpers/compression.py`.
+        enableResponseCompression(info["apiRoot"])
 
         # Keep at least one user at ADMIN on every `contrastDataset`
         # folder, so a dataset can't be left with no owner. See
