@@ -1,7 +1,8 @@
 import annotation_client.annotations as annotations
 import annotation_client.tiles as tiles
-import girder_client
 import urllib
+
+from annotation_client.transport import createGirderClient
 
 PATHS = {
     "interface": "/worker_interface?image={image}",
@@ -22,8 +23,7 @@ class UPennContrastWorkerPreviewClient:
         :param str token: The girder token for authentication
         """
 
-        self.client = girder_client.GirderClient(apiUrl=apiUrl)
-        self.client.setToken(token)
+        self.client = createGirderClient(apiUrl, token)
 
     # Annotations
     def setWorkerImageInterface(self, image, interface):

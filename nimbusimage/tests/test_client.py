@@ -10,7 +10,7 @@ from nimbusimage.client import NimbusClient
 
 class TestNimbusClientInit:
     def test_connect_with_token(self):
-        with patch("nimbusimage._girder.girder_client.GirderClient") as MockGC:
+        with patch("nimbusimage._girder.FastJsonGirderClient") as MockGC:
             mock_gc = MagicMock()
             MockGC.return_value = mock_gc
             mock_gc.get.return_value = {"_id": "user123", "login": "admin"}
@@ -22,7 +22,7 @@ class TestNimbusClientInit:
             mock_gc.setToken.assert_called_with("tok123")
 
     def test_connect_with_username_password(self):
-        with patch("nimbusimage._girder.girder_client.GirderClient") as MockGC:
+        with patch("nimbusimage._girder.FastJsonGirderClient") as MockGC:
             mock_gc = MagicMock()
             MockGC.return_value = mock_gc
             mock_gc.get.return_value = {"_id": "user123", "login": "admin"}
@@ -37,7 +37,7 @@ class TestNimbusClientInit:
             )
 
     def test_connect_with_env_vars(self):
-        with patch("nimbusimage._girder.girder_client.GirderClient") as MockGC:
+        with patch("nimbusimage._girder.FastJsonGirderClient") as MockGC:
             mock_gc = MagicMock()
             MockGC.return_value = mock_gc
             mock_gc.get.return_value = {"_id": "user123", "login": "admin"}
@@ -56,7 +56,7 @@ class TestNimbusClientInit:
                 NimbusClient()
 
     def test_connect_anonymous(self):
-        with patch("nimbusimage._girder.girder_client.GirderClient") as MockGC:
+        with patch("nimbusimage._girder.FastJsonGirderClient") as MockGC:
             mock_gc = MagicMock()
             MockGC.return_value = mock_gc
 
@@ -69,7 +69,7 @@ class TestNimbusClientInit:
 
     def test_connect_anonymous_ignores_env_credentials(self):
         """anonymous=True must not silently authenticate from env vars."""
-        with patch("nimbusimage._girder.girder_client.GirderClient") as MockGC:
+        with patch("nimbusimage._girder.FastJsonGirderClient") as MockGC:
             mock_gc = MagicMock()
             MockGC.return_value = mock_gc
 
@@ -82,7 +82,7 @@ class TestNimbusClientInit:
             mock_gc.setToken.assert_not_called()
 
     def test_connect_anonymous_with_credentials_raises(self):
-        with patch("nimbusimage._girder.girder_client.GirderClient"):
+        with patch("nimbusimage._girder.FastJsonGirderClient"):
             with pytest.raises(ValueError, match="anonymous"):
                 NimbusClient(
                     api_url="http://localhost:8080/api/v1",
@@ -388,7 +388,7 @@ class TestNimbusClientListDatasets:
 
 class TestJobLookup:
     def test_job_by_id_wraps_the_girder_job(self):
-        with patch("nimbusimage._girder.girder_client.GirderClient") as MockGC:
+        with patch("nimbusimage._girder.FastJsonGirderClient") as MockGC:
             mock_gc = MagicMock()
             MockGC.return_value = mock_gc
             mock_gc.get.return_value = {"_id": "user123", "login": "admin"}
@@ -408,7 +408,7 @@ class TestJobLookup:
 
         from girder_client import HttpError
 
-        with patch("nimbusimage._girder.girder_client.GirderClient") as MockGC:
+        with patch("nimbusimage._girder.FastJsonGirderClient") as MockGC:
             mock_gc = MagicMock()
             MockGC.return_value = mock_gc
             mock_gc.get.return_value = {"_id": "user123", "login": "admin"}
