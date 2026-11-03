@@ -16,23 +16,29 @@ body would.
 """
 try:
     from compression import zstd
-except ImportError:  # Python < 3.14; installed by pymongo[zstd]
+except ImportError:  # Python < 3.14; backports.zstd (setup.py)
     from backports import zstd
 
 import cherrypy
-from cherrypy.lib import encoding, httputil
+from cherrypy.lib import httputil, set_vary_header
 
 # zstd level 1, the fastest positive level. On real Xenium responses it
 # compressed 100K annotations 131 -> 39 MB at ~750 MB/s on one core; level 3
 # was both slower and larger, and negative levels nearly doubled the size.
+# Its window is 512 KB. HTTP zstd (RFC 9659) caps the window at 8 MB and
+# Chrome rejects larger ones, so don't raise the level into windowLog 23+
+# without also setting window_log.
 ZSTD_LEVEL = 1
-# Two worker threads compress while the request thread keeps producing the
-# body, roughly doubling throughput. They cost ~0.1 ms and a few MB per
-# response, which small responses don't need but don't notice either.
-ZSTD_THREADS = 2
+# Streamed responses (the big lists and exports) get two worker threads,
+# which compress while the request thread keeps producing the body and
+# roughly double throughput. They hold up to ~10 MB of job buffers while a
+# large body is in flight, for as long as a slow client takes to read it.
+# Buffered responses are small, so they compress on the request thread.
+ZSTD_STREAMED_THREADS = 2
 
-# Text bodies only: tiles and file downloads are already compressed or
-# binary, and the event stream must not be buffered by a compressor.
+# Chosen by Content-Type: images, TIFF regions and octet-stream bodies are
+# left alone. A Girder file download whose mimeType is JSON/CSV/TSV is
+# compressed too; a Range request answers 206, which is not.
 COMPRESSED_MIME_TYPES = [
     "application/json",
     "application/geo+json",
@@ -42,20 +48,34 @@ COMPRESSED_MIME_TYPES = [
 
 
 def _acceptsZstd(request):
+    try:
+        codings = request.headers.elements("Accept-Encoding")
+    except cherrypy.HTTPError:
+        # A malformed q-value. The handler has already run (and may have
+        # written), so serve the body uncompressed rather than a 400.
+        return False
     return any(
-        coding.value == "zstd" and coding.qvalue > 0
-        for coding in request.headers.elements("Accept-Encoding")
+        coding.value.lower() == "zstd" and coding.qvalue > 0
+        for coding in codings
     )
 
 
-def _zstdCompress(body):
+def _zstdCompress(body, threads):
     compressor = zstd.ZstdCompressor(options={
         zstd.CompressionParameter.compression_level: ZSTD_LEVEL,
-        zstd.CompressionParameter.nb_workers: ZSTD_THREADS,
+        zstd.CompressionParameter.nb_workers: threads,
     })
-    for chunk in body:
-        yield compressor.compress(chunk)
-    yield compressor.flush()
+    try:
+        for chunk in body:
+            yield compressor.compress(chunk)
+        yield compressor.flush()
+    finally:
+        # CherryPy closes only the body it was handed (this generator), and
+        # streaming endpoints rely on close() to stop prefetch threads and
+        # close cursors when a response is dropped.
+        close = getattr(body, "close", None)
+        if close is not None:
+            close()
 
 
 def compressResponse():
@@ -63,7 +83,7 @@ def compressResponse():
     """
     request = cherrypy.serving.request
     response = cherrypy.serving.response
-    encoding.set_vary_header(response, "Accept-Encoding")
+    set_vary_header(response, "Accept-Encoding")
     contentType = response.headers.get("Content-Type", "").split(";")[0]
     if (
         contentType not in COMPRESSED_MIME_TYPES
@@ -74,8 +94,11 @@ def compressResponse():
     ):
         return
     response.headers["Content-Encoding"] = "zstd"
-    response.body = _zstdCompress(response.body)
-    # finalize() recomputes it for a buffered body
+    response.body = _zstdCompress(
+        response.body, ZSTD_STREAMED_THREADS if response.stream else 0
+    )
+    # A streamed file download presets the uncompressed length; finalize()
+    # recomputes it for a buffered body.
     response.headers.pop("Content-Length", None)
 
 
@@ -83,10 +106,10 @@ def enableResponseCompression(apiRoot):
     """Compress every response under `apiRoot` (info["apiRoot"], i.e.
     /api/v1).
 
-    Girder mounts the API before loading plugins, so the mounted
-    application's config can't be changed here; CherryPy also reads
-    `_cp_config` from each object along the dispatch path, which covers
-    every resource under the root, core Girder's included."""
+    CherryPy merges `_cp_config` from each object along the dispatch path,
+    so setting it on the API root covers every resource under it, including
+    those other plugins attach later, and both the `/api` mount and the
+    `GIRDER_URL_ROOT` prefix mount, which share this object."""
     cherrypy.tools.nimbusCompress = cherrypy.Tool(
         "before_finalize", compressResponse, priority=80
     )

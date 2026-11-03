@@ -1,12 +1,17 @@
 """API responses are zstd-compressed by Girder when the client accepts zstd
 (server/helpers/compression.py)."""
+import io
 import json
 
 import pytest
 
-from pytest_girder.assertions import assertStatusOk
+from girder.models.upload import Upload
+from pytest_girder.assertions import assertStatus, assertStatusOk
 
-from upenncontrast_annotation.server.helpers.compression import zstd
+from upenncontrast_annotation.server.helpers.compression import (
+    _zstdCompress,
+    zstd,
+)
 from upenncontrast_annotation.server.models.annotation import Annotation
 
 from . import girder_utilities as utilities
@@ -86,6 +91,67 @@ class TestResponseCompression:
         assert "Accept-Encoding" in resp.headers["Vary"]
         assert len(json.loads(body)) == ANNOTATION_COUNT
 
+    def testMalformedAcceptEncodingIsUncompressedNot400(
+        self, admin, server, dataset
+    ):
+        # CherryPy raises a 400 for a bad q-value, after the handler ran.
+        resp, body = _listAnnotations(
+            server, admin, dataset["_id"], "gzip;q=x, zstd"
+        )
+
+        assert "Content-Encoding" not in resp.headers
+        assert len(json.loads(body)) == ANNOTATION_COUNT
+
+    def testBufferedJsonIsCompressed(self, server):
+        def version(headers):
+            resp = server.request(
+                path="/system/version",
+                additionalHeaders=headers,
+                isJson=False,
+            )
+            assertStatusOk(resp)
+            return resp, b"".join(resp.body)
+
+        _, plain = version([])
+        resp, body = version([("Accept-Encoding", "ZSTD")])
+
+        assert resp.headers["Content-Encoding"] == "zstd"
+        assert int(resp.headers["Content-Length"]) == len(body)
+        assert zstd.decompress(body) == plain
+
+    def testJsonFileDownload(self, admin, server, fsAssetstore):
+        # The download streams with the uncompressed Content-Length preset.
+        folder = utilities.createFolder(
+            admin, "compressed_file", upenn_utilities.datasetMetadata
+        )
+        data = json.dumps([{"value": i} for i in range(2000)]).encode()
+        upload = Upload().uploadFromFile(
+            io.BytesIO(data), len(data), "values.json", "folder", folder,
+            user=admin, mimeType="application/json",
+        )
+
+        def download(headers):
+            resp = server.request(
+                path=f"/file/{upload['_id']}/download",
+                user=admin,
+                additionalHeaders=[
+                    ("Accept-Encoding", BROWSER_ACCEPT_ENCODING), *headers
+                ],
+                isJson=False,
+            )
+            return resp, b"".join(resp.body)
+
+        resp, body = download([])
+        assertStatusOk(resp)
+        assert resp.headers["Content-Encoding"] == "zstd"
+        assert "Content-Length" not in resp.headers
+        assert zstd.decompress(body) == data
+
+        resp, body = download([("Range", "bytes=0-9")])
+        assertStatus(resp, 206)
+        assert "Content-Encoding" not in resp.headers
+        assert body == data[:10]
+
     def testCsvExportIsCompressed(self, admin, server):
         datasetFolder, _, _ = createDatasetWithData(admin)
 
@@ -126,3 +192,25 @@ class TestResponseCompression:
         assertStatusOk(resp)
         assert resp.headers["Content-Type"].startswith("image/png")
         assert "Content-Encoding" not in resp.headers
+
+
+def testClosingCompressedBodyClosesEndpointBody():
+    # Streaming endpoints stop prefetch threads and close cursors when
+    # their generator is closed; CherryPy only closes the wrapper.
+    closed = []
+
+    def endpointBody():
+        try:
+            for _ in range(10):
+                yield b"[]" * 1000
+        finally:
+            closed.append(True)
+
+    # Something else still holds the endpoint's generator, as CherryPy's
+    # encode tool does, so dropping it alone wouldn't finalize it.
+    body = endpointBody()
+    compressed = _zstdCompress(body, 2)
+    next(compressed)
+    compressed.close()
+
+    assert closed == [True]
