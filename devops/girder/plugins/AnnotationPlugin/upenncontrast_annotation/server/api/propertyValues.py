@@ -1,8 +1,6 @@
-from bson import ObjectId
-
 from girder.api import access
 from girder.api.describe import Description, describeRoute
-from girder.api.rest import Resource
+from girder.api.rest import Resource, setResponseHeader
 from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.models.folder import Folder
@@ -11,7 +9,15 @@ from ..helpers.access_helpers import (
     requireAnnotationsInDatasets,
     requireDatasetsAccess,
 )
-from ..helpers.serialization import createdDocumentsResponse, jsonSafe
+from ..helpers import valueProviders
+from ..helpers.aggregation import STREAM_PREFETCH_BATCHES, prefetchedBatches
+from ..helpers.serialization import (
+    createdDocumentsResponse,
+    jsonSafe,
+    orJsonDefaults,
+    streamJsonArray,
+    streamRawJsonArray,
+)
 from ..helpers.validation import (
     MAX_DISTINCT_SEARCH_LENGTH,
     MAX_DISTINCT_VALUES,
@@ -22,6 +28,7 @@ from ..helpers.validation import (
     requireObjectBody,
     requireObjectId,
     validateAnnotationIdCount,
+    validateDisjointPropertyPaths,
     validatePropertyPaths,
 )
 from ..models.propertyValues import (
@@ -173,6 +180,7 @@ class PropertyValues(Resource):
             # injected projection key; a non-list-of-lists-of-strings would
             # raise TypeError in findByAnnotationIds. Reject at the boundary.
             validatePropertyPaths(propertyPaths)
+            validateDisjointPropertyPaths(propertyPaths)
         # Guard the list shape before len()/iterating: a scalar would raise
         # TypeError on len(), a string would iterate per-character. Both must
         # be a clean 400 on this public endpoint, not a 500.
@@ -185,13 +193,29 @@ class PropertyValues(Resource):
             exc=True,
         )
         annotationIds = [requireObjectId(i, "annotationId") for i in rawIds]
+        model = self._annotationPropertyValuesModel
+        _, virtualPaths = valueProviders.splitPaths(propertyPaths or [])
+        if not virtualPaths:
+            # Stored values only: raw batches straight to JSON, without
+            # decoding every value into Python (serialization.py).
+            setResponseHeader("Content-Type", "application/json")
+            return streamRawJsonArray(
+                model.findRawBatchesByAnnotationIds(
+                    datasetId, annotationIds, propertyPaths
+                ),
+                model.collection.codec_options,
+            )
         try:
-            return self._annotationPropertyValuesModel.findByAnnotationIds(
+            documents = model.findByAnnotationIds(
                 datasetId, annotationIds, propertyPaths
             )
         except ValueError as exc:
             # A virtual path the provider cannot resolve (unknown key).
             raise RestException(str(exc), code=400)
+        # Virtual values are merged into the documents in Python; written in
+        # the same JSON form as the raw path (orjson: Infinity/NaN as null).
+        setResponseHeader("Content-Type", "application/json")
+        return streamJsonArray(documents, default=orJsonDefaults)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -200,7 +224,7 @@ class PropertyValues(Resource):
         .param(
             "datasetId",
             "Get all property values for this dataset",
-            required=False,
+            required=True,
         )
         .param(
             "annotationId",
@@ -212,37 +236,47 @@ class PropertyValues(Resource):
         .errorResponse()
     )
     def find(self, params):
-        limit, offset, sort = self.getPagingParameters(params, "lowerName")
-        query = {}
-
-        # Check dataset permissions if datasetId is provided
-        if "datasetId" in params:
-            datasetId = ObjectId(params["datasetId"])
-            dataset = Folder().load(
-                datasetId, user=self.getCurrentUser(), level=AccessType.READ
-            )
-            if not dataset:
-                raise RestException(
-                    code=403, message="Access denied to dataset"
-                )
-            query["datasetId"] = datasetId
+        limit, offset, sort = self.getPagingParameters(params, "_id")
+        # datasetId is required: it is what the READ check is made against.
+        # Optional, a request without it listed every dataset's values.
+        datasetId = requireObjectId(params.get("datasetId"), "datasetId")
+        Folder().load(
+            datasetId, user=self.getCurrentUser(), level=AccessType.READ,
+            exc=True,
+        )
+        query = {"datasetId": datasetId}
 
         if "annotationId" in params:
-            query["annotationId"] = ObjectId(params["annotationId"])
+            query["annotationId"] = requireObjectId(
+                params["annotationId"], "annotationId"
+            )
 
         # Support cursor pagination
         after_id = params.get("afterId")
         if after_id:
-            query["_id"] = {"$gt": ObjectId(after_id)}
+            query["_id"] = {"$gt": requireObjectId(after_id, "afterId")}
             offset = 0  # Ignore offset when using cursor
 
-        # Use regular find instead of findWithPermissions
-        return jsonSafe(list(self._annotationPropertyValuesModel.find(
+        # Use regular find instead of findWithPermissions. Raw batches go
+        # straight to JSON (findRawBatches): decoding 100K value documents
+        # into dicts cost several times the rest of the request.
+        cursor = self._annotationPropertyValuesModel.findRawBatches(
             query,
             sort=sort,
             limit=limit,
             offset=offset,
-        ).hint([("datasetId", 1), ("_id", 1)])))
+        ).hint([("datasetId", 1), ("_id", 1)])
+
+        # Stream, never materialize: limit=0 returns the whole dataset, and
+        # building that list (plus Girder's JSON string of it) took ~1.6 GiB
+        # per 100K documents, enough to OOM-kill Girder on a 709K-cell
+        # dataset. Infinity/NaN come out as null, as jsonSafe did. Fetching
+        # overlaps transcoding, as in the annotation list.
+        setResponseHeader("Content-Type", "application/json")
+        return streamRawJsonArray(
+            prefetchedBatches(cursor, depth=STREAM_PREFETCH_BATCHES),
+            self._annotationPropertyValuesModel.collection.codec_options,
+        )
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -251,9 +285,7 @@ class PropertyValues(Resource):
         .errorResponse()
     )
     def count(self, params):
-        if "datasetId" not in params:
-            raise RestException(code=400, message="Dataset ID is required")
-        datasetId = ObjectId(params["datasetId"])
+        datasetId = requireObjectId(params.get("datasetId"), "datasetId")
         Folder().load(
             datasetId, user=self.getCurrentUser(), level=AccessType.READ,
             exc=True

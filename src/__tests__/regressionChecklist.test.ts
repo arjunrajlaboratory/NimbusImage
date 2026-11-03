@@ -109,6 +109,8 @@ const NOT_OURS = new Set([
   ".tox",
   ".venv",
   "__pycache__",
+  // Cargo build output (devops/girder/plugins/AnnotationPlugin/bson-json-native).
+  "target",
   ".pnpm-store",
   // Local MongoDB storage changes while backend tests run; it is data, not
   // an owned source/test tree (and stat'ing its removed files is a race).

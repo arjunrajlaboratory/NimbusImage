@@ -485,6 +485,16 @@ class Annotation(AccessControlMixin, ProxiedModel):
         Built here (not in the API method) so pipeline construction and the
         runtime-bound _aggregate options live with the other list aggregations.
         """
+        # Mongo evaluating the pipeline and pymongo decoding its output each
+        # take seconds at 700K; the prefetch overlaps them.
+        return prefetchedDocuments(
+            self.stubBatches(datasetId, shape=shape, tags=tags),
+            self.collection.codec_options,
+        )
+
+    def stubBatches(self, datasetId, shape=None, tags=None):
+        """`stubs` as a raw-batch cursor (concatenated BSON documents per
+        batch), for streaming straight to JSON without decoding."""
         match = {"datasetId": datasetId}
         if shape:
             match["shape"] = shape
@@ -527,16 +537,11 @@ class Annotation(AccessControlMixin, ProxiedModel):
             }},
             {"$project": {"coordinates": 0, "_stub": 0}},
         ]
-        # Mongo evaluating the pipeline and pymongo decoding its output each
-        # take seconds at 700K; the prefetch overlaps them.
-        return prefetchedDocuments(
-            self.collection.aggregate_raw_batches(
-                pipeline,
-                hint=DEFAULT_AGGREGATE_HINT,
-                allowDiskUse=True,
-                maxTimeMS=AGGREGATION_MAX_TIME_MS,
-            ),
-            self.collection.codec_options,
+        return self.collection.aggregate_raw_batches(
+            pipeline,
+            hint=DEFAULT_AGGREGATE_HINT,
+            allowDiskUse=True,
+            maxTimeMS=AGGREGATION_MAX_TIME_MS,
         )
 
     def _buildListMatchStages(self, datasetId, filters):

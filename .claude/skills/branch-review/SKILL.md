@@ -173,7 +173,7 @@ Search for patterns like `for ... in ...: Model().load(` or `[Model().load(id) f
 - **Flag request-input validation in models even when it raises `ValidationException`.** The `RestException` grep above structurally cannot see this one. Any model code that checks caller-supplied ids against each other or against what the caller is authorized for — "does this annotation belong to the dataset the caller named", "does this referenced property exist here" — is API-boundary validation and belongs in the endpoint or a `server/helpers/` function it calls, next to the access check (pchoisel, PR #1358: *"This check needs to be done at the API level, not in the model"*). Search new model code for `find`/`load` of a *different* collection used only to accept or reject the input. Tells: a model method that now lazily imports another model to validate, internal callers that don't need the check, and tests switching to `collection.insert_one` to get around the model. Domain invariants that hold for every caller (schema, self-links) stay in the model.
 
 ### 3. Raw PyMongo Access
-Flag any use of `Model().collection.find()` — should be `Model().find()`. The only exception is `collection.aggregate()` for aggregation pipelines.
+Flag any use of `Model().collection.find()` — should be `Model().find()`. The exceptions are `collection.aggregate()` for aggregation pipelines, and raw-batch reads streamed to JSON through `findRawBatches` / `aggregate_raw_batches` (see `codebaseDocumentation/NATIVE_JSON_TRANSCODER.md`); a hand-rolled `collection.find_raw_batches` outside `findRawBatches` is still a finding.
 
 ### 4. Model Loading
 - Flag `Model().load(id, ...)` followed by `if result is None: raise ...`. Should use `exc=True` parameter instead.

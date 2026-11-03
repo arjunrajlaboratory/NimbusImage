@@ -44,6 +44,20 @@ doc = Model().load(id, force=True)  # Admin bypass
 For detailed access patterns including sharing: read `references/access-control-patterns.md`
 When modifying sharing/access code: read `codebaseDocumentation/SHARING.md`
 
+### An optional dataset filter is an optional access check
+
+List endpoints that check READ on the `datasetId` they filter by must require
+it, and must parse it unconditionally. `annotation_property_values` find
+checked access only `if "datasetId" in params`, so omitting it dropped both
+the filter and the check. `annotation_connection` find required the parameter
+but checked only when it was truthy, so `datasetId=` did the same. Either way
+an anonymous caller could list every dataset's values or connections. Parse
+with `requireObjectId(params.get(...))` (missing or empty → 400), then
+`Folder().load(..., exc=True)`, then build the query from that id. Test
+anonymously, against a **private** dataset, with whichever input bypassed the
+check: missing for property values (`testFindPropertyValuesRequiresDatasetId`),
+empty for connections (`testFindConnectionsWithEmptyDatasetIdDenied`).
+
 ### Ids that match nothing get no access check
 
 Bulk endpoints usually check access on the datasets of the documents an id list resolves to (`distinctDatasetIds` → `requireDatasetsAccess`). An id that matches no document resolves to no dataset, so nothing about it is checked. That is harmless only if nothing downstream acts on the raw id. The bulk-delete cleanup cascade did: it removed connections and property values pointing at the id in **any** dataset. Leftover orphans in other users' datasets could therefore be deleted by naming their dangling ids. Anything that fans out from caller-supplied ids (cascades, events, follow-up queries keyed on the id rather than the loaded document) must run only for ids that resolved to a document the caller was checked against. `Annotation.multipleAnnotationsRemovedEvent` filters to existing annotations before triggering cleanup (#1418, Codex P2).
@@ -120,6 +134,37 @@ users = list(User().find(
 ```
 
 For detailed query patterns: read `references/database-query-patterns.md`
+
+### Streaming many documents to JSON: raw batches, not decoded documents
+
+A list endpoint that returns thousands of annotations spends most of its time
+building Python dicts it only serializes again. For 100K cell polygons that's
+~1.1 s of ~1.45 s. Stream raw BSON batches instead:
+`self._model.findRawBatches(...)` (`helpers/customModel.py`: `Model.find`'s
+arguments, timeout and projection, on `find_raw_batches`) or
+`collection.aggregate_raw_batches(...)`, then
+`streamRawJsonArray(prefetchedBatches(cursor, depth=STREAM_PREFETCH_BATCHES),
+collection.codec_options)` (`streamRawJsonArray` in `helpers/serialization.py`;
+`prefetchedBatches` and both depths in `helpers/aggregation.py`. The default,
+`PREFETCH_BATCHES`, is for aggregations like stubs, where Mongo is the slow
+half). The bytes are identical to
+`streamJsonArray(docs, default=orJsonDefaults)`, through the Rust transcoder
+`bson_json_native` when it is installed and decode + orjson when it isn't.
+`findRawBatches` is the one sanctioned exception to "never
+`collection.find()`"; don't hand-roll another. Details and what the
+transcoder refuses: `codebaseDocumentation/NATIVE_JSON_TRANSCODER.md`.
+
+Two traps from building it:
+- **A directory named like a module shadows it.** The crate first lived in
+  `AnnotationPlugin/bson_json_native/`. With `AnnotationPlugin/` on
+  `sys.path` (tox, `pip install -e`), `import bson_json_native` found that
+  directory as an empty namespace package, so the import "succeeded" with no
+  `transcode` and every endpoint 500'd. Non-Python source trees next to a
+  package get a non-identifier name (`bson-json-native/`).
+- **A builder stage must match the final image's platform.**
+  `girder/tox-and-node-lts` is amd64-only. A builder `FROM python:3.11-slim`
+  (multi-arch) built an arm64 wheel on Apple Silicon, and the emulated amd64
+  final stage refused it. Build from the same base as the final stage.
 
 ## API Endpoint Patterns
 
@@ -688,6 +733,57 @@ Rules:
 Full incident, numbers, and procedure:
 `codebaseDocumentation/PROPERTY_VALUES_UNIQUE_INDEX.md`.
 
+## Dataset-wide list endpoints must stream, not return a cursor or list
+
+`.pagingParams()` accepts `limit=0`, which means "every document". If the
+handler returns a cursor, a `list(cursor)`, or `jsonSafe(...)` of either,
+Girder materializes the whole result and then `json.dumps` it into one string.
+`GET annotation_property_values?limit=0` did this, and on a 709K-cell Xenium
+dataset Girder grew ~1.6 GiB per 100K documents until the container was
+OOM-killed (fixed 2026-11). A public reader of a large public dataset can do
+that to production.
+
+Return a generator *function* (any callable) instead, which is what
+`streamJsonArray` and `streamRawJsonArray` return. Girder's `endpoint` streams
+only when the value is callable. It runs `list()` on a generator object just as
+it does on a cursor, so returning `gen()` rather than `gen` buffers everything
+again. For documents read straight from a collection, stream the raw batches
+(see "Streaming many documents to JSON" above):
+
+```python
+cursor = self._model.findRawBatches(query, sort=sort, limit=limit,
+                                    offset=offset).hint(...)
+setResponseHeader("Content-Type", "application/json")
+return streamRawJsonArray(prefetchedBatches(cursor, depth=STREAM_PREFETCH_BATCHES),
+                          self._model.collection.codec_options)
+```
+
+For documents built or changed in Python (merged virtual values, computed
+rows), use `streamJsonArray(documents, default=orJsonDefaults)`; both write
+the same bytes. A streamed response can't change its status once the first
+chunk is out, so validate everything that could make the query fail (e.g. a
+projection path and its sub-path: Mongo's "Path collision") before returning
+the generator.
+
+orjson is not Girder's encoder, so moving an endpoint to it changes the output
+in edge cases. It writes Infinity/NaN as null, where Girder (`allow_nan=False`)
+returns a 500, so `jsonSafe` isn't needed. It keeps insertion key order rather
+than sorting keys. A type `orJsonDefaults` doesn't know (anything but ObjectId)
+raises in the middle of the stream, where Girder's encoder `str()`s it. Stored
+JSON bodies never hold such types, but check before streaming a model that
+stores datetimes or sets. The
+Girder 5 ASGI bridge passes chunks through a one-slot queue, so a slow client
+gets backpressure rather than a growing buffer. In tests `resp.json` still
+works, because the test client joins the chunks. To check that an endpoint
+streams, pass `isJson=False` and read `list(resp.body)`: more than one chunk
+means it streamed (`test_list_streaming.py`). Use more than ~500 documents:
+`streamJsonArray` flushes every 1000 list entries (commas included) and a raw
+stream emits a chunk per Mongo batch (the first holds 101 documents), so a
+smaller result can be a single chunk either way. Measure with
+the container's cgroup `anon` memory (`/sys/fs/cgroup/memory.stat`), which is
+what the OOM killer acts on and counts every process in the container, the
+celery workers included. Sample it while the request runs and abort past a cap.
+
 ## Returning a large JSON body from numpy (orjson + raw response)
 
 Two traps, both hit by the spatial plugin's `column` endpoint (hundreds of thousands
@@ -696,8 +792,8 @@ of `(annotationId, value)` pairs):
 - **Girder JSON-encodes whatever the handler returns.** Returning `orjson.dumps(...)`
   bytes without marking the response raw ships a JSON *string* containing JSON — the
   client's `resp.json` is a `str`. Call `setRawResponse()` (from `girder.api.rest`)
-  and set the `Content-Type` header yourself, or return a generator (the annotation
-  plugin's `streamJsonArray` pattern in `helpers/serialization.py`).
+  and set the `Content-Type` header yourself, or return a generator function (the
+  annotation plugin's `streamJsonArray` pattern; a generator object is `list()`ed).
 - **`orjson.OPT_SERIALIZE_NUMPY` takes numeric and bool arrays only.** A unicode
   (`U24`) array of ids raises `TypeError: unsupported datatype in numpy array`;
   `.tolist()` the string array, keep the numeric one as numpy. Cast integral floats
