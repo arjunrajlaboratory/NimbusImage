@@ -5,5 +5,33 @@ export const jobStates = {
   success: 3,
   error: 4,
   cancelled: 5,
+  // girder_worker's intermediate statuses.
+  fetchingInput: 820,
+  convertingInput: 821,
+  convertingOutput: 822,
+  pushingOutput: 823,
   cancelling: 824,
 };
+
+// Statuses after which a job will not change again.
+const TERMINAL_JOB_STATES: ReadonlySet<number> = new Set([
+  jobStates.success,
+  jobStates.error,
+  jobStates.cancelled,
+]);
+
+// Statuses of a job still in progress.
+export const UNFINISHED_JOB_STATUSES: readonly number[] = [
+  jobStates.inactive,
+  jobStates.queued,
+  jobStates.running,
+  jobStates.fetchingInput,
+  jobStates.convertingInput,
+  jobStates.convertingOutput,
+  jobStates.pushingOutput,
+  jobStates.cancelling,
+];
+
+export function isTerminalJobStatus(status: number | null | undefined) {
+  return status != null && TERMINAL_JOB_STATES.has(status);
+}

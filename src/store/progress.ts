@@ -16,7 +16,7 @@ import {
   NotificationType,
   INotification,
 } from "./model";
-import { jobStates } from "./jobConstants";
+import { isTerminalJobStatus, jobStates } from "./jobConstants";
 import { v4 as uuidv4 } from "uuid";
 
 // These are the endpoints that are sent to the fetchAllJobs call. We can capture them to
@@ -300,9 +300,7 @@ class Progress extends VuexModule {
       datasetId,
       eventCallback: (jobInfo) => {
         // Check for completion
-        if (
-          [jobStates.success, jobStates.error].includes(jobInfo.status || 0)
-        ) {
+        if (isTerminalJobStatus(jobInfo.status)) {
           this.complete(progressId);
           return;
         }
@@ -379,7 +377,7 @@ class Progress extends VuexModule {
     }
 
     // Check for job completion
-    if ([jobStates.success, jobStates.error].includes(jobData.status || 0)) {
+    if (isTerminalJobStatus(jobData.status)) {
       this.complete(progressId);
       return;
     }
