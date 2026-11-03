@@ -31,9 +31,11 @@ from cherrypy.lib import httputil, set_vary_header
 ZSTD_LEVEL = 1
 # Streamed responses (the big lists and exports) get two worker threads,
 # which compress while the request thread keeps producing the body and
-# roughly double throughput. They hold up to ~10 MB of job buffers while a
-# large body is in flight, for as long as a slow client takes to read it.
-# Buffered responses are small, so they compress on the request thread.
+# roughly double throughput. They hold ~10 MB of job buffers while a large
+# body is in flight, for as long as a slow client takes to read it, plus the
+# compressed output of a chunk (all of it for an export yielded as one
+# chunk). Buffered responses compress on the request thread; even a
+# tens-of-MB one takes only tens of ms.
 ZSTD_STREAMED_THREADS = 2
 
 # Chosen by Content-Type: images, TIFF regions and octet-stream bodies are
@@ -48,16 +50,16 @@ COMPRESSED_MIME_TYPES = [
 
 
 def _acceptsZstd(request):
+    # CherryPy raises a 400 for a malformed q-value, either while sorting
+    # several codings or when `qvalue` is read. The handler has already run
+    # (and may have written), so serve the body uncompressed instead.
     try:
-        codings = request.headers.elements("Accept-Encoding")
+        return any(
+            coding.value.lower() == "zstd" and coding.qvalue > 0
+            for coding in request.headers.elements("Accept-Encoding")
+        )
     except cherrypy.HTTPError:
-        # A malformed q-value. The handler has already run (and may have
-        # written), so serve the body uncompressed rather than a 400.
         return False
-    return any(
-        coding.value.lower() == "zstd" and coding.qvalue > 0
-        for coding in codings
-    )
 
 
 def _zstdCompress(body, threads):

@@ -91,12 +91,14 @@ class TestResponseCompression:
         assert "Accept-Encoding" in resp.headers["Vary"]
         assert len(json.loads(body)) == ANNOTATION_COUNT
 
+    # CherryPy raises a 400 for a bad q-value, after the handler ran: while
+    # sorting several codings, or on reading a lone coding's qvalue.
+    @pytest.mark.parametrize("acceptEncoding", ["gzip;q=x, zstd", "zstd;q=x"])
     def testMalformedAcceptEncodingIsUncompressedNot400(
-        self, admin, server, dataset
+        self, admin, server, dataset, acceptEncoding
     ):
-        # CherryPy raises a 400 for a bad q-value, after the handler ran.
         resp, body = _listAnnotations(
-            server, admin, dataset["_id"], "gzip;q=x, zstd"
+            server, admin, dataset["_id"], acceptEncoding
         )
 
         assert "Content-Encoding" not in resp.headers

@@ -789,15 +789,19 @@ celery workers included. Sample it while the request runs and abort past a cap.
 `server/helpers/compression.py` installs a CherryPy `before_finalize` tool on the
 API root. Every response under `/api/v1` whose `Content-Type` is JSON, GeoJSON,
 CSV or TSV is zstd-encoded when the client sends `zstd` in `Accept-Encoding`, and
-sent uncompressed otherwise (there is no gzip). Browsers and urllib3 2.x with
-`backports.zstd` installed ask for it and decode it transparently. What follows
-for endpoint authors:
+sent uncompressed otherwise (there is no gzip). Browsers, and recent urllib3
+2.x when a zstd module imports (`compression.zstd` on Python 3.14+, else
+`backports.zstd`; older 2.x looked for `zstandard`), ask for it and decode it
+transparently. The worker images checked in 2026-11 (worker-base,
+image-processing-base and a few workers, all urllib3 2.7 on Python 3.14) do.
+What follows for endpoint authors:
 
 - **Content-Type decides.** Return binary as `application/octet-stream` (or its
   real image type) so it isn't compressed. Never set `Content-Encoding` yourself
   unless you compress the body yourself; the tool skips any response that has it.
-- **Streamed bodies cost more.** They get two compression threads and hold up to
-  ~10 MB of job buffers while in flight. Buffered bodies compress on the request
+- **Streamed bodies cost more.** They get two compression threads and hold ~10 MB
+  of job buffers while in flight, plus the compressed output of each chunk (all of
+  it when an export yields one chunk). Buffered bodies compress on the request
   thread.
 - **The streaming chunk check above only holds without `Accept-Encoding`.** The
   compressor emits mostly empty chunks. pytest-girder's `server.request` sends no
