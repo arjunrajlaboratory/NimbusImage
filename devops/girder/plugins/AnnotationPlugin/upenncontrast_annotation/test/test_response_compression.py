@@ -1,6 +1,5 @@
-"""API responses are compressed by Girder, zstd when the client accepts it
-and gzip otherwise (server/helpers/compression.py)."""
-import gzip
+"""API responses are zstd-compressed by Girder when the client accepts zstd
+(server/helpers/compression.py)."""
 import json
 
 import pytest
@@ -20,8 +19,6 @@ ANNOTATION_COUNT = 2500
 
 # What current Chrome and Firefox send over HTTPS.
 BROWSER_ACCEPT_ENCODING = "gzip, deflate, br, zstd"
-
-DECOMPRESS = {"zstd": zstd.decompress, "gzip": gzip.decompress}
 
 
 def _listAnnotations(server, admin, datasetId, acceptEncoding=None):
@@ -55,24 +52,16 @@ def dataset(admin):
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
 class TestResponseCompression:
-    @pytest.mark.parametrize("acceptEncoding,contentEncoding", [
-        (BROWSER_ACCEPT_ENCODING, "zstd"),
-        # Safari, and anything else without zstd
-        ("gzip, deflate, br", "gzip"),
-        ("gzip, zstd;q=0", "gzip"),
-    ])
-    def testStreamedListIsCompressed(
-        self, admin, server, dataset, acceptEncoding, contentEncoding
-    ):
+    def testStreamedListIsCompressed(self, admin, server, dataset):
         _, plain = _listAnnotations(server, admin, dataset["_id"])
         resp, body = _listAnnotations(
-            server, admin, dataset["_id"], acceptEncoding
+            server, admin, dataset["_id"], BROWSER_ACCEPT_ENCODING
         )
 
-        assert resp.headers["Content-Encoding"] == contentEncoding
+        assert resp.headers["Content-Encoding"] == "zstd"
         assert "Accept-Encoding" in resp.headers["Vary"]
         assert len(body) < len(plain) / 3
-        assert DECOMPRESS[contentEncoding](body) == plain
+        assert zstd.decompress(body) == plain
         assert len(json.loads(plain)) == ANNOTATION_COUNT
 
     def testNoAcceptEncodingIsUncompressed(self, admin, server, dataset):
@@ -81,13 +70,14 @@ class TestResponseCompression:
         assert "Content-Encoding" not in resp.headers
         assert len(json.loads(body)) == ANNOTATION_COUNT
 
+    # No gzip fallback, and never CherryPy's 406 for an unmet encoding.
     @pytest.mark.parametrize(
-        "acceptEncoding", ["br", "gzip;q=0", "identity", "zstd;q=0"]
+        "acceptEncoding",
+        ["gzip, deflate, br", "br", "identity", "gzip, zstd;q=0"],
     )
-    def testGzipNotAcceptedIsUncompressedNot406(
+    def testZstdNotAcceptedIsUncompressed(
         self, admin, server, dataset, acceptEncoding
     ):
-        # CherryPy's own gzip tool answers 406 to "br" alone.
         resp, body = _listAnnotations(
             server, admin, dataset["_id"], acceptEncoding
         )
@@ -96,8 +86,7 @@ class TestResponseCompression:
         assert "Accept-Encoding" in resp.headers["Vary"]
         assert len(json.loads(body)) == ANNOTATION_COUNT
 
-    @pytest.mark.parametrize("contentEncoding", ["zstd", "gzip"])
-    def testCsvExportIsCompressed(self, admin, server, contentEncoding):
+    def testCsvExportIsCompressed(self, admin, server):
         datasetFolder, _, _ = createDatasetWithData(admin)
 
         def export(headers):
@@ -117,10 +106,10 @@ class TestResponseCompression:
             return resp, b"".join(resp.body)
 
         _, plain = export([])
-        resp, body = export([("Accept-Encoding", contentEncoding)])
+        resp, body = export([("Accept-Encoding", BROWSER_ACCEPT_ENCODING)])
 
-        assert resp.headers["Content-Encoding"] == contentEncoding
-        assert DECOMPRESS[contentEncoding](body) == plain
+        assert resp.headers["Content-Encoding"] == "zstd"
+        assert zstd.decompress(body) == plain
         assert len(plain.decode().splitlines()) == 3
 
     def testPngTileIsNotCompressed(self, admin, server):

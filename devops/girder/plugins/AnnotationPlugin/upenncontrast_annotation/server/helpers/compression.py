@@ -1,4 +1,4 @@
-"""zstd or gzip for API responses, done by the Girder instances.
+"""zstd for API responses, done by the Girder instances.
 
 Nothing else compresses API responses: HAProxy and the static nginx pass
 them through, so a 100K-annotation list is ~100 MB on the wire. Compressing
@@ -6,12 +6,13 @@ here keeps the CPU on the Girder instances (they scale out) instead of the
 single load balancer, and runs in the request's worker thread rather than
 the ASGI event loop.
 
-Browsers that accept zstd (Chrome, Edge and Firefox over HTTPS) get it;
-the rest get gzip. zstd level 1 is 3-4x faster than gzip level 1 and
-smaller, so compression stays ahead of even a gigabit link, where gzip
-became the bottleneck. Both compress a streamed body chunk by chunk
-without flushing between chunks, so even the CSV export, which streams one
-line per chunk, compresses as well as a whole body would.
+Chrome, Edge, Firefox and Safari 26.3+ accept zstd; other clients get the
+body uncompressed. There is no gzip fallback: gzip level 1 is 3-4x slower
+than zstd level 1 and larger, so it slowed responses down on links faster
+than ~50 MB/s, while zstd stays ahead of even a gigabit link. The body is
+compressed chunk by chunk without flushing between chunks, so even the CSV
+export, which streams one line per chunk, compresses as well as a whole
+body would.
 """
 try:
     from compression import zstd
@@ -30,12 +31,6 @@ ZSTD_LEVEL = 1
 # response, which small responses don't need but don't notice either.
 ZSTD_THREADS = 2
 
-# zlib level 1, the fastest: on real Xenium responses it compressed 100K
-# annotations 137 -> 48 MB in 0.58 s, where level 3 reached 47 MB in 1.1 s
-# and level 6 44 MB in 2.5 s. Stubs (6.4x), property values (5.3x) and the
-# CSV export (15x) shrink more, at the same speed or faster.
-GZIP_LEVEL = 1
-
 # Text bodies only: tiles and file downloads are already compressed or
 # binary, and the event stream must not be buffered by a compressor.
 COMPRESSED_MIME_TYPES = [
@@ -46,12 +41,11 @@ COMPRESSED_MIME_TYPES = [
 ]
 
 
-def _acceptedCodings(request):
-    return {
-        coding.value
+def _acceptsZstd(request):
+    return any(
+        coding.value == "zstd" and coding.qvalue > 0
         for coding in request.headers.elements("Accept-Encoding")
-        if coding.qvalue > 0
-    }
+    )
 
 
 def _zstdCompress(body):
@@ -65,33 +59,24 @@ def _zstdCompress(body):
 
 
 def compressResponse():
-    """before_finalize hook: zstd or gzip the response, by what the client
-    accepts.
-
-    CherryPy's gzip answers 406 when the client sends Accept-Encoding
-    without gzip (e.g. only "br"), so it is called only when gzip is
-    acceptable; otherwise the body goes out uncompressed."""
+    """before_finalize hook: zstd the response when the client accepts it.
+    """
     request = cherrypy.serving.request
     response = cherrypy.serving.response
     encoding.set_vary_header(response, "Accept-Encoding")
+    contentType = response.headers.get("Content-Type", "").split(";")[0]
     if (
-        "Content-Encoding" in response.headers
+        contentType not in COMPRESSED_MIME_TYPES
+        or "Content-Encoding" in response.headers
         or httputil.valid_status(response.status)[0] == 206
         or not response.body
+        or not _acceptsZstd(request)
     ):
         return
-    codings = _acceptedCodings(request)
-    if "zstd" in codings:
-        contentType = response.headers.get("Content-Type", "").split(";")[0]
-        if contentType in COMPRESSED_MIME_TYPES:
-            response.headers["Content-Encoding"] = "zstd"
-            response.body = _zstdCompress(response.body)
-            # finalize() recomputes it for a buffered body
-            response.headers.pop("Content-Length", None)
-    elif codings & {"gzip", "x-gzip"}:
-        encoding.gzip(
-            compress_level=GZIP_LEVEL, mime_types=COMPRESSED_MIME_TYPES
-        )
+    response.headers["Content-Encoding"] = "zstd"
+    response.body = _zstdCompress(response.body)
+    # finalize() recomputes it for a buffered body
+    response.headers.pop("Content-Length", None)
 
 
 def enableResponseCompression(apiRoot):

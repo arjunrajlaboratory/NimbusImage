@@ -189,7 +189,7 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         info["apiRoot"].share_link = ShareLink()
         shareLinkGuards.bind()
         system.addSystemEndpoints(info["apiRoot"])
-        # Compress JSON/CSV responses (zstd or gzip) here, on the Girder
+        # Compress JSON/CSV responses (zstd) here, on the Girder
         # instances, rather than at the load balancer. See
         # `server/helpers/compression.py`.
         enableResponseCompression(info["apiRoot"])
