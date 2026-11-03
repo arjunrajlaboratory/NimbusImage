@@ -41,6 +41,9 @@ setup(
         # Wire compression to MongoDB (compressors=zstd in GIRDER_MONGO_URI).
         # Without this extra, pymongo only warns and connects uncompressed.
         "pymongo[zstd]",
+        # zstd API responses (helpers/compression.py); in the standard
+        # library from Python 3.14
+        "backports.zstd; python_version < '3.14'",
         "Pillow",
         # raw_region writes full-bit-depth TIFFs (server/api/rawRegion.py)
         "tifffile",

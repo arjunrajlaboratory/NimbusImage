@@ -1,5 +1,5 @@
-"""API responses are gzipped by Girder when the client accepts gzip
-(server/helpers/compression.py)."""
+"""API responses are compressed by Girder, zstd when the client accepts it
+and gzip otherwise (server/helpers/compression.py)."""
 import gzip
 import json
 
@@ -7,6 +7,7 @@ import pytest
 
 from pytest_girder.assertions import assertStatusOk
 
+from upenncontrast_annotation.server.helpers.compression import zstd
 from upenncontrast_annotation.server.models.annotation import Annotation
 
 from . import girder_utilities as utilities
@@ -16,6 +17,11 @@ from .test_raster import requestTile
 
 # Several raw Mongo batches, so the streamed list arrives in many chunks.
 ANNOTATION_COUNT = 2500
+
+# What current Chrome and Firefox send over HTTPS.
+BROWSER_ACCEPT_ENCODING = "gzip, deflate, br, zstd"
+
+DECOMPRESS = {"zstd": zstd.decompress, "gzip": gzip.decompress}
 
 
 def _listAnnotations(server, admin, datasetId, acceptEncoding=None):
@@ -49,16 +55,24 @@ def dataset(admin):
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
 class TestResponseCompression:
-    def testStreamedListIsGzipped(self, admin, server, dataset):
+    @pytest.mark.parametrize("acceptEncoding,contentEncoding", [
+        (BROWSER_ACCEPT_ENCODING, "zstd"),
+        # Safari, and anything else without zstd
+        ("gzip, deflate, br", "gzip"),
+        ("gzip, zstd;q=0", "gzip"),
+    ])
+    def testStreamedListIsCompressed(
+        self, admin, server, dataset, acceptEncoding, contentEncoding
+    ):
         _, plain = _listAnnotations(server, admin, dataset["_id"])
         resp, body = _listAnnotations(
-            server, admin, dataset["_id"], "gzip, deflate, br, zstd"
+            server, admin, dataset["_id"], acceptEncoding
         )
 
-        assert resp.headers["Content-Encoding"] == "gzip"
+        assert resp.headers["Content-Encoding"] == contentEncoding
         assert "Accept-Encoding" in resp.headers["Vary"]
         assert len(body) < len(plain) / 3
-        assert gzip.decompress(body) == plain
+        assert DECOMPRESS[contentEncoding](body) == plain
         assert len(json.loads(plain)) == ANNOTATION_COUNT
 
     def testNoAcceptEncodingIsUncompressed(self, admin, server, dataset):
@@ -67,7 +81,9 @@ class TestResponseCompression:
         assert "Content-Encoding" not in resp.headers
         assert len(json.loads(body)) == ANNOTATION_COUNT
 
-    @pytest.mark.parametrize("acceptEncoding", ["br", "gzip;q=0"])
+    @pytest.mark.parametrize(
+        "acceptEncoding", ["br", "gzip;q=0", "identity", "zstd;q=0"]
+    )
     def testGzipNotAcceptedIsUncompressedNot406(
         self, admin, server, dataset, acceptEncoding
     ):
@@ -80,7 +96,8 @@ class TestResponseCompression:
         assert "Accept-Encoding" in resp.headers["Vary"]
         assert len(json.loads(body)) == ANNOTATION_COUNT
 
-    def testCsvExportIsGzipped(self, admin, server):
+    @pytest.mark.parametrize("contentEncoding", ["zstd", "gzip"])
+    def testCsvExportIsCompressed(self, admin, server, contentEncoding):
         datasetFolder, _, _ = createDatasetWithData(admin)
 
         def export(headers):
@@ -100,10 +117,10 @@ class TestResponseCompression:
             return resp, b"".join(resp.body)
 
         _, plain = export([])
-        resp, body = export([("Accept-Encoding", "gzip")])
+        resp, body = export([("Accept-Encoding", contentEncoding)])
 
-        assert resp.headers["Content-Encoding"] == "gzip"
-        assert gzip.decompress(body) == plain
+        assert resp.headers["Content-Encoding"] == contentEncoding
+        assert DECOMPRESS[contentEncoding](body) == plain
         assert len(plain.decode().splitlines()) == 3
 
     def testPngTileIsNotCompressed(self, admin, server):
@@ -114,7 +131,7 @@ class TestResponseCompression:
             server,
             folder,
             user=admin,
-            additionalHeaders=[("Accept-Encoding", "gzip")],
+            additionalHeaders=[("Accept-Encoding", BROWSER_ACCEPT_ENCODING)],
         )
 
         assertStatusOk(resp)
