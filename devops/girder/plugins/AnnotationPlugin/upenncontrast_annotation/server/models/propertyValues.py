@@ -329,27 +329,17 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
         # propertyPaths only narrows which values keys are returned.
         if not annotationIds:
             return []
-        # Dict projection so _id is explicitly excluded: a list (inclusion)
-        # projection leaves Mongo's default _id:1 in place, leaking the value
-        # doc's id the docstring promises not to return.
         virtualPaths = []
         if propertyPaths:
             propertyPaths, virtualPaths = valueProviders.splitPaths(
                 propertyPaths
             )
-            fields = {"_id": 0, "annotationId": 1}
-            for path in propertyPaths:
-                fields["values." + ".".join(path)] = 1
-        else:
-            fields = {"_id": 0, "annotationId": 1, "values": 1}
         results = []
-        for start in range(0, len(annotationIds), MAX_IDS_PER_QUERY):
-            chunk = annotationIds[start:start + MAX_IDS_PER_QUERY]
-            query = {
-                "datasetId": datasetId,
-                "annotationId": {"$in": chunk},
-            }
-            if propertyPaths or not virtualPaths:
+        if propertyPaths or not virtualPaths:
+            fields = self._byAnnotationIdsFields(propertyPaths)
+            for query in self._byAnnotationIdsQueries(
+                datasetId, annotationIds
+            ):
                 results.extend(self.find(query, fields=fields))
         # Virtual paths (valueProviders): merged into the returned documents
         # so a client working from this fetch sees a gene column exactly like
@@ -373,6 +363,49 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
                         doc.setdefault("values", {}), path, value
                     )
         return results
+
+    def findRawBatchesByAnnotationIds(
+        self, datasetId, annotationIds, propertyPaths=None
+    ):
+        """`findByAnnotationIds` as raw BSON batches (see `findRawBatches`),
+        same documents in the same order, for streaming straight to JSON.
+
+        Stored values only: callers must send requests whose propertyPaths
+        include a virtual path (valueProviders) through findByAnnotationIds,
+        which merges the provider's values into the documents."""
+        fields = self._byAnnotationIdsFields(propertyPaths)
+        for query in self._byAnnotationIdsQueries(datasetId, annotationIds):
+            cursor = self.findRawBatches(query, fields=fields)
+            try:
+                yield from cursor
+            finally:
+                cursor.close()
+
+    @staticmethod
+    def _byAnnotationIdsFields(storedPaths):
+        """The projection for findByAnnotationIds: annotationId plus the
+        requested stored paths (all values when none). A dict projection, so
+        _id is explicitly excluded: a list (inclusion) projection leaves
+        Mongo's default _id:1 in place, leaking the value doc's id that
+        findByAnnotationIds promises not to return."""
+        if not storedPaths:
+            return {"_id": 0, "annotationId": 1, "values": 1}
+        fields = {"_id": 0, "annotationId": 1}
+        for path in storedPaths:
+            fields["values." + ".".join(path)] = 1
+        return fields
+
+    @staticmethod
+    def _byAnnotationIdsQueries(datasetId, annotationIds):
+        """One query per MAX_IDS_PER_QUERY ids, keeping each $in under
+        MongoDB's 16 MiB command limit."""
+        for start in range(0, len(annotationIds), MAX_IDS_PER_QUERY):
+            yield {
+                "datasetId": datasetId,
+                "annotationId": {
+                    "$in": annotationIds[start:start + MAX_IDS_PER_QUERY]
+                },
+            }
 
     def valuesForPath(self, datasetId, propertyPath):
         """Yield (annotationId, value) for every property-value document in

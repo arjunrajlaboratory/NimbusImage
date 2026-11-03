@@ -1,12 +1,13 @@
 """The dataset-wide list endpoints stream their cursor.
 
 `limit=0` asks for every document in a dataset. Built as one list and one
-JSON string, property values grew Girder by ~1.6 GiB per 100K documents,
-and the 709K-cell Xenium dataset OOM-killed the container. Streamed, Girder
-holds only the current pymongo batch and one output chunk of about 500
-documents. The Girder test server hands a streamed body back as
-a generator of chunks and a serialized one as a single chunk, so more than
-one chunk means the response was not materialized.
+JSON string, 709K property values took Girder past 13.5 GiB and the
+container was OOM-killed. Streamed, Girder holds a few Mongo batches at a
+time (`STREAM_PREFETCH_BATCHES` queued ahead; `streamRawJsonArray` yields
+one chunk per raw batch of up to 16 MB, plus `[`, `,` and `]`). The
+Girder test server hands a streamed body back as a generator of chunks and
+a serialized one as a single chunk, so more than one chunk means the
+response was not materialized.
 """
 import json
 
@@ -25,8 +26,8 @@ from upenncontrast_annotation.server.models.propertyValues import (
 from . import girder_utilities as utilities
 from . import upenn_testing_utilities as upenn_utilities
 
-# streamJsonArray flushes about every 500 documents (1000 list entries,
-# commas included), so a streamed response has several chunks.
+# More than one Mongo batch (the first holds 101 documents), so the body
+# spans several raw batches.
 DOCUMENT_COUNT = 2500
 
 

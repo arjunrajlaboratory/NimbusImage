@@ -7,7 +7,8 @@ from girder.models.folder import Folder
 
 from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
-from ..helpers.serialization import orJsonDefaults, streamJsonArray
+from ..helpers.aggregation import STREAM_PREFETCH_BATCHES, prefetchedBatches
+from ..helpers.serialization import streamRawJsonArray
 from ..helpers.validation import requireBulkCreateBody, requireObjectId
 from ..models.annotation import Annotation as AnnotationModel
 from ..models.connections import AnnotationConnection as ConnectionModel
@@ -268,8 +269,9 @@ class AnnotationConnection(Resource):
             query["_id"] = {"$gt": requireObjectId(after_id, "afterId")}
             offset = 0  # Ignore offset when using cursor
 
-        # Use regular find instead of findWithPermissions
-        cursor = self._connectionModel.find(
+        # Use regular find instead of findWithPermissions. Raw batches go
+        # straight to JSON (findRawBatches), as in the annotation list.
+        cursor = self._connectionModel.findRawBatches(
             query,
             sort=sort,
             limit=limit,
@@ -280,7 +282,10 @@ class AnnotationConnection(Resource):
         # it in one string, so limit=0 on a large dataset grows Girder's
         # memory with the dataset.
         setResponseHeader("Content-Type", "application/json")
-        return streamJsonArray(cursor, default=orJsonDefaults)
+        return streamRawJsonArray(
+            prefetchedBatches(cursor, depth=STREAM_PREFETCH_BATCHES),
+            self._connectionModel.collection.codec_options,
+        )
 
     @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(

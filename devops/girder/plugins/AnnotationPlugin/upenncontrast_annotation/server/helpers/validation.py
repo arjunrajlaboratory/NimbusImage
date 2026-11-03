@@ -281,6 +281,22 @@ def validatePropertyPaths(propertyPaths):
         )
 
 
+def validateDisjointPropertyPaths(propertyPaths):
+    """Refuse a path that extends another (["area"] with ["area", "mean"]).
+    Mongo rejects such a projection with "Path collision"; in an endpoint
+    that streams its response, that would arrive after the 200 as a
+    truncated body. Repeated identical paths are fine. Call after
+    validatePropertyPaths."""
+    ordered = sorted(tuple(path) for path in propertyPaths)
+    for shorter, longer in zip(ordered, ordered[1:]):
+        if shorter != longer and longer[:len(shorter)] == shorter:
+            raise RestException(
+                "propertyPaths must not contain a path and its sub-path "
+                "(%s and %s)" % (".".join(shorter), ".".join(longer)),
+                code=400,
+            )
+
+
 def validateUncomputedCountsProperties(properties):
     """Validate the `properties` payload for the uncomputed-counts endpoint.
 

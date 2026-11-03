@@ -567,7 +567,7 @@ docs = list(MyModel().collection.find({'datasetId': dataset_id}))
 docs = list(MyModel().find({'datasetId': dataset_id}))
 ```
 
-**Exception:** Aggregation pipelines require `collection.aggregate()` since Girder's `find()` doesn't support them. This is the only acceptable use of `collection` directly.
+**Exception:** Aggregation pipelines require `collection.aggregate()` since Girder's `find()` doesn't support them. The one other acceptable use is reading raw BSON batches to stream as JSON, through `findRawBatches` (`server/helpers/customModel.py`, which repeats what `Model.find` adds) or `aggregate_raw_batches`; see `codebaseDocumentation/NATIVE_JSON_TRANSCODER.md`.
 
 ### Backend Python Patterns
 

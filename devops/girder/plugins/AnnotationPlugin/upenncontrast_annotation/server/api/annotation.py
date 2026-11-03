@@ -54,7 +54,12 @@ from ..models.rasterFilter import (
     RasterFilter as RasterFilterModel,
     UnknownRasterFilter,
 )
-from ..helpers.serialization import orJsonDefaults, streamJsonArray
+from ..helpers.aggregation import STREAM_PREFETCH_BATCHES, prefetchedBatches
+from ..helpers.serialization import (
+    orJsonDefaults,
+    streamJsonArray,
+    streamRawJsonArray,
+)
 from ..helpers.annotationRaster import (
     COLOR_PATTERN,
     RasterBuildBusy,
@@ -458,8 +463,10 @@ class Annotation(Resource):
             query["_id"] = {"$gt": requireObjectId(after_id, "afterId")}
             offset = 0  # Ignore offset when using cursor
 
-        # Use regular find instead of findWithPermissions
-        cursor = self._annotationModel.find(
+        # Use regular find instead of findWithPermissions. Raw batches go
+        # straight to JSON: decoding a large dataset's annotations into dicts
+        # cost more than the rest of the request (findRawBatches).
+        cursor = self._annotationModel.findRawBatches(
             query,
             sort=sort,
             limit=limit,
@@ -469,7 +476,11 @@ class Annotation(Resource):
         setResponseHeader("Content-Type", "application/json")
         if callable(getattr(cursor, 'count', None)):
             cherrypy.response.headers['Girder-Total-Count'] = cursor.count()
-        return streamJsonArray(cursor, default=orJsonDefaults)
+        # Fetching overlaps transcoding, which releases the GIL.
+        return streamRawJsonArray(
+            prefetchedBatches(cursor, depth=STREAM_PREFETCH_BATCHES),
+            self._annotationModel.collection.codec_options,
+        )
 
     @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
@@ -826,14 +837,18 @@ class Annotation(Resource):
             exc=True,
         )
 
-        stubs = self._annotationModel.stubs(
+        # Mongo evaluating the pipeline and turning its output into JSON each
+        # take seconds at 700K; the prefetch overlaps them.
+        stubBatches = prefetchedBatches(self._annotationModel.stubBatches(
             datasetId,
             shape=params.get("shape"),
             tags=params.get("tags"),
-        )
+        ))
 
         setResponseHeader("Content-Type", "application/json")
-        return streamJsonArray(stubs, default=orJsonDefaults)
+        return streamRawJsonArray(
+            stubBatches, self._annotationModel.collection.codec_options
+        )
 
     # GeoJS loads OSM tiles through <img> requests, which cannot attach the
     # Girder-Token header used by the REST client.  This read-only route must
@@ -1116,12 +1131,14 @@ class Annotation(Resource):
             datasetIds, self.getCurrentUser(), level=AccessType.READ
         )
 
-        cursor = self._annotationModel.find(
+        cursor = self._annotationModel.findRawBatches(
             {"_id": {"$in": objectIds}}
         )
 
         setResponseHeader("Content-Type", "application/json")
-        return streamJsonArray(cursor, default=orJsonDefaults)
+        return streamRawJsonArray(
+            cursor, self._annotationModel.collection.codec_options
+        )
 
     def _loadListRequest(self, withSortAndPaths=False):
         """Shared prologue of the filter-driven POST endpoints (list,
