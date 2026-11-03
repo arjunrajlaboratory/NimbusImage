@@ -38,8 +38,11 @@ setup(
         # pulling it in transitively.
         "numpy",
         "orjson",
-        # Wire compression to MongoDB (compressors=zstd in GIRDER_MONGO_URI).
-        # Without this extra, pymongo only warns and connects uncompressed.
+        # Lets a deployment add compressors=zstd to GIRDER_MONGO_URI; without
+        # this extra, pymongo only warns and connects uncompressed. Neither
+        # girder.env nor prod uses it: on prod (Atlas over VPC peering) it
+        # cut bytes 5-8x but made large reads 20-32% slower, since Atlas
+        # compresses at a fixed, slower level and the link isn't the limit.
         "pymongo[zstd]",
         "Pillow",
         # raw_region writes full-bit-depth TIFFs (server/api/rawRegion.py)
