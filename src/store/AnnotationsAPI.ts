@@ -614,13 +614,19 @@ export default class AnnotationsAPI {
     return this.client
       .get("annotation_connection/count", { params: { datasetId } })
       .then((res) => res.data.count)
-      .catch(() => 0);
+      .catch((error) => {
+        logError("Failed to count connections:", error);
+        return 0;
+      });
   }
 
   async getPropertyValueCount(datasetId: string): Promise<number> {
     return this.client
       .get("annotation_property_values/count", { params: { datasetId } })
       .then((res) => res.data.count)
-      .catch(() => 0);
+      .catch((error) => {
+        logError("Failed to count property values:", error);
+        return 0;
+      });
   }
 }

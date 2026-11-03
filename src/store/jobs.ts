@@ -199,8 +199,8 @@ export class Jobs extends VuexModule {
     try {
       const response = await main.girderRest.get(`job/${jobId}`);
       return response.data.status;
-    } catch {
-      logError(`Failed to get status for job ${jobId}`);
+    } catch (error) {
+      logError(`Failed to get status for job ${jobId}:`, error);
       return null;
     }
   }
@@ -302,8 +302,8 @@ export class Jobs extends VuexModule {
     let data: any;
     try {
       data = window.JSON.parse(event.data);
-    } catch {
-      logError("Invalid event JSON");
+    } catch (error) {
+      logError("Invalid event JSON:", error);
       return;
     }
     const notificationTime = data._girderTime;

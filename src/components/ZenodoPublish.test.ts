@@ -21,6 +21,7 @@ vi.mock("@/store/jobs", () => ({ default: jobsMock }));
 vi.mock("@/utils/log", () => ({ logError: vi.fn() }));
 
 import ZenodoPublish from "./ZenodoPublish.vue";
+import { logError } from "@/utils/log";
 
 const OWNER_HINT =
   "requires owner access to every dataset and collection in the project";
@@ -89,6 +90,27 @@ describe("ZenodoPublish", () => {
   afterEach(() => {
     wrapper?.unmount();
     wrapper = null;
+  });
+
+  it("doesn't log the 401 an anonymous viewer gets from the token check", async () => {
+    mocks.getCredentials.mockRejectedValue(
+      serverError(401, "Must be logged in."),
+    );
+    vi.mocked(logError).mockClear();
+    await mountComponent();
+    expect(mocks.getCredentials).toHaveBeenCalled();
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("logs any other failure of the token check with its cause", async () => {
+    const failure = serverError(500, "boom");
+    mocks.getCredentials.mockRejectedValue(failure);
+    vi.mocked(logError).mockClear();
+    await mountComponent();
+    expect(logError).toHaveBeenCalledWith(
+      "Failed to check for a Zenodo token:",
+      failure,
+    );
   });
 
   it("shows the server's message when the upload is refused", async () => {

@@ -147,6 +147,7 @@ import AddDatasetToCollection from "@/components/AddDatasetToCollection.vue";
 import { IDatasetConfiguration, IDatasetView } from "@/store/model";
 import AlertDialog, { IAlert } from "@/components/AlertDialog.vue";
 import { userDisplayInfo } from "@/utils/userDisplay";
+import { logWarning } from "@/utils/log";
 
 // Suppress unused import warnings for template-only components
 void AlertDialog;
@@ -351,7 +352,9 @@ async function refreshItems(force = false) {
           ownerDisplayName.value = userDisplayInfo(user).full;
         }
       })
-      .catch(() => {});
+      .catch((error) => {
+        logWarning("Failed to fetch the dataset owner's name:", error);
+      });
   }
 
   if (datasetItem && resolvedConfigurationId && route.name === "datasetview") {
@@ -371,8 +374,11 @@ async function refreshItems(force = false) {
             if (resource) {
               text = resource.name;
             }
-          } catch {
-            // Silently handle errors
+          } catch (error) {
+            logWarning(
+              `Failed to fetch the name of dataset ${view.datasetId}:`,
+              error,
+            );
           }
           return { text, value: view.id };
         }),

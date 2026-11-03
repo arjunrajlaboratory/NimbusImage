@@ -47,6 +47,7 @@ vi.mock("@/store/girderResources", () => ({
 
 vi.mock("@/utils/log", () => ({
   logError: vi.fn(),
+  logWarning: vi.fn(),
 }));
 
 vi.mock("@/components/AlertDialog.vue", () => ({

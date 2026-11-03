@@ -118,7 +118,7 @@ import girderResources from "@/store/girderResources";
 import store from "@/store";
 
 import { isDatasetFolder } from "@/utils/girderSelectable";
-import { logError } from "@/utils/log";
+import { logError, logWarning } from "@/utils/log";
 import { IGirderSelectAble, IGirderLocation } from "@/girder";
 
 import CustomFileManager from "@/components/CustomFileManager.vue";
@@ -179,7 +179,8 @@ const configurationRef = ref<InstanceType<
 onMounted(async () => {
   try {
     uploadLocation.value = await store.api.getUserPrivateFolder();
-  } catch {
+  } catch (error) {
+    logWarning("Failed to fetch the private folder:", error);
     uploadLocation.value = store.girderUser as IGirderLocation | null;
   }
 });
