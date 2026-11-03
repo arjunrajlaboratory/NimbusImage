@@ -8,7 +8,10 @@ from girder.models.folder import Folder
 from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..helpers.aggregation import STREAM_PREFETCH_BATCHES, prefetchedBatches
-from ..helpers.serialization import streamRawJsonArray
+from ..helpers.serialization import (
+    createdDocumentsResponse,
+    streamRawJsonArray,
+)
 from ..helpers.validation import requireBulkCreateBody, requireObjectId
 from ..models.annotation import Annotation as AnnotationModel
 from ..models.connections import AnnotationConnection as ConnectionModel
@@ -141,7 +144,9 @@ class AnnotationConnection(Resource):
             if "datasetId" in conn
         }
         requireDatasetsAccess(datasetIds, self.getCurrentUser())
-        return self._connectionModel.createMultiple(connections)
+        return createdDocumentsResponse(
+            self._connectionModel.createMultiple(connections)
+        )
 
     @describeRoute(
         Description("Delete an existing connection")

@@ -808,6 +808,32 @@ return orjson.dumps(
 )
 ```
 
+## Bulk endpoints: Girder's encoder and per-item validation are the cost
+
+Profiling a 100K-polygon `POST /upenn_annotation/multiple` found the two largest
+costs were pure Python overhead, not Mongo:
+
+- **Girder's default response encoder** is stdlib `json.dumps(sort_keys=True,
+  cls=JsonEncoder)`: ~3.5 s for 100K annotations, orjson ~0.25 s. An endpoint that
+  returns a large list of documents should return `createdDocumentsResponse(docs)`
+  (`helpers/serialization.py`): a streamed orjson array with sorted keys and
+  Girder's `str()` fallback, so it parses to the same value Girder sent for
+  documents decoded from a JSON body or from Mongo. Python-computed values are
+  not covered: a numpy float becomes a string, and Enums, dataclasses and
+  non-UTC aware datetimes encode differently. Remember that orjson writes
+  NaN/Infinity as `null`, where Girder raised (a 500).
+- **fastjsonschema costs ~1 µs per array item** (it builds key sets per object).
+  For a schema with a large array of small objects (coordinates), a hand-written
+  exact-type check that only ever *accepts* (`coordinatesMatchSchema`), plus the
+  schema compiled without that array's rule, cut validation ~4x. Keep the fast
+  check conservative (`type(x) is dict`, not `isinstance`; `bool` must fail) and
+  fall back to the full validator so rejections keep their exact message. Pin the
+  hand-coded rules to the schema in a test, so a schema edit can't silently
+  diverge (`test_bulk_create.py`).
+- **Don't swap the body parser to `orjson.loads`.** It is only 10–25% faster here,
+  and it parses integers past 64 bits as floats and refuses `1e999`, both of which
+  stdlib `json` (Girder's `getBodyJson`) accepts — a change to accepted inputs.
+
 ## Virtual property paths (`helpers/valueProviders.py`)
 
 A property path whose first segment is a registered prefix is answered by another

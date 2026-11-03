@@ -12,6 +12,7 @@ from ..helpers.access_helpers import (
 from ..helpers import valueProviders
 from ..helpers.aggregation import STREAM_PREFETCH_BATCHES, prefetchedBatches
 from ..helpers.serialization import (
+    createdDocumentsResponse,
     jsonSafe,
     orJsonDefaults,
     streamJsonArray,
@@ -111,7 +112,7 @@ class PropertyValues(Resource):
         }
         requireDatasetsAccess(datasetIds, self.getCurrentUser())
         requireAnnotationsInDatasets(propertyValuesList)
-        return jsonSafe(
+        return createdDocumentsResponse(
             self._annotationPropertyValuesModel.appendMultipleValues(
                 propertyValuesList
             )

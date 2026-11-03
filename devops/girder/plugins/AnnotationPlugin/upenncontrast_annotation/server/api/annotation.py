@@ -56,6 +56,7 @@ from ..models.rasterFilter import (
 )
 from ..helpers.aggregation import STREAM_PREFETCH_BATCHES, prefetchedBatches
 from ..helpers.serialization import (
+    createdDocumentsResponse,
     orJsonDefaults,
     streamJsonArray,
     streamRawJsonArray,
@@ -285,7 +286,9 @@ class Annotation(Resource):
             if "datasetId" in ann
         }
         requireDatasetsAccess(datasetIds, self.getCurrentUser())
-        return self._annotationModel.createMultiple(annotations)
+        return createdDocumentsResponse(
+            self._annotationModel.createMultiple(annotations)
+        )
 
     @describeRoute(
         Description("Delete an existing annotation")
