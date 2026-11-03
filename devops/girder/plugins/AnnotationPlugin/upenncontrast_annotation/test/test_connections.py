@@ -643,10 +643,9 @@ class TestConnectionEndpoints:
             method="GET",
             user=admin,
             params={"datasetId": str(dataset["_id"])},
-            isJson=False,
         )
         assertStatusOk(resp)
-        assert len(json.loads(b"".join(resp.body))) == 3
+        assert len(resp.json) == 3
 
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")

@@ -442,7 +442,7 @@ class Annotation(Resource):
         limit, offset, sort = self.getPagingParameters(params, "_id")
 
         # First, check dataset permissions explicitly
-        datasetId = ObjectId(params["datasetId"])
+        datasetId = requireObjectId(params["datasetId"], "datasetId")
         Folder().load(
             datasetId,
             user=self.getCurrentUser(),
@@ -460,7 +460,7 @@ class Annotation(Resource):
         # Support cursor pagination
         after_id = params.get("afterId")
         if after_id:
-            query["_id"] = {"$gt": ObjectId(after_id)}
+            query["_id"] = {"$gt": requireObjectId(after_id, "afterId")}
             offset = 0  # Ignore offset when using cursor
 
         # Use regular find instead of findWithPermissions. Raw batches go
@@ -499,7 +499,7 @@ class Annotation(Resource):
         .errorResponse()
     )
     def count(self, params):
-        datasetId = ObjectId(params["datasetId"])
+        datasetId = requireObjectId(params["datasetId"], "datasetId")
         user = self.getCurrentUser()
         Folder().load(
             datasetId,

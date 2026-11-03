@@ -54,7 +54,11 @@ def streamJsonArray(items, prefix=b"[", suffix=b"]", default=None):
     wrapping them in `prefix`/`suffix` (so callers can embed the array inside
     an enclosing object, e.g. {"total": N, "rows": [...]}). Returns a
     generator function suitable for a streamed response body (Girder streams
-    a callable's output but list()s a generator object)."""
+    a callable's output but list()s a generator object).
+
+    Unlike Girder's encoder, keys keep insertion order (not sorted),
+    Infinity/NaN become null (not a 500), and a type `default` rejects
+    raises mid-stream (not str())."""
     def generate():
         chunk = [prefix]
         first = True
