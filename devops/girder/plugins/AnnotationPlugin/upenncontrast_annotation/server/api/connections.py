@@ -1,13 +1,14 @@
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute, describeRoute
-from girder.api.rest import Resource, loadmodel
+from girder.api.rest import Resource, loadmodel, setResponseHeader
 from girder.constants import AccessType, TokenScope
-from girder.exceptions import AccessException, RestException
+from girder.exceptions import AccessException
 from girder.models.folder import Folder
 
 from ..helpers.access_helpers import requireDatasetsAccess
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
-from ..helpers.validation import requireBulkCreateBody
+from ..helpers.serialization import orJsonDefaults, streamJsonArray
+from ..helpers.validation import requireBulkCreateBody, requireObjectId
 from ..models.annotation import Annotation as AnnotationModel
 from ..models.connections import AnnotationConnection as ConnectionModel
 
@@ -239,44 +240,47 @@ class AnnotationConnection(Resource):
         .errorResponse()
     )
     def find(self, params):
-        limit, offset, sort = self.getPagingParameters(params, "lowerName")
-        query = {}
-
-        # Check dataset permissions if datasetId is provided
-        if "datasetId" in params and params["datasetId"]:
-            datasetId = ObjectId(params["datasetId"])
-            dataset = Folder().load(
-                datasetId, user=self.getCurrentUser(), level=AccessType.READ
-            )
-            if not dataset:
-                raise RestException(
-                    code=403, message="Access denied to dataset"
-                )
-            query["datasetId"] = datasetId
+        limit, offset, sort = self.getPagingParameters(params, "_id")
+        # An empty datasetId passes the route's required check; parse it
+        # unconditionally so the READ check always runs.
+        datasetId = requireObjectId(params.get("datasetId"), "datasetId")
+        Folder().load(
+            datasetId, user=self.getCurrentUser(), level=AccessType.READ,
+            exc=True,
+        )
+        query = {"datasetId": datasetId}
 
         if "childId" in params and params["childId"]:
-            query["childId"] = ObjectId(params["childId"])
+            query["childId"] = requireObjectId(params["childId"], "childId")
         if "parentId" in params and params["parentId"]:
-            query["parentId"] = ObjectId(params["parentId"])
+            query["parentId"] = requireObjectId(
+                params["parentId"], "parentId"
+            )
         if "nodeAnnotationId" in params and params["nodeAnnotationId"]:
-            query["$or"] = [
-                {"parentId": ObjectId(params["nodeAnnotationId"])},
-                {"childId": ObjectId(params["nodeAnnotationId"])},
-            ]
+            nodeId = requireObjectId(
+                params["nodeAnnotationId"], "nodeAnnotationId"
+            )
+            query["$or"] = [{"parentId": nodeId}, {"childId": nodeId}]
 
         # Support cursor pagination
         after_id = params.get("afterId")
         if after_id:
-            query["_id"] = {"$gt": ObjectId(after_id)}
+            query["_id"] = {"$gt": requireObjectId(after_id, "afterId")}
             offset = 0  # Ignore offset when using cursor
 
         # Use regular find instead of findWithPermissions
-        return self._connectionModel.find(
+        cursor = self._connectionModel.find(
             query,
             sort=sort,
             limit=limit,
             offset=offset,
         ).hint([("datasetId", 1), ("_id", 1)])
+
+        # Stream: Girder would otherwise list() the cursor and JSON-encode
+        # it in one string, so limit=0 on a large dataset grows Girder's
+        # memory with the dataset.
+        setResponseHeader("Content-Type", "application/json")
+        return streamJsonArray(cursor, default=orJsonDefaults)
 
     @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
@@ -285,7 +289,7 @@ class AnnotationConnection(Resource):
         .errorResponse()
     )
     def count(self, params):
-        datasetId = ObjectId(params["datasetId"])
+        datasetId = requireObjectId(params["datasetId"], "datasetId")
         Folder().load(
             datasetId, user=self.getCurrentUser(), level=AccessType.READ,
             exc=True

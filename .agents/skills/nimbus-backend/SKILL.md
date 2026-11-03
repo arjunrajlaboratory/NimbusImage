@@ -44,6 +44,20 @@ doc = Model().load(id, force=True)  # Admin bypass
 For detailed access patterns including sharing: read `references/access-control-patterns.md`
 When modifying sharing/access code: read `codebaseDocumentation/SHARING.md`
 
+### An optional dataset filter is an optional access check
+
+List endpoints that check READ on the `datasetId` they filter by must require
+it, and must parse it unconditionally. `annotation_property_values` find
+checked access only `if "datasetId" in params`, so omitting it dropped both
+the filter and the check. `annotation_connection` find required the parameter
+but checked only when it was truthy, so `datasetId=` did the same. Either way
+an anonymous caller could list every dataset's values or connections. Parse
+with `requireObjectId(params.get(...))` (missing or empty → 400), then
+`Folder().load(..., exc=True)`, then build the query from that id. Test
+anonymously, against a **private** dataset, with whichever input bypassed the
+check: missing for property values (`testFindPropertyValuesRequiresDatasetId`),
+empty for connections (`testFindConnectionsWithEmptyDatasetIdDenied`).
+
 ### Ids that match nothing get no access check
 
 Bulk endpoints usually check access on the datasets of the documents an id list resolves to (`distinctDatasetIds` → `requireDatasetsAccess`). An id that matches no document resolves to no dataset, so nothing about it is checked. That is harmless only if nothing downstream acts on the raw id. The bulk-delete cleanup cascade did: it removed connections and property values pointing at the id in **any** dataset. Leftover orphans in other users' datasets could therefore be deleted by naming their dangling ids. Anything that fans out from caller-supplied ids (cascades, events, follow-up queries keyed on the id rather than the loaded document) must run only for ids that resolved to a document the caller was checked against. `Annotation.multipleAnnotationsRemovedEvent` filters to existing annotations before triggering cleanup (#1418, Codex P2).
@@ -687,6 +701,45 @@ Rules:
 
 Full incident, numbers, and procedure:
 `codebaseDocumentation/PROPERTY_VALUES_UNIQUE_INDEX.md`.
+
+## Dataset-wide list endpoints must stream, not return a cursor or list
+
+`.pagingParams()` accepts `limit=0`, which means "every document". If the
+handler returns a cursor, a `list(cursor)`, or `jsonSafe(...)` of either,
+Girder materializes the whole result and then `json.dumps` it into one string.
+`GET annotation_property_values?limit=0` did this, and on a 709K-cell Xenium
+dataset Girder grew ~1.6 GiB per 100K documents until the container was
+OOM-killed (fixed 2026-11). A public reader of a large public dataset can do
+that to production.
+
+Return a generator *function* (any callable) instead. Girder's `endpoint`
+streams only when the value is callable. It runs `list()` on a generator
+object just as it does on a cursor, so returning `gen()` rather than `gen`
+buffers everything again. `streamJsonArray` returns its inner function
+uncalled:
+
+```python
+setResponseHeader("Content-Type", "application/json")
+return streamJsonArray(cursor, default=orJsonDefaults)  # helpers/serialization
+```
+
+orjson is not Girder's encoder, so moving an endpoint to it changes the output
+in edge cases. It writes Infinity/NaN as null, where Girder (`allow_nan=False`)
+returns a 500, so `jsonSafe` isn't needed. It keeps insertion key order rather
+than sorting keys. A type `orJsonDefaults` doesn't know (anything but ObjectId)
+raises in the middle of the stream, where Girder's encoder `str()`s it. Stored
+JSON bodies never hold such types, but check before streaming a model that
+stores datetimes or sets. The
+Girder 5 ASGI bridge passes chunks through a one-slot queue, so a slow client
+gets backpressure rather than a growing buffer. In tests `resp.json` still
+works, because the test client joins the chunks. To check that an endpoint
+streams, pass `isJson=False` and read `list(resp.body)`: more than one chunk
+means it streamed (`test_list_streaming.py`). Use more than ~500 documents,
+since `streamJsonArray` flushes every 1000 list entries (commas included) and a
+smaller result is a single chunk either way. Measure with
+the container's cgroup `anon` memory (`/sys/fs/cgroup/memory.stat`), which is
+what the OOM killer acts on and counts every process in the container, the
+celery workers included. Sample it while the request runs and abort past a cap.
 
 ## Returning a large JSON body from numpy (orjson + raw response)
 

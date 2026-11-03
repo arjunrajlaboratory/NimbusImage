@@ -1,8 +1,6 @@
-from bson import ObjectId
-
 from girder.api import access
 from girder.api.describe import Description, describeRoute
-from girder.api.rest import Resource
+from girder.api.rest import Resource, setResponseHeader
 from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
 from girder.models.folder import Folder
@@ -11,7 +9,11 @@ from ..helpers.access_helpers import (
     requireAnnotationsInDatasets,
     requireDatasetsAccess,
 )
-from ..helpers.serialization import jsonSafe
+from ..helpers.serialization import (
+    jsonSafe,
+    orJsonDefaults,
+    streamJsonArray,
+)
 from ..helpers.validation import (
     MAX_DISTINCT_SEARCH_LENGTH,
     MAX_DISTINCT_VALUES,
@@ -200,7 +202,7 @@ class PropertyValues(Resource):
         .param(
             "datasetId",
             "Get all property values for this dataset",
-            required=False,
+            required=True,
         )
         .param(
             "annotationId",
@@ -212,37 +214,41 @@ class PropertyValues(Resource):
         .errorResponse()
     )
     def find(self, params):
-        limit, offset, sort = self.getPagingParameters(params, "lowerName")
-        query = {}
-
-        # Check dataset permissions if datasetId is provided
-        if "datasetId" in params:
-            datasetId = ObjectId(params["datasetId"])
-            dataset = Folder().load(
-                datasetId, user=self.getCurrentUser(), level=AccessType.READ
-            )
-            if not dataset:
-                raise RestException(
-                    code=403, message="Access denied to dataset"
-                )
-            query["datasetId"] = datasetId
+        limit, offset, sort = self.getPagingParameters(params, "_id")
+        # datasetId is required: it is what the READ check is made against.
+        # Optional, a request without it listed every dataset's values.
+        datasetId = requireObjectId(params.get("datasetId"), "datasetId")
+        Folder().load(
+            datasetId, user=self.getCurrentUser(), level=AccessType.READ,
+            exc=True,
+        )
+        query = {"datasetId": datasetId}
 
         if "annotationId" in params:
-            query["annotationId"] = ObjectId(params["annotationId"])
+            query["annotationId"] = requireObjectId(
+                params["annotationId"], "annotationId"
+            )
 
         # Support cursor pagination
         after_id = params.get("afterId")
         if after_id:
-            query["_id"] = {"$gt": ObjectId(after_id)}
+            query["_id"] = {"$gt": requireObjectId(after_id, "afterId")}
             offset = 0  # Ignore offset when using cursor
 
         # Use regular find instead of findWithPermissions
-        return jsonSafe(list(self._annotationPropertyValuesModel.find(
+        cursor = self._annotationPropertyValuesModel.find(
             query,
             sort=sort,
             limit=limit,
             offset=offset,
-        ).hint([("datasetId", 1), ("_id", 1)])))
+        ).hint([("datasetId", 1), ("_id", 1)])
+
+        # Stream, never materialize: limit=0 returns the whole dataset, and
+        # building that list (plus Girder's JSON string of it) took ~1.6 GiB
+        # per 100K documents, enough to OOM-kill Girder on a 709K-cell
+        # dataset. orjson writes Infinity/NaN as null, as jsonSafe did.
+        setResponseHeader("Content-Type", "application/json")
+        return streamJsonArray(cursor, default=orJsonDefaults)
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
@@ -251,9 +257,7 @@ class PropertyValues(Resource):
         .errorResponse()
     )
     def count(self, params):
-        if "datasetId" not in params:
-            raise RestException(code=400, message="Dataset ID is required")
-        datasetId = ObjectId(params["datasetId"])
+        datasetId = requireObjectId(params.get("datasetId"), "datasetId")
         Folder().load(
             datasetId, user=self.getCurrentUser(), level=AccessType.READ,
             exc=True
