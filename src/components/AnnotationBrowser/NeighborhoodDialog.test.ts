@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   fetchJob: vi.fn(),
   fetchProperties: vi.fn(),
   adoptServerRegisteredProperty: vi.fn(),
-  fetchPropertyPathsSample: vi.fn(),
   fetchPropertyValues: vi.fn(),
   updateHistograms: vi.fn(),
   downloadToClient: vi.fn(),
@@ -34,7 +33,6 @@ vi.mock("@/store/properties", () => ({
   default: {
     fetchProperties: mocks.fetchProperties,
     adoptServerRegisteredProperty: mocks.adoptServerRegisteredProperty,
-    fetchPropertyPathsSample: mocks.fetchPropertyPathsSample,
     fetchPropertyValues: mocks.fetchPropertyValues,
   },
 }));
@@ -99,7 +97,6 @@ describe("NeighborhoodDialog", () => {
     });
     mocks.fetchJob.mockReset();
     mocks.fetchProperties.mockReset().mockResolvedValue(undefined);
-    mocks.fetchPropertyPathsSample.mockReset().mockResolvedValue(undefined);
     mocks.fetchPropertyValues.mockReset().mockResolvedValue(undefined);
     mocks.updateHistograms.mockReset().mockResolvedValue(undefined);
     mocks.downloadToClient.mockReset();
