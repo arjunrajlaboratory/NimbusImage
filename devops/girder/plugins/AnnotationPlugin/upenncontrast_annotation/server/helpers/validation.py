@@ -29,6 +29,14 @@ from . import analysis
 # commands over 16 MiB) as well as the payload. A configuration holds a
 # few dozen properties at most.
 MAX_UNCOMPUTED_PROPERTIES = 10_000
+# Properties per value-sample request (POST annotation_property_values/
+# sample). Each one is an $or clause tested against every document scanned,
+# and a property with no values makes the walk scan the whole dataset:
+# measured at 709K documents, 3 absent properties cost 0.56s and 20 cost
+# 1.8s. The client splits a larger configuration across requests
+# (MAX_SAMPLED_PROPERTIES_PER_REQUEST in src/store/constants.ts, pinned to
+# this value by PropertiesAPI.test.ts).
+MAX_SAMPLED_PROPERTIES = 100
 MAX_ANNOTATION_IDS = 100_000_000
 # Datasets per batch-count request (POST upenn_annotation/counts): one
 # indexed aggregation over all of them, so this bounds a public request's
@@ -295,6 +303,21 @@ def validateDisjointPropertyPaths(propertyPaths):
                 "(%s and %s)" % (".".join(shorter), ".".join(longer)),
                 code=400,
             )
+
+
+def validateSampledPropertyIds(propertyIds):
+    """Validate the `propertyIds` of a value-sample request: a list of at
+    most MAX_SAMPLED_PROPERTIES property ids, each a key that can be put in
+    a `values.<id>` field path (a non-empty string with no '.' or '$')."""
+    requireList(propertyIds, "propertyIds")
+    requireCountWithin(
+        len(propertyIds), MAX_SAMPLED_PROPERTIES, "propertyIds"
+    )
+    if not all(isValidPropertyPath([pid]) for pid in propertyIds):
+        raise RestException(
+            "each property id must be a non-empty string without '.' or '$'",
+            code=400,
+        )
 
 
 def validateUncomputedCountsProperties(properties):

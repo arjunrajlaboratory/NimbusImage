@@ -22,6 +22,12 @@ export const MAX_DISPLAYED_PROPERTY_PATHS = 100;
 // after the UI has entered a running state.
 export const MAX_PROPERTY_COMPUTE_BATCH = 100;
 
+// Mirrors MAX_SAMPLED_PROPERTIES (server/helpers/validation.py);
+// PropertiesAPI.test.ts pins the two together. Configurations have no such
+// limit, so getPropertyValueSamples splits a larger one into requests of
+// this many property ids instead of sending one the server rejects.
+export const MAX_SAMPLED_PROPERTIES_PER_REQUEST = 100;
+
 // Upper bound on how many annotations "Connect selected" will chain in one go.
 // Without it, a select-all in the Objects tab (routinely tens of thousands of
 // objects) followed by one click would POST that many connections in a single

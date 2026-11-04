@@ -407,6 +407,77 @@ class AnnotationPropertyValues(AccessControlMixin, ProxiedModel):
                 },
             }
 
+    def samplesCoveringProperties(self, datasetId, propertyIds):
+        """Value documents that together cover every requested property:
+        for each property id with stored values in the dataset, its oldest
+        and its newest document, projected to the requested properties.
+
+        Lazy-mode clients discover a dataset's property paths (columns) from
+        these. A sample of the dataset's oldest documents misses properties
+        computed only on newer annotations (issue #1463); this asks per
+        property instead. The newest document is included so sub-keys a
+        later compute added are seen as well.
+
+        Each pass reads documents in _id order and stops at the first one
+        carrying any property not yet covered, so a property that has values
+        costs a few documents. A property with none is only known absent at
+        the end of the dataset's range: absent properties share that one
+        scan rather than paying one each (~0.5 s at 709K documents).
+        """
+        oldest = self._firstDocumentsCovering(
+            datasetId, propertyIds, SortDir.ASCENDING)
+        # Only properties the forward pass found have a newest document, so
+        # the backward pass never rescans the range for absent ones.
+        found = list(dict.fromkeys(
+            propertyId for document in oldest
+            for propertyId in document.get("values", {})
+        ))
+        return oldest + self._firstDocumentsCovering(
+            datasetId, found, SortDir.DESCENDING)
+
+    def _firstDocumentsCovering(self, datasetId, propertyIds, direction):
+        """Walk the dataset's documents in _id order (`direction`), keeping
+        each document that carries a requested property not yet seen, until
+        every property is seen or the range ends. Each query resumes after
+        the previous hit, so the walk reads the range at most once however
+        many properties it covers. Documents carry only the properties still
+        sought when they were read."""
+        remaining = list(dict.fromkeys(propertyIds))
+        documents = []
+        boundary = None
+        while remaining:
+            query = {
+                "datasetId": datasetId,
+                "$or": [
+                    {"values." + propertyId: {"$exists": True}}
+                    for propertyId in remaining
+                ],
+            }
+            if boundary is not None:
+                operator = "$gt" if direction == SortDir.ASCENDING else "$lt"
+                query["_id"] = {operator: boundary}
+            fields = {"_id": 1, "annotationId": 1}
+            for propertyId in remaining:
+                fields["values." + propertyId] = 1
+            # The (datasetId, _id) index yields the range already in _id
+            # order, so the walk stops at the first match without a sort.
+            document = next(iter(
+                self.find(query, fields=fields, sort=[("_id", direction)],
+                          limit=1)
+                .hint([("datasetId", SortDir.ASCENDING),
+                       ("_id", SortDir.ASCENDING)])
+            ), None)
+            if document is None:
+                break
+            boundary = document.pop("_id")
+            values = document.get("values", {})
+            remaining = [
+                propertyId for propertyId in remaining
+                if propertyId not in values
+            ]
+            documents.append(document)
+        return documents
+
     def valuesForPath(self, datasetId, propertyPath):
         """Yield (annotationId, value) for every property-value document in
         the dataset with a non-null value at propertyPath (a list of keys).

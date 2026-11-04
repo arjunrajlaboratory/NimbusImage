@@ -73,10 +73,9 @@ import {
   MAX_PROPERTY_COMPUTE_BATCH,
 } from "./constants";
 
-// In lazy (stub-only) mode, property structure is homogeneous across a dataset,
-// so this many value docs are enough to discover every property path without
-// loading the whole dataset's values.
-const PROPERTY_PATH_SAMPLE_SIZE = 512;
+// Lazy mode: the dataset and property ids the last path discovery asked for,
+// so fetchProperties re-runs it only when the property set changed.
+let propertyPathsRequestKey: string | null = null;
 let propertyValuesGeneration = 0;
 // Ordinary values are independent of the active expression table. A table
 // switch cancels virtual reads, but must not drop the initial ordinary load.
@@ -416,8 +415,10 @@ export class Properties extends VuexModule {
     this.virtualPropertyPaths = [];
     // Sibling lazy-mode field: also references the previous dataset's property
     // ids and is meaningless in the new dataset, so reset it here too (it is
-    // otherwise only refreshed on the next fetchPropertyPathsSample).
+    // otherwise only refreshed on the next fetchPropertyPaths).
     this.discoveredPropertyPaths = markRaw([]);
+    propertyPathsRequestKey = null;
+    propertyPathsGuard.next();
     this.uncomputedCounts = {};
     // refreshDataset() resets this state while the dataset id stays the same,
     // then re-runs fetchPropertyValues; leaving the readiness id in place
@@ -788,7 +789,7 @@ export class Properties extends VuexModule {
 
   get computedPropertyPaths() {
     // In lazy mode `propertyValues` holds only the visible subset, so the full
-    // path set comes from the sampled `discoveredPropertyPaths` instead.
+    // path set comes from the server-discovered `discoveredPropertyPaths`.
     const leafPaths = annotations.stubOnlyMode
       ? this.discoveredPropertyPaths
       : collectLeafPaths(Object.values(this.propertyValues));
@@ -1452,12 +1453,26 @@ export class Properties extends VuexModule {
       // too; the guard in fetchUncomputedCounts dedupes (no-op in wholesale
       // mode or before stub-only mode is known).
       this.fetchUncomputedCounts();
+      // Path discovery asks about the loaded properties, so for the same
+      // reason it re-runs here, but only for a property set it has not
+      // asked about (fetchPropertyValues always runs it).
+      if (
+        annotations.stubOnlyMode &&
+        main.dataset?.id &&
+        propertyPathsKey(main.dataset.id, this.properties) !==
+          propertyPathsRequestKey
+      ) {
+        this.fetchPropertyPaths().catch((error: Error) =>
+          logError(`Property path discovery failed: ${error.message}`),
+        );
+      }
     }
   }
 
   // Smart entry used by callers (dataset mount, import, compute completion).
   // In lazy (stub-only) mode it avoids loading every value into memory: it
-  // discovers paths from a sample and loads values only for the visible set.
+  // asks the server for each property's paths and loads values only for the
+  // visible set.
   // Otherwise it loads everything as before. The property-filter case (which
   // still needs every value for client-side filtered drawing) is handled by
   // AnnotationViewer, which calls fetchAllPropertyValues while a filter is on.
@@ -1492,7 +1507,7 @@ export class Properties extends VuexModule {
     // consistent readiness change (see propertyValuesDatasetId).
     this.setPropertyValuesDatasetId(main.dataset.id);
     if (annotations.stubOnlyMode) {
-      await this.fetchPropertyPathsSample();
+      await this.fetchPropertyPaths();
       this.ensureVisiblePropertyValues();
       this.fetchUncomputedCounts();
       return;
@@ -1551,17 +1566,38 @@ export class Properties extends VuexModule {
     await this.fetchVirtualPropertyValues();
   }
 
+  // Lazy mode: discover the stored property paths (the columns) of the
+  // loaded properties. A property covers only the annotations matching its
+  // tags and shape, so the server returns documents per property rather
+  // than a dataset-wide sample, which missed any property not computed on
+  // the oldest annotations (issue #1463). No-op in wholesale mode, where
+  // the paths come from the resident values.
   @Action({ rawError: true })
-  async fetchPropertyPathsSample() {
-    if (!main.dataset?.id) {
+  async fetchPropertyPaths() {
+    // Claim before the early returns so a bail-out also supersedes an
+    // in-flight discovery for a previous dataset or property set.
+    const token = propertyPathsGuard.next();
+    if (!annotations.stubOnlyMode || !main.dataset?.id) {
       return;
     }
-    const sample = await this.propertiesAPI.getPropertyValuesSample(
-      main.dataset.id,
-      PROPERTY_PATH_SAMPLE_SIZE,
-    );
+    const datasetId = main.dataset.id;
+    const propertyIds = this.properties.map((property) => property.id);
+    propertyPathsRequestKey = propertyPathsKey(datasetId, this.properties);
+    const documents =
+      propertyIds.length > 0
+        ? await this.propertiesAPI.getPropertyValueSamples(
+            datasetId,
+            propertyIds,
+          )
+        : [];
+    if (
+      !propertyPathsGuard.isCurrent(token) ||
+      main.dataset?.id !== datasetId
+    ) {
+      return;
+    }
     this.setDiscoveredPropertyPaths(
-      collectLeafPaths(sample.map((entry) => entry.values)),
+      collectLeafPaths(documents.map((entry) => entry.values)),
     );
   }
 
@@ -1800,6 +1836,18 @@ const visiblePropertyValuesGuard = createSequenceGuard();
 // Stale-response guard for the wholesale load: overlapping loads (of one
 // dataset, or across a switch) commit only the latest.
 const allPropertyValuesGuard = createSequenceGuard();
+// fetchPropertyPaths: a discovery for an earlier dataset or property set must
+// not land after a later one.
+const propertyPathsGuard = createSequenceGuard();
+
+function propertyPathsKey(
+  datasetId: string,
+  properties: IAnnotationProperty[],
+): string {
+  return [datasetId, ...properties.map((property) => property.id).sort()].join(
+    ":",
+  );
+}
 
 /**
  * Fetch property values for the given ids (lazy mode) and merge them scoped to
