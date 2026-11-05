@@ -109,6 +109,11 @@ import {
   clampLocationToDataset,
 } from "@/utils/datasetLocation";
 import { quotaExceededMessage } from "@/utils/quota";
+import {
+  IAppliedCameraDeepLink,
+  IPendingCameraDeepLink,
+  parseCameraDeepLink,
+} from "@/utils/cameraDeepLink";
 import { normalizeScales } from "@/utils/scales";
 import { memDiag } from "@/utils/memoryDiagnostics";
 import { TCompositionMode } from "@/utils/compositionModes";
@@ -353,6 +358,9 @@ export function adoptServerConfirmedPropertyId(
 // Without this, a slower request with a different filter can land last and
 // overwrite the result of a newer request.
 let recentDatasetViewsRequestId = 0;
+// setDatasetViewId calls, counted so only the latest one applies its view:
+// an earlier view's fetch can resolve after a later one's.
+let datasetViewNavigation = 0;
 
 // Annotation-browser persistence bookkeeping. Module-level rather than Vuex
 // state because the debounce timer is never read by the UI.
@@ -832,6 +840,17 @@ export class Main extends VuexModule {
       { x: 0, y: 0 },
     ],
   };
+
+  // A `?x=&y=&zoom=` camera target from the route that loaded the current
+  // view, waiting for ImageViewer to center on it once the view's dataset is
+  // drawn. ImageViewer clears it when it applies it, so it applies once per
+  // navigation. See utils/cameraDeepLink.ts.
+  pendingCameraDeepLink: IPendingCameraDeepLink | null = null;
+  // The target ImageViewer last applied (a new object each time), so the
+  // routes can drop exactly its keys from the URL then (and only then: a
+  // navigation also clears pendingCameraDeepLink, while its own target is
+  // still loading).
+  appliedCameraDeepLink: IAppliedCameraDeepLink | null = null;
 
   drawAnnotations: boolean = true;
   filteredDraw: boolean = true;
@@ -1874,6 +1893,45 @@ export class Main extends VuexModule {
   }
 
   @Mutation
+  public setPendingCameraDeepLink(value: IPendingCameraDeepLink | null) {
+    this.pendingCameraDeepLink = value;
+  }
+
+  /** ImageViewer has centered on the pending target: it is used up. */
+  @Mutation
+  public consumeCameraDeepLink() {
+    this.appliedCameraDeepLink = this.pendingCameraDeepLink
+      ? {
+          ...this.pendingCameraDeepLink,
+          datasetViewId: this.datasetView?.id ?? null,
+        }
+      : null;
+    this.pendingCameraDeepLink = null;
+  }
+
+  /**
+   * Center on a `?x=&y=&zoom=` target for the view that is already loaded
+   * (the query changed without the view changing). A query with no valid
+   * target drops a pending one. Ignored while no view is loaded.
+   */
+  @Action
+  requestCameraDeepLink(
+    routeQuery: Record<string, string | null | (string | null)[]>,
+  ) {
+    if (!this.datasetView) {
+      return;
+    }
+    const cameraDeepLink = parseCameraDeepLink(routeQuery);
+    // No valid target in the URL any more: an unapplied one it named is
+    // obsolete, so it must not still jump the view once loading ends.
+    this.setPendingCameraDeepLink(
+      cameraDeepLink
+        ? { ...cameraDeepLink, datasetId: this.datasetView.datasetId }
+        : null,
+    );
+  }
+
+  @Mutation
   public setUnrollXYImpl(value: boolean) {
     this.unrollXY = value;
   }
@@ -2409,8 +2467,18 @@ export class Main extends VuexModule {
     // this.dataset still describe it. Not awaited: its state reads and commit
     // run synchronously here, and datasetLoading must be set before any await.
     this.flushLastLocationInDatasetView();
+    // A new navigation supersedes any camera target the last one left
+    // unapplied. Parsed now: route.query may change while the view loads.
+    const cameraDeepLink = parseCameraDeepLink(routeQuery);
+    // Claimed before any await: a later navigation supersedes this one even
+    // if this view's fetch resolves last.
+    const navigation = ++datasetViewNavigation;
+    this.setPendingCameraDeepLink(null);
     if (!id) {
       this.setDatasetViewImpl(null);
+      // An overtaken load returns without clearing datasetLoading (the
+      // newest navigation owns it), so this one must.
+      sync.setDatasetLoading(false);
     } else {
       // Set datasetLoading immediately BEFORE any async work.
       // Without this, the first await yields to the microtask queue,
@@ -2421,6 +2489,10 @@ export class Main extends VuexModule {
       try {
         datasetView = await this.api.getDatasetView(id);
       } catch (err) {
+        if (navigation !== datasetViewNavigation) {
+          // Overtaken: the newer navigation owns datasetLoading.
+          return;
+        }
         // The datasetView doesn't exist
         logError(
           `Failed to fetch dataset view ${id}.\nIt may be because it has been deleted or that you don't have the access is forbidden.\n`,
@@ -2429,8 +2501,22 @@ export class Main extends VuexModule {
         sync.setDatasetLoading(false);
         return;
       }
+      if (navigation !== datasetViewNavigation) {
+        // A later navigation started while this view loaded: it is the one
+        // the user asked for, so this view must not replace it (nor its
+        // location, dataset, or camera target).
+        return;
+      }
       datasetView.lastViewed = Date.now();
       this.setDatasetViewImpl(datasetView);
+      if (cameraDeepLink) {
+        // Tied to the view's dataset: while it loads, this.dataset is still
+        // the outgoing one, and ImageViewer must not center that.
+        this.setPendingCameraDeepLink({
+          ...cameraDeepLink,
+          datasetId: datasetView.datasetId,
+        });
+      }
       const promises: Promise<any>[] = [];
 
       // Only update lastViewed if user has write access to the view. It is
@@ -2466,6 +2552,11 @@ export class Main extends VuexModule {
         );
       }
       await Promise.all(promises);
+      if (navigation !== datasetViewNavigation) {
+        // Overtaken while its dataset loaded: the newer navigation owns the
+        // location (and its clamp and save) and datasetLoading.
+        return;
+      }
       // setSelectedDataset clamps the location when it loads a new dataset,
       // but it is skipped when the dataset is unchanged, so clamp here too.
       // Only against the view's own dataset: if its load failed, this.dataset
