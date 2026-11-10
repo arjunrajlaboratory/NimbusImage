@@ -985,6 +985,30 @@ gate threaded down to `PropertyCategoryFilter` silently stopped all value
 loading this way until tests caught it. When the omitted case should mean
 true, use `withDefaults(defineProps<...>(), { visible: true })`.
 
+## A page that needs a login: two traps on the way back
+
+Login is a dialog on the root page (password locally, Outseta in production,
+which leaves the app and returns to the root with `?access_token`). A page that
+sends a logged-out user there and expects them back (the MCP OAuth consent
+page) uses `src/utils/returnAfterLogin.ts`. Two things pull the user off course,
+and only a live run from a **fresh browser** shows either:
+
+- **Startup restores a stored login asynchronously.** For the first moments of
+  a page load `store.isLoggedIn` is false even for a logged-in user. Wait for
+  `store.authRestored` before deciding they are logged out, or every reload
+  bounces them to the login.
+- **The first-run welcome tour navigates.** `Home.vue` starts it on a browser's
+  first login, and an active tour sends every navigation back to its step's
+  route (`TourManager` in `src/plugins/tour.ts`). The returning login landed on
+  the consent page and was pulled straight back home. Anything the root page
+  starts on login must check `isReturningAfterLogin()`. That is true while a
+  target is waiting and until the navigation to it settles, because the two
+  login watchers run in the same flush in no fixed order.
+
+Test the second one by having the code under test call the real
+`returnAfterLogin` helpers, not a mock: the order of `take` and the check is the
+bug.
+
 ## Opening a palette from a component that has no palette registry
 
 App.vue owns palette (right/left panel) visibility in local refs, so a

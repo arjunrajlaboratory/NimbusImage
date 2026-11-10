@@ -30,6 +30,10 @@ class TestPropertyDefinitions:
         assert len(result) == 1
         assert isinstance(result[0], Property)
         assert result[0].name == "Blob Intensity"
+        # Every page: the server's default page is 50 properties.
+        mock_gc.get.assert_called_once_with(
+            "annotation_property", parameters={"limit": 0}
+        )
 
     def test_get(self, mock_gc, sample_property_dict):
         mock_gc.get.return_value = sample_property_dict
@@ -98,6 +102,10 @@ class TestPropertyDefinitions:
         accessor = PropertyAccessor(mock_gc, "ds_001")
 
         assert accessor.register("prop_001") == 2
+        # Every view, not the endpoint's default page of 50.
+        view_urls = [c.args[0] for c in mock_gc.get.call_args_list
+                     if c.args[0].startswith("dataset_view")]
+        assert view_urls == ["dataset_view?datasetId=ds_001&limit=0"]
         # cfg_2 already has the property; only cfg_1 is updated
         mock_gc.put.assert_called_once_with(
             "upenn_collection/cfg_1/metadata",
@@ -148,13 +156,31 @@ class TestPropertyValues:
         call_url = mock_gc.get.call_args[0][0]
         assert "datasetId=ds_001" in call_url
 
+    def test_get_values_pages_through_every_value(self, mock_gc, monkeypatch):
+        """The endpoint returns 50 documents unless asked; get_values()
+        promises all of them, so it follows the afterId cursor."""
+        from nimbusimage import properties
+        monkeypatch.setattr(properties, "_VALUES_PAGE", 2)
+        docs = [{"_id": f"v{i}", "annotationId": f"a{i}", "values": {}}
+                for i in range(5)]
+        pages = iter([docs[0:2], docs[2:4], docs[4:5]])
+        mock_gc.get.side_effect = lambda url, parameters: next(pages)
+
+        result = PropertyAccessor(mock_gc, "ds_001").get_values()
+        assert result == docs
+        cursors = [c.kwargs["parameters"].get("afterId")
+                   for c in mock_gc.get.call_args_list]
+        assert cursors == [None, "v1", "v3"]
+        assert all(c.kwargs["parameters"]["sort"] == "_id"
+                   for c in mock_gc.get.call_args_list)
+
     def test_get_values_for_annotation(self, mock_gc):
         mock_gc.get.return_value = [{"annotationId": "a1", "values": {}}]
         accessor = PropertyAccessor(mock_gc, "ds_001")
 
         accessor.get_values(annotation_id="a1")
         call_url = mock_gc.get.call_args[0][0]
-        assert "annotationId=a1" in call_url
+        assert "annotationId=a1" in call_url and "limit=0" in call_url
 
     def test_submit_values_transforms_format(self, mock_gc):
         accessor = PropertyAccessor(mock_gc, "ds_001")

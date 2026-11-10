@@ -120,6 +120,7 @@ client = ni.connect(..., frontend_url="https://app.nimbusimage.com")
 - `.frontend_url` — str (read-only, default `http://localhost:5173`)
 - `.girder` — raw GirderClient (escape hatch)
 - `.list_datasets()` → `list[DatasetInfo]`
+- `.count_annotations(dataset_ids, shape=None, tags=None)` → one `{datasetId, count}` or `{datasetId, error}` per distinct dataset, one `POST upenn_annotation/counts` per 100 ids
 - `.dataset(id)` or `.dataset(name="...")` → `Dataset`
 - `.list_projects()` → `list[ProjectInfo]`
 - `.create_project(name, description="")` → `Project`
@@ -645,7 +646,10 @@ Rendering, query, and listing invariants established on PR #1390 across four rev
 - A downsampled layer is windowed by the server before its final resample, as the app's tiles are; full resolution stays exact in float — *"test_downsampled_layer_is_windowed_by_the_server_like_the_app"*.
 - `max_size` and `crop` reach the region request — *"test_max_size_and_crop_reach_the_region_request"*; `get_stack`/`get_all_channels` pass `max_size` — *"test_stack_and_all_channels_pass_max_size"*.
 - `max_size` never upsamples, including for a crop past the image edge — *"test_max_size_above_the_region_does_not_upsample"*, *"test_crop_past_the_image_does_not_upsample"*; negative crop edges count from the far edge — *"test_negative_crop_edges_count_from_the_far_edge"*.
-- `list_datasets` is one `resource/batch` call, not a GET per dataset — *"test_list_datasets_batches_the_folder_lookup"*.
+- `list_datasets` is one `resource/batch` call per 5,000 datasets (the server refuses more than 10,000 ids), not a GET per dataset — *"test_list_datasets_batches_the_folder_lookup"*, *"test_list_datasets_chunks_under_the_servers_id_cap"*. It reads `user/me` only when a server sends raw folders without `_accessLevel` (older servers), once — *"test_server_provided_level_wins"*, *"test_an_old_server_with_a_data_only_key_reads_no_grants"*.
+- List calls ask for every page (`limit=0`): Girder's list endpoints return 50 unless asked, which silently dropped projects, views, collections and properties (and made `get_or_create` create duplicates) — *"test_list_projects_requests_every_page"*, *"test_register_returns_collection_count"*. `get_values()` follows the server's `afterId` cursor instead, in pages — *"test_get_values_pages_through_every_value"*.
+- `annotations.compute` and `properties.compute` take `worker_labels` from a caller that already listed the workers, and their role check then skips its own listing — *"test_known_labels_skip_the_worker_listing"*.
+- `count_annotations` refuses a malformed id before any request (the server refuses a whole batch over one, which would drop earlier batches' rows), and counts case variants of one id once, even across batches — *"test_a_malformed_id_is_refused_before_any_request"*, *"test_case_variants_count_once_across_batches"*.
 
 **Annotation summary** (`ds.annotations.summary`, POST `upenn_annotation/summary`)
 - The request body and parsing, in the server's tag order — *"test_posts_the_summary_request_and_parses_it"*.

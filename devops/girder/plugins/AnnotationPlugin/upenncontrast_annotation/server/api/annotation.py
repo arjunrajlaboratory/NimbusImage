@@ -27,6 +27,7 @@ from ..helpers.colormaps import (
 )
 from ..helpers.proxiedModel import recordable, memoizeBodyJson
 from ..helpers.validation import (
+    MAX_COUNT_DATASETS,
     MAX_LIST_LIMIT,
     MAX_SUMMARY_PROPERTY_PATHS,
     dropNoOpPropertyFilters,
@@ -42,16 +43,24 @@ from ..helpers.validation import (
     validateAnalysisGatePlots,
     validateAnalysisHistogramRequest,
     validateAnnotationIdCount,
+    validateCountsRequest,
     validateListInputs,
     validatePropertyPaths,
     validateUncomputedCountsProperties,
 )
 from ..models.annotation import Annotation as AnnotationModel
+from ..models.annotation import AnnotationSchema
 from ..models.rasterFilter import (
     RasterFilter as RasterFilterModel,
     UnknownRasterFilter,
 )
-from ..helpers.serialization import orJsonDefaults, streamJsonArray
+from ..helpers.aggregation import STREAM_PREFETCH_BATCHES, prefetchedBatches
+from ..helpers.serialization import (
+    createdDocumentsResponse,
+    orJsonDefaults,
+    streamJsonArray,
+    streamRawJsonArray,
+)
 from ..helpers.annotationRaster import (
     COLOR_PATTERN,
     RasterBuildBusy,
@@ -200,6 +209,7 @@ class Annotation(Resource):
         self.route("GET", (":id",), self.get)
         self.route("GET", (), self.find)
         self.route("GET", ("count",), self.count)
+        self.route("POST", ("counts",), self.counts)
         self.route("POST", (), self.create)
         self.route("PUT", (":id",), self.update)
         self.route("PUT", ("multiple",), self.updateMultiple)
@@ -276,7 +286,9 @@ class Annotation(Resource):
             if "datasetId" in ann
         }
         requireDatasetsAccess(datasetIds, self.getCurrentUser())
-        return self._annotationModel.createMultiple(annotations)
+        return createdDocumentsResponse(
+            self._annotationModel.createMultiple(annotations)
+        )
 
     @describeRoute(
         Description("Delete an existing annotation")
@@ -433,7 +445,7 @@ class Annotation(Resource):
         limit, offset, sort = self.getPagingParameters(params, "_id")
 
         # First, check dataset permissions explicitly
-        datasetId = ObjectId(params["datasetId"])
+        datasetId = requireObjectId(params["datasetId"], "datasetId")
         Folder().load(
             datasetId,
             user=self.getCurrentUser(),
@@ -451,11 +463,13 @@ class Annotation(Resource):
         # Support cursor pagination
         after_id = params.get("afterId")
         if after_id:
-            query["_id"] = {"$gt": ObjectId(after_id)}
+            query["_id"] = {"$gt": requireObjectId(after_id, "afterId")}
             offset = 0  # Ignore offset when using cursor
 
-        # Use regular find instead of findWithPermissions
-        cursor = self._annotationModel.find(
+        # Use regular find instead of findWithPermissions. Raw batches go
+        # straight to JSON: decoding a large dataset's annotations into dicts
+        # cost more than the rest of the request (findRawBatches).
+        cursor = self._annotationModel.findRawBatches(
             query,
             sort=sort,
             limit=limit,
@@ -465,7 +479,11 @@ class Annotation(Resource):
         setResponseHeader("Content-Type", "application/json")
         if callable(getattr(cursor, 'count', None)):
             cherrypy.response.headers['Girder-Total-Count'] = cursor.count()
-        return streamJsonArray(cursor, default=orJsonDefaults)
+        # Fetching overlaps transcoding, which releases the GIL.
+        return streamRawJsonArray(
+            prefetchedBatches(cursor, depth=STREAM_PREFETCH_BATCHES),
+            self._annotationModel.collection.codec_options,
+        )
 
     @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
@@ -484,7 +502,7 @@ class Annotation(Resource):
         .errorResponse()
     )
     def count(self, params):
-        datasetId = ObjectId(params["datasetId"])
+        datasetId = requireObjectId(params["datasetId"], "datasetId")
         user = self.getCurrentUser()
         Folder().load(
             datasetId,
@@ -502,6 +520,54 @@ class Annotation(Resource):
         return {
             "count": self._annotationModel.collection.count_documents(query)
         }
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @autoDescribeRoute(
+        Description("Annotation counts for several datasets at once")
+        .notes(
+            "Body: {datasetIds: [id, ...] (at most %d), shape?, tags?}. "
+            "Counts annotations per dataset in one query, filtering like "
+            "GET upenn_annotation/count (tags: all must be present), but "
+            "stricter about input: shape must be a known annotation shape, "
+            "and tags are capped in number and length. Returns {counts: "
+            "[{datasetId, count} | {datasetId, error}]} in request order, "
+            "without duplicates. A malformed id refuses the request (400); "
+            "an id that does not exist or names a dataset the caller cannot "
+            "read gets an error entry rather than failing the request."
+            % MAX_COUNT_DATASETS
+        )
+        .jsonParam(
+            "body", "datasetIds and optional shape/tags filters",
+            paramType="body", requireObject=True,
+        )
+        .errorResponse()
+    )
+    def counts(self, body):
+        datasetIds, shape, tags = validateCountsRequest(
+            body, AnnotationSchema.shapeSchema["enum"]
+        )
+        ids = [objectId for _, objectId in datasetIds]
+        # One permission-filtered query for every folder, ids only.
+        readable = {
+            folder["_id"] for folder in Folder().findWithPermissions(
+                {"_id": {"$in": ids}}, fields=["_id"],
+                user=self.getCurrentUser(), level=AccessType.READ,
+            )
+        }
+        counts = self._annotationModel.countByDataset(
+            [d for d in ids if d in readable], shape, tags
+        )
+
+        def row(requested, objectId):
+            if objectId not in readable:
+                # One message for both: whether an unreadable id exists
+                # is not the caller's business.
+                return {"datasetId": requested,
+                        "error": "not found or not readable"}
+            return {"datasetId": requested,
+                    "count": counts.get(objectId, 0)}
+
+        return {"counts": [row(*entry) for entry in datasetIds]}
 
     @access.public(scope=TokenScope.DATA_READ)
     @autoDescribeRoute(
@@ -774,14 +840,18 @@ class Annotation(Resource):
             exc=True,
         )
 
-        stubs = self._annotationModel.stubs(
+        # Mongo evaluating the pipeline and turning its output into JSON each
+        # take seconds at 700K; the prefetch overlaps them.
+        stubBatches = prefetchedBatches(self._annotationModel.stubBatches(
             datasetId,
             shape=params.get("shape"),
             tags=params.get("tags"),
-        )
+        ))
 
         setResponseHeader("Content-Type", "application/json")
-        return streamJsonArray(stubs, default=orJsonDefaults)
+        return streamRawJsonArray(
+            stubBatches, self._annotationModel.collection.codec_options
+        )
 
     # GeoJS loads OSM tiles through <img> requests, which cannot attach the
     # Girder-Token header used by the REST client.  This read-only route must
@@ -1064,12 +1134,14 @@ class Annotation(Resource):
             datasetIds, self.getCurrentUser(), level=AccessType.READ
         )
 
-        cursor = self._annotationModel.find(
+        cursor = self._annotationModel.findRawBatches(
             {"_id": {"$in": objectIds}}
         )
 
         setResponseHeader("Content-Type", "application/json")
-        return streamJsonArray(cursor, default=orJsonDefaults)
+        return streamRawJsonArray(
+            cursor, self._annotationModel.collection.codec_options
+        )
 
     def _loadListRequest(self, withSortAndPaths=False):
         """Shared prologue of the filter-driven POST endpoints (list,

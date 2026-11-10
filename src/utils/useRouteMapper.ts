@@ -8,6 +8,12 @@ export interface IMapper<T> {
   parse(value: string): T;
   get(): T | null;
   set(value: T | null): Promise<any>;
+  /**
+   * Query keys that describe the current value only, dropped in the same URL
+   * write when the store changes this value (e.g. a view's camera target,
+   * which must not follow a store-driven switch to another view).
+   */
+  clearsQuery?: readonly string[];
 }
 
 // This counter is used to avoid loops of changes to the URL and changes to the mapper values
@@ -67,24 +73,27 @@ function notifyDrainIfIdle() {
   }, DRAIN_DEBOUNCE_MS);
 }
 
-// Avoid "navigation cancelled" errors by doing calls to router.replace() one at a time
-const setUrlParamsOrQuery = awaitPreviousCallsDecorator(
+// Avoid "navigation cancelled" errors by doing calls to router.replace() one
+// at a time. Every URL write goes through this one lock (each
+// awaitPreviousCallsDecorator wrap has its own chain), and `edit` reads
+// `route` when the write runs, so a queued write never undoes an earlier one.
+// `edit` changes the copied params/query and returns false for no change.
+const writeUrl = awaitPreviousCallsDecorator(
   async (
-    type: "query" | "params",
-    key: string,
-    value: string,
     router: Router,
     route: RouteLocationNormalized,
+    edit: (replacement: {
+      params: RouteLocationNormalized["params"];
+      query: RouteLocationNormalized["query"];
+    }) => boolean,
   ) => {
-    const stringifiedValue = String(value);
-    if (stringifiedValue === route[type][key]) {
-      return;
-    }
     const replacement = {
       params: { ...route.params },
       query: { ...route.query },
     };
-    replacement[type][key] = stringifiedValue;
+    if (!edit(replacement)) {
+      return;
+    }
     pendingUrlWrites++;
     try {
       await router.replace(replacement);
@@ -94,6 +103,51 @@ const setUrlParamsOrQuery = awaitPreviousCallsDecorator(
     }
   },
 );
+
+function setUrlParamsOrQuery(
+  type: "query" | "params",
+  key: string,
+  value: string,
+  router: Router,
+  route: RouteLocationNormalized,
+  clearsQuery: readonly string[] = [],
+) {
+  return writeUrl(router, route, (replacement) => {
+    const stringifiedValue = String(value);
+    if (stringifiedValue === route[type][key]) {
+      return false;
+    }
+    replacement[type][key] = stringifiedValue;
+    for (const queryKey of clearsQuery) {
+      delete replacement.query[queryKey];
+    }
+    return true;
+  });
+}
+
+/**
+ * Remove query keys from the URL through the same lock as the mappers'
+ * writes (and counted in pendingUrlWrites), so neither cancels the other.
+ * The removal may wait behind other writes and run on a later route:
+ * `onlyIf` (given the route when it runs) skips it when that route is no
+ * longer the one it was meant for.
+ */
+export function removeQueryKeys(
+  keys: readonly string[],
+  router: Router,
+  route: RouteLocationNormalized,
+  onlyIf: (current: RouteLocationNormalized) => boolean = () => true,
+) {
+  return writeUrl(router, route, (replacement) => {
+    if (!onlyIf(route) || !keys.some((key) => key in replacement.query)) {
+      return false;
+    }
+    for (const key of keys) {
+      delete replacement.query[key];
+    }
+    return true;
+  });
+}
 
 // Call the setter for this mapper if needed, using the value from the URL
 function setMapperValueFromUrl(
@@ -204,14 +258,28 @@ export function useRouteMapper(
       // creates invalid URLs like /datasetView/null/view and triggers
       // cascading failed API calls.
       if (value == null) return;
-      await setUrlParamsOrQuery("params", key, value, router, route);
+      await setUrlParamsOrQuery(
+        "params",
+        key,
+        value,
+        router,
+        route,
+        mapper.clearsQuery,
+      );
     });
   }
   for (const [key, mapper] of Object.entries(queryMapper)) {
     const c = computed(() => mapper.get());
     watch(c, async (value: any) => {
       if (currentRouteChanges > 0) return;
-      await setUrlParamsOrQuery("query", key, value, router, route);
+      await setUrlParamsOrQuery(
+        "query",
+        key,
+        value,
+        router,
+        route,
+        mapper.clearsQuery,
+      );
     });
   }
 

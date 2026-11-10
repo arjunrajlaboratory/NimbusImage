@@ -28,6 +28,7 @@ ni.connect() → NimbusClient
     │       ├── ds.history       → HistoryAccessor
     │       └── ds.sharing       → SharingAccessor
     ├── client.list_datasets()
+    ├── client.count_annotations(ids, shape?, tags?)  # one request
     ├── client.list_projects()
     ├── client.project(id) → Project
     ├── client.list_workers()

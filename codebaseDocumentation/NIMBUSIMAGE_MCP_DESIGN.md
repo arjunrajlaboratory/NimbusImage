@@ -1,5 +1,9 @@
 # NimbusImage MCP Server — Design Thoughts
 
+> **Superseded for architecture, auth, and implementation** by
+> [`NIMBUSIMAGE_MCP_SERVER.md`](NIMBUSIMAGE_MCP_SERVER.md). The proposed tool list below is
+> still a useful reference for naming.
+
 ## Context
 
 The `nimbusimage` Python API was designed from the start to support future MCP (Model Context Protocol) tool integration. The API's clean accessor pattern (`ds.images.get()`, `ds.annotations.list()`, etc.) maps naturally to MCP tool definitions.

@@ -45,6 +45,26 @@ gc.get("/upenn_annotation", parameters={"datasetId": dataset_id})
 
 See `nimbusimage/README.md` for the full API overview, authentication options (API keys are preferred over username/password), and available accessors (`ds.images`, `ds.annotations`, `ds.properties`, `ds.export`, etc.).
 
+**Traps:**
+- `ds.channels` is the image's channel **names** and is `[]` for an image without them
+  (large_image sets `channels` only for multi-frame images with names, e.g. not for a single
+  frame). Count channels with `ds.num_channels`; pad names with `""`. A tool that bounded
+  channel indices by `len(ds.channels)` refused channel 0 on every unnamed image.
+- Deleting a dataset folder does **not** delete its annotations or property values. Test
+  fixtures that create annotations must `ds.annotations.delete_many(...)` before deleting
+  the folder, or they leave orphans (the local DB already holds ~8K from past runs).
+- `girder_client.HttpError` subclasses `requests.HTTPError`, which is a
+  `requests.RequestException`. So `except requests.RequestException` written to
+  mean "network trouble" also catches a 401 or a 404. Handle `HttpError` first
+  whenever an HTTP answer and a lost connection need different treatment. This
+  bit nimbusimage-mcp twice: a refusal was taken for a lost answer, and a missing
+  job for a blip. Its MRO also includes `OSError`, so `except OSError` catches
+  it too. And a 502/504 from a proxy is not a refusal: the request may have
+  reached Girder.
+- A scoped API key without `core.user_auth` gets 401 from job status and from
+  `GET claude_agent/help`; `tmp/local_api_key.txt` is such a key. Use a full-access key for
+  anything that waits on jobs.
+
 **When to use which:**
 - **High-level API (`ni.connect()`)**: Dataset exploration, annotation CRUD, running workers, export
 - **Low-level client (`create_client()`)**: Bulk operations, custom endpoints, scripts like `scripts/generate_test_annotations.py`
@@ -252,6 +272,15 @@ docker ps
 **Warning — restart is not enough for plugin code.** The `girder` image bakes in the AnnotationPlugin (no source volume mount), so `docker compose restart girder` serves **stale code**: a newly added route returns `{"message": "No matching route ..."}` while old routes work, which looks like a routing bug. After any edit under `devops/girder/plugins/AnnotationPlugin/`, run the build+up pair (fast — cached layers, ~7s downtime). Note that `tox` tests the plugin *source* directly, so a green tox proves nothing about what the running container serves.
 
 The `docker-compose.yaml` is at the repository root.
+
+**The MCP server** (`nimbusimage-mcp/`) is the compose service `mcp` under the `mcp`
+profile; plain `docker compose up` skips it. Start it from the main checkout with
+`COMPOSE_BAKE=false docker compose --profile mcp up -d --no-deps mcp` (port 8001). Without
+`COMPOSE_BAKE=false`, a non-interactive build can sit forever with no output: the image
+uses a second build context (`nimbusimage/`), and bake waits on a read-access prompt that
+never shows without a terminal.
+
+**Warning — never run `docker compose up` from a git worktree.** The `girder` service bind-mounts `./assetstore` and `./logs/girder` *relative to the compose file*, and the container is named `girder` regardless of directory, so `compose up` in `.claude/worktrees/<name>/` recreates the shared container against that worktree's **empty** assetstore: every dataset's `GET item/{id}/tiles` returns 500 (`OSError: [Errno 22] Invalid argument` from `large_image_source_multi`) for every session using the stack. Check with `docker inspect girder --format '{{range .Mounts}}{{.Source}} {{end}}'`. To test a branch's plugin code: build from the worktree (`docker build -t nimbusimage-girder <worktree>/devops/girder`), then recreate from the **main checkout** (`docker compose up -d --no-deps girder`), keeping the real mounts; tag the old image first (`docker tag nimbusimage-girder nimbusimage-girder:before-<branch>`) to roll back.
 
 ## Debugging
 

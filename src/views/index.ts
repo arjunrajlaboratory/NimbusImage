@@ -3,6 +3,7 @@ import DatasetAndConfigurationRouter from "./DatasetAndConfigurationRouter.vue";
 import EmptyRouterView from "./EmptyRouterView.vue";
 import ProjectRouter from "./ProjectRouter.vue";
 import SharedView from "./SharedView.vue";
+import OAuthConsent from "./OAuthConsent.vue";
 import datasetRoutes from "./dataset";
 import configurationRoutes from "./configuration";
 import datasetViewRoutes from "./datasetView";
@@ -50,6 +51,14 @@ const routes: RouteRecordRaw[] = [
     path: "/embed/:token",
     name: "embed",
     component: SharedView,
+    meta: { hidden: true },
+  },
+  // MCP OAuth: a Claude connector asks to act as the user (§6.3 of
+  // NIMBUSIMAGE_MCP_SERVER.md). Needs a login; see returnAfterLogin.ts.
+  {
+    path: "/oauth/consent",
+    name: "oauthConsent",
+    component: OAuthConsent,
     meta: { hidden: true },
   },
   {

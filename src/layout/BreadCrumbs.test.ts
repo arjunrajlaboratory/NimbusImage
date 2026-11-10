@@ -271,6 +271,20 @@ describe("BreadCrumbs", () => {
     });
   });
 
+  it("goToView keeps the location but drops a camera deep link", () => {
+    const wrapper = mountComponent(
+      {},
+      { xy: "1", z: "2", x: "100", y: "200", zoom: "6" },
+    );
+    const vm = wrapper.vm as any;
+    vm.goToView("view123");
+    expect(mockRouter.push).toHaveBeenCalledWith({
+      name: "datasetview",
+      params: { datasetViewId: "view123" },
+      query: { xy: "1", z: "2" },
+    });
+  });
+
   it("goToView skips push when datasetViewId matches current", () => {
     const wrapper = mountComponent({ datasetViewId: "view123" });
     const vm = wrapper.vm as any;

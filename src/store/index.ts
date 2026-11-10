@@ -25,6 +25,7 @@ import { v4 as uuidv4 } from "uuid";
 import AnnotationsAPI from "./AnnotationsAPI";
 import SpatialAPI from "./SpatialAPI";
 import ShareLinkAPI from "./ShareLinkAPI";
+import McpOAuthAPI from "./McpOAuthAPI";
 import PropertiesAPI from "./PropertiesAPI";
 import ToolSuggestionsAPI from "./ToolSuggestionsAPI";
 import AgentAPI from "./AgentAPI";
@@ -108,6 +109,11 @@ import {
   clampLocationToDataset,
 } from "@/utils/datasetLocation";
 import { quotaExceededMessage } from "@/utils/quota";
+import {
+  IAppliedCameraDeepLink,
+  IPendingCameraDeepLink,
+  parseCameraDeepLink,
+} from "@/utils/cameraDeepLink";
 import { normalizeScales } from "@/utils/scales";
 import { memDiag } from "@/utils/memoryDiagnostics";
 import { TCompositionMode } from "@/utils/compositionModes";
@@ -352,6 +358,9 @@ export function adoptServerConfirmedPropertyId(
 // Without this, a slower request with a different filter can land last and
 // overwrite the result of a newer request.
 let recentDatasetViewsRequestId = 0;
+// setDatasetViewId calls, counted so only the latest one applies its view:
+// an earlier view's fetch can resolve after a later one's.
+let datasetViewNavigation = 0;
 
 // Annotation-browser persistence bookkeeping. Module-level rather than Vuex
 // state because the debounce timer is never read by the UI.
@@ -719,6 +728,7 @@ export class Main extends VuexModule {
   annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
   spatialAPI = new SpatialAPI(this.girderRestProxy);
   shareLinkAPI = new ShareLinkAPI(this.girderRestProxy);
+  mcpOAuthAPI = new McpOAuthAPI(this.girderRestProxy);
   propertiesAPI = new PropertiesAPI(this.girderRestProxy);
   toolSuggestionsAPI = new ToolSuggestionsAPI(this.girderRestProxy);
   agentAPI = new AgentAPI(this.girderRestProxy);
@@ -732,6 +742,10 @@ export class Main extends VuexModule {
   folderLocation: IGirderLocation = this.girderUser || { type: "users" };
   assetstores: IGirderAssetstore[] = [];
   hasUserLoggedOut: boolean = false;
+  // True once startup has finished restoring the stored login (or found
+  // none). Until then isLoggedIn is false even for a logged-in user, so a
+  // page that sends logged-out users to login must wait for this.
+  authRestored: boolean = false;
   userStorageInfo: IUserStorageQuota | null = null;
 
   history: IHistoryEntry[] = [];
@@ -826,6 +840,17 @@ export class Main extends VuexModule {
       { x: 0, y: 0 },
     ],
   };
+
+  // A `?x=&y=&zoom=` camera target from the route that loaded the current
+  // view, waiting for ImageViewer to center on it once the view's dataset is
+  // drawn. ImageViewer clears it when it applies it, so it applies once per
+  // navigation. See utils/cameraDeepLink.ts.
+  pendingCameraDeepLink: IPendingCameraDeepLink | null = null;
+  // The target ImageViewer last applied (a new object each time), so the
+  // routes can drop exactly its keys from the URL then (and only then: a
+  // navigation also clears pendingCameraDeepLink, while its own target is
+  // still loading).
+  appliedCameraDeepLink: IAppliedCameraDeepLink | null = null;
 
   drawAnnotations: boolean = true;
   filteredDraw: boolean = true;
@@ -1620,6 +1645,11 @@ export class Main extends VuexModule {
   }
 
   @Mutation
+  protected setAuthRestored() {
+    this.authRestored = true;
+  }
+
+  @Mutation
   protected loggedOut() {
     this.girderUser = null;
     this.userStorageInfo = null;
@@ -1863,6 +1893,45 @@ export class Main extends VuexModule {
   }
 
   @Mutation
+  public setPendingCameraDeepLink(value: IPendingCameraDeepLink | null) {
+    this.pendingCameraDeepLink = value;
+  }
+
+  /** ImageViewer has centered on the pending target: it is used up. */
+  @Mutation
+  public consumeCameraDeepLink() {
+    this.appliedCameraDeepLink = this.pendingCameraDeepLink
+      ? {
+          ...this.pendingCameraDeepLink,
+          datasetViewId: this.datasetView?.id ?? null,
+        }
+      : null;
+    this.pendingCameraDeepLink = null;
+  }
+
+  /**
+   * Center on a `?x=&y=&zoom=` target for the view that is already loaded
+   * (the query changed without the view changing). A query with no valid
+   * target drops a pending one. Ignored while no view is loaded.
+   */
+  @Action
+  requestCameraDeepLink(
+    routeQuery: Record<string, string | null | (string | null)[]>,
+  ) {
+    if (!this.datasetView) {
+      return;
+    }
+    const cameraDeepLink = parseCameraDeepLink(routeQuery);
+    // No valid target in the URL any more: an unapplied one it named is
+    // obsolete, so it must not still jump the view once loading ends.
+    this.setPendingCameraDeepLink(
+      cameraDeepLink
+        ? { ...cameraDeepLink, datasetId: this.datasetView.datasetId }
+        : null,
+    );
+  }
+
+  @Mutation
   public setUnrollXYImpl(value: boolean) {
     this.unrollXY = value;
   }
@@ -2068,30 +2137,72 @@ export class Main extends VuexModule {
   async leaveShareLink() {
     const session = shareLinkSession;
     shareLinkSession = null;
-    if (!session || toRaw(this.girderRest) !== session.linkClient) {
+    if (!session) {
+      // No link took over (it was invalid or cancelled), so this client is
+      // the saved login. A tab that started on a shared URL skipped
+      // initialize(): settle that login now, or a page waiting on
+      // authRestored (the consent page) spins forever.
+      if (!this.authRestored) {
+        await this.restoreSavedLogin();
+      }
       return;
     }
-    // A shared URL opened directly skips initialize(), so the saved login's
-    // client holds a token but has never fetched its user; restoring it
-    // as-is would show the owner as logged out until a reload.
-    const previous = session.previousClient;
-    if (previous.token && !previous.user) {
-      try {
-        await previous.fetchUser();
-      } catch (error) {
-        logError("Could not restore the saved login:", error);
-      }
-      // A login or another link may have taken over during the fetch.
+    try {
+      // A login or another link replaced this link's session: leave it
+      // alone. (Logout clears the link client's token but keeps it, so
+      // leaving still restores the saved login, as a reload would.)
       if (toRaw(this.girderRest) !== session.linkClient) {
         return;
       }
+      // A shared URL opened directly skips initialize(), so the saved
+      // login's client holds a token but has never fetched its user;
+      // restoring it as-is would show the owner as logged out until a
+      // reload.
+      const previous = session.previousClient;
+      if (previous.token && !previous.user) {
+        try {
+          await previous.fetchUser();
+        } catch (error) {
+          logError("Could not restore the saved login:", error);
+        }
+        // A login or another link may have taken over during the fetch.
+        if (toRaw(this.girderRest) !== session.linkClient) {
+          return;
+        }
+      }
+      await this.loggedIn(previous);
+    } finally {
+      // A tab that started on a shared URL never ran initialize(); its
+      // login is settled now, whether it was restored, failed, or was
+      // replaced by a login or logout (a page waiting on authRestored
+      // would spin forever).
+      this.setAuthRestored();
     }
-    await this.loggedIn(previous);
+  }
+
+  // The login half of initialize(), for a tab that skipped it.
+  @Action
+  async restoreSavedLogin() {
+    const client = toRaw(this.girderRest);
+    try {
+      if (client.token && !client.user) {
+        // A login or another link may take over during the fetch; leave
+        // it alone then (as leaveShareLink's session path does).
+        if ((await client.fetchUser()) && toRaw(this.girderRest) === client) {
+          await this.loggedIn(client);
+        }
+      }
+    } catch (error) {
+      logError("Could not restore the saved login:", error);
+    } finally {
+      this.setAuthRestored();
+    }
   }
 
   @Action
   async initialize() {
     if (!this.girderRest.token) {
+      this.setAuthRestored();
       return;
     }
     try {
@@ -2100,9 +2211,12 @@ export class Main extends VuexModule {
       if (user) {
         await this.loggedIn(this.girderRest);
       }
+      // The login is settled here; dataset loading below can take long.
+      this.setAuthRestored();
       await this.initFromUrl();
       sync.setLoading(false);
     } catch (error) {
+      this.setAuthRestored();
       sync.setLoading(error as Error);
     }
   }
@@ -2353,8 +2467,18 @@ export class Main extends VuexModule {
     // this.dataset still describe it. Not awaited: its state reads and commit
     // run synchronously here, and datasetLoading must be set before any await.
     this.flushLastLocationInDatasetView();
+    // A new navigation supersedes any camera target the last one left
+    // unapplied. Parsed now: route.query may change while the view loads.
+    const cameraDeepLink = parseCameraDeepLink(routeQuery);
+    // Claimed before any await: a later navigation supersedes this one even
+    // if this view's fetch resolves last.
+    const navigation = ++datasetViewNavigation;
+    this.setPendingCameraDeepLink(null);
     if (!id) {
       this.setDatasetViewImpl(null);
+      // An overtaken load returns without clearing datasetLoading (the
+      // newest navigation owns it), so this one must.
+      sync.setDatasetLoading(false);
     } else {
       // Set datasetLoading immediately BEFORE any async work.
       // Without this, the first await yields to the microtask queue,
@@ -2365,6 +2489,10 @@ export class Main extends VuexModule {
       try {
         datasetView = await this.api.getDatasetView(id);
       } catch (err) {
+        if (navigation !== datasetViewNavigation) {
+          // Overtaken: the newer navigation owns datasetLoading.
+          return;
+        }
         // The datasetView doesn't exist
         logError(
           `Failed to fetch dataset view ${id}.\nIt may be because it has been deleted or that you don't have the access is forbidden.\n`,
@@ -2373,13 +2501,35 @@ export class Main extends VuexModule {
         sync.setDatasetLoading(false);
         return;
       }
+      if (navigation !== datasetViewNavigation) {
+        // A later navigation started while this view loaded: it is the one
+        // the user asked for, so this view must not replace it (nor its
+        // location, dataset, or camera target).
+        return;
+      }
       datasetView.lastViewed = Date.now();
       this.setDatasetViewImpl(datasetView);
+      if (cameraDeepLink) {
+        // Tied to the view's dataset: while it loads, this.dataset is still
+        // the outgoing one, and ImageViewer must not center that.
+        this.setPendingCameraDeepLink({
+          ...cameraDeepLink,
+          datasetId: datasetView.datasetId,
+        });
+      }
       const promises: Promise<any>[] = [];
 
-      // Only update lastViewed if user has write access to the view
+      // Only update lastViewed if user has write access to the view. It is
+      // bookkeeping: a failed PUT must not reject the batch below, which
+      // would skip clearing datasetLoading and leave the overlay up.
       if (this.canEditDatasetView) {
-        promises.push(this.api.updateDatasetView(datasetView));
+        promises.push(
+          this.api
+            .updateDatasetView(datasetView)
+            .catch((err) =>
+              logError(`Failed to record lastViewed for view ${id}:`, err),
+            ),
+        );
       }
 
       const newLocation = datasetView.lastLocation;
@@ -2402,6 +2552,11 @@ export class Main extends VuexModule {
         );
       }
       await Promise.all(promises);
+      if (navigation !== datasetViewNavigation) {
+        // Overtaken while its dataset loaded: the newer navigation owns the
+        // location (and its clamp and save) and datasetLoading.
+        return;
+      }
       // setSelectedDataset clamps the location when it loads a new dataset,
       // but it is skipped when the dataset is unchanged, so clamp here too.
       // Only against the view's own dataset: if its load failed, this.dataset
@@ -2834,7 +2989,16 @@ export class Main extends VuexModule {
     }
     this.setLastLocationInDatasetView(location);
     if (this.canEditDatasetView) {
-      await this.api.updateDatasetView(datasetView);
+      // Callers (the debounce timer, navigation flushes) don't await this,
+      // so a failed PUT would otherwise be an unhandled rejection.
+      try {
+        await this.api.updateDatasetView(datasetView);
+      } catch (err) {
+        logError(
+          `Failed to save lastLocation for view ${datasetView.id}:`,
+          err,
+        );
+      }
     }
   }
 

@@ -32,6 +32,7 @@ from ..helpers.serialization import orJsonDefaults, streamJsonArray
 from ..helpers.validation import (
     requireObjectId,
     validateAnnotationIdCount,
+    validatePropertyPaths,
 )
 
 
@@ -176,9 +177,18 @@ class Export(Resource):
 
         self.route("GET", ("json",), self.exportJson)
         self.route("POST", ("csv",), self.exportCsv)
+        self.route("GET", ("csv",), self.exportCsvLink)
         self.route("POST", ("geojson",), self.exportGeoJson)
+        self.route("GET", ("geojson",), self.exportGeoJsonLink)
 
-    @access.public(scope=TokenScope.DATA_READ)
+    # The GET exports opt into Girder's HttpOnly auth cookie, so a plain
+    # link (one the MCP server hands a user) downloads in their signed-in
+    # browser without a token in the URL. Read-only, like the tile routes.
+    # Accepted risk, as for those: a hostile page can make a signed-in
+    # browser start exports (the cookie has no SameSite attribute, and
+    # Safari and Firefox send it on cross-site requests), but cannot read
+    # them, since CORS never shares a credentialed answer with it.
+    @access.public(scope=TokenScope.DATA_READ, cookie=True)
     @autoDescribeRoute(
         Description("Export dataset annotations and related data as JSON")
         .param("datasetId", "The dataset ID", required=True)
@@ -428,6 +438,41 @@ class Export(Resource):
         .errorResponse("Dataset not found or access denied", 404)
     )
     def exportCsv(self, body):
+        return self._exportCsv(body)
+
+    @access.public(scope=TokenScope.DATA_READ, cookie=True)
+    @autoDescribeRoute(
+        Description("Export dataset annotations as CSV, as a link")
+        .notes("""
+            The GET form of POST export/csv, for a download link: every
+            annotation, with the given property columns. Accepts Girder's
+            auth cookie.
+        """)
+        .param("datasetId", "The dataset ID", required=True)
+        .jsonParam(
+            "propertyPaths",
+            "Array of property paths to include",
+            required=False,
+            requireArray=True,
+        )
+        .param("delimiter", "Delimiter: , or \\t", required=False,
+               default=",")
+        .param("filename", "Filename for download", required=False,
+               default="export.csv")
+        .errorResponse("Dataset not found or access denied", 404)
+    )
+    def exportCsvLink(self, datasetId, propertyPaths, delimiter, filename):
+        # The POST form's body schema checks path shapes; a query
+        # parameter has no schema, so check them here.
+        validatePropertyPaths(propertyPaths or [])
+        return self._exportCsv({
+            "datasetId": datasetId,
+            "propertyPaths": propertyPaths or [],
+            "delimiter": delimiter,
+            "filename": filename,
+        })
+
+    def _exportCsv(self, body):
         """
         Export annotation data for a dataset as CSV.
 
@@ -575,6 +620,26 @@ class Export(Resource):
         .errorResponse("Dataset not found or access denied", 404)
     )
     def exportGeoJson(self, body):
+        return self._exportGeoJson(body)
+
+    @access.public(scope=TokenScope.DATA_READ, cookie=True)
+    @autoDescribeRoute(
+        Description("Export dataset annotations as GeoJSON, as a link")
+        .notes("""
+            The GET form of POST export/geojson, for a download link: every
+            annotation. Accepts Girder's auth cookie.
+        """)
+        .param("datasetId", "The dataset ID", required=True)
+        .param("filename", "Filename for download", required=False,
+               default="annotations.geojson")
+        .errorResponse("Dataset not found or access denied", 404)
+    )
+    def exportGeoJsonLink(self, datasetId, filename):
+        return self._exportGeoJson(
+            {"datasetId": datasetId, "filename": filename}
+        )
+
+    def _exportGeoJson(self, body):
         """Stream a dataset's annotations as a GeoJSON FeatureCollection.
 
         `annotationIds` is three-state: absent exports every annotation, a

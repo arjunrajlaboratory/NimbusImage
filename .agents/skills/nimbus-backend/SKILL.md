@@ -44,6 +44,20 @@ doc = Model().load(id, force=True)  # Admin bypass
 For detailed access patterns including sharing: read `references/access-control-patterns.md`
 When modifying sharing/access code: read `codebaseDocumentation/SHARING.md`
 
+### An optional dataset filter is an optional access check
+
+List endpoints that check READ on the `datasetId` they filter by must require
+it, and must parse it unconditionally. `annotation_property_values` find
+checked access only `if "datasetId" in params`, so omitting it dropped both
+the filter and the check. `annotation_connection` find required the parameter
+but checked only when it was truthy, so `datasetId=` did the same. Either way
+an anonymous caller could list every dataset's values or connections. Parse
+with `requireObjectId(params.get(...))` (missing or empty → 400), then
+`Folder().load(..., exc=True)`, then build the query from that id. Test
+anonymously, against a **private** dataset, with whichever input bypassed the
+check: missing for property values (`testFindPropertyValuesRequiresDatasetId`),
+empty for connections (`testFindConnectionsWithEmptyDatasetIdDenied`).
+
 ### Ids that match nothing get no access check
 
 Bulk endpoints usually check access on the datasets of the documents an id list resolves to (`distinctDatasetIds` → `requireDatasetsAccess`). An id that matches no document resolves to no dataset, so nothing about it is checked. That is harmless only if nothing downstream acts on the raw id. The bulk-delete cleanup cascade did: it removed connections and property values pointing at the id in **any** dataset. Leftover orphans in other users' datasets could therefore be deleted by naming their dangling ids. Anything that fans out from caller-supplied ids (cascades, events, follow-up queries keyed on the id rather than the loaded document) must run only for ids that resolved to a document the caller was checked against. `Annotation.multipleAnnotationsRemovedEvent` filters to existing annotations before triggering cleanup (#1418, Codex P2).
@@ -120,6 +134,37 @@ users = list(User().find(
 ```
 
 For detailed query patterns: read `references/database-query-patterns.md`
+
+### Streaming many documents to JSON: raw batches, not decoded documents
+
+A list endpoint that returns thousands of annotations spends most of its time
+building Python dicts it only serializes again. For 100K cell polygons that's
+~1.1 s of ~1.45 s. Stream raw BSON batches instead:
+`self._model.findRawBatches(...)` (`helpers/customModel.py`: `Model.find`'s
+arguments, timeout and projection, on `find_raw_batches`) or
+`collection.aggregate_raw_batches(...)`, then
+`streamRawJsonArray(prefetchedBatches(cursor, depth=STREAM_PREFETCH_BATCHES),
+collection.codec_options)` (`streamRawJsonArray` in `helpers/serialization.py`;
+`prefetchedBatches` and both depths in `helpers/aggregation.py`. The default,
+`PREFETCH_BATCHES`, is for aggregations like stubs, where Mongo is the slow
+half). The bytes are identical to
+`streamJsonArray(docs, default=orJsonDefaults)`, through the Rust transcoder
+`bson_json_native` when it is installed and decode + orjson when it isn't.
+`findRawBatches` is the one sanctioned exception to "never
+`collection.find()`"; don't hand-roll another. Details and what the
+transcoder refuses: `codebaseDocumentation/NATIVE_JSON_TRANSCODER.md`.
+
+Two traps from building it:
+- **A directory named like a module shadows it.** The crate first lived in
+  `AnnotationPlugin/bson_json_native/`. With `AnnotationPlugin/` on
+  `sys.path` (tox, `pip install -e`), `import bson_json_native` found that
+  directory as an empty namespace package, so the import "succeeded" with no
+  `transcode` and every endpoint 500'd. Non-Python source trees next to a
+  package get a non-identifier name (`bson-json-native/`).
+- **A builder stage must match the final image's platform.**
+  `girder/tox-and-node-lts` is amd64-only. A builder `FROM python:3.11-slim`
+  (multi-arch) built an arm64 wheel on Apple Silicon, and the emulated amd64
+  final stage refused it. Build from the same base as the final stage.
 
 ## API Endpoint Patterns
 
@@ -556,6 +601,92 @@ sibling's values.
   documents and several rounds (`test/test_save_many.py`). It fails reliably
   without the fix; a single-threaded test cannot see the race.
 
+## Girder setting validators can be skipped: check the value in effect
+
+`@setting_utilities.validator` runs only on `Setting().set`. A null
+`PUT system/setting` (unset) and a `GIRDER_SETTING_<KEY>` environment
+override (JSON-decoded, else the raw string) reach `Setting().get` without
+it. A feature gated on its settings must not trust them at runtime. On
+PR #1421 Codex found this one setting per round (the issuer, then the
+API URL and secret), and a bare-string host list from the environment
+turned an `in` check into a substring match.
+
+Fix it once for every setting: give each one a **normalizer** that returns
+the value as it should be stored or raises `ValidationException`. Register
+one validator that stores the normalizer's result, and have the runtime
+gate run the same table over `get(key)`. A value is usable when normalizing
+leaves it unchanged. Add a test that asserts the bad-value table covers
+every key, so a new setting cannot be added unchecked
+(`McpOAuthPlugin/nimbus_mcp_oauth/settings.py` `NORMALIZE`). Drive tests
+through the real path: `monkeypatch.setenv('GIRDER_SETTING_...')`, then
+`Setting()._get.invalidate(Setting(), key)` (`get` is cached).
+
+## Keying a rate limit on the client address
+
+Girder turns on CherryPy's proxy tool (`tools.proxy.on`), so before any handler
+runs `cherrypy.request.remote.ip` is **already the first `X-Forwarded-For`
+entry**, not the socket peer. Two consequences:
+
+- The header must be one the proxy owns. Production HAProxy did not set it (no
+  `option forwardfor`), so a client could put anything there and rotate it to
+  dodge a limit (Codex on PR #1421). It now does
+  `http-request set-header X-Forwarded-For %[src]`, which replaces whatever the
+  client sent.
+- Code cannot check "did this come from our proxy" with `remote.ip`: it is the
+  header's value. A first fix that trusted the header only from a private
+  `remote.ip` did nothing, and its unit test passed by monkeypatching a
+  `remote.ip` the real stack never presents. Key on `remote.ip` and test
+  through `server.request(..., additionalHeaders=[('X-Forwarded-For', ...)])`
+  (`McpOAuthPlugin/.../rest.py` `_clientAddress`,
+  `testRateLimitKeyIsTheAddressTheProxyGives`).
+
+Anything else keyed on `remote.ip` changes meaning when the proxy starts setting
+the header: the anonymous raster limiter went from one bucket per dataset to one
+per client, so its table needed a sweep.
+
+Girder already refuses a repeated parameter (`code=a&code=b`) with a 400 in
+`girder.api.rest._preventRepeatedParams`, query and form body alike, before the
+endpoint runs, so endpoint code never sees a list. Don't add a second check.
+
+## Single-use credentials: claim atomically, and only after the request is well-formed
+
+One-time codes, refresh tokens, invite links, consent requests: claim them
+with a conditional update (`Model().update({'_id': h, 'used': False},
+{'$set': {'used': True}}, multi=False)`, then check `modified_count == 1`);
+a find-then-save lets two requests both win.
+
+Then watch **what fails after the claim**. In the MCP OAuth plugin
+(`McpOAuthPlugin/nimbus_mcp_oauth/oauth.py`, PR on branch
+`claude/mcp-phase3-oauth`) the same bug was found three review rounds in a
+row: a refresh with a missing `client_id`, then one with a non-canonical
+`resource`, failed *after* the refresh token was marked used, so the
+client's corrected retry looked like token reuse and the whole connection
+was revoked. Sort every post-claim error into one of two kinds:
+
+- **Malformed request** (missing or mismatched parameters a well-behaved
+  client could get wrong): check it **before** the claim. If it needs the
+  stored record, peek with the same `used: False` filter, then claim.
+- **Security event** (wrong client, replay): claim first, then revoke.
+
+A peek must not soften a security event: the resource peek only applies
+when the client matches, or a wrong client could probe a token without
+tripping the revocation (review round 4). Test each malformed-request
+case with a **corrected retry that succeeds**; a test that only checks the
+error response cannot see a spent token.
+
+Sort by *who could cause it*, not by which parameter it is: a field the
+legitimate client sends and could mistype (`client_id`, `redirect_uri`,
+`resource`) is malformed; a failed proof of possession (a PKCE verifier) is
+a security event even though it is "just a parameter". Codex found the
+`redirect_uri` case a round after `resource`, because the first fix moved
+the one parameter it was shown.
+
+Apply the split to **every** credential of the kind, not the one that was
+reported: the refresh path got its resource peek and the authorization-code
+exchange, its twin, did not until a later round. And the read after the
+claim can come back empty (a TTL index deleted the expired record in
+between), so treat `None` there as the same `invalid_grant`, not a crash.
+
 ## Index changes on existing collections: not at startup
 
 Any `create_index` / `drop_index` / `ensureIndices` you add to a model
@@ -602,6 +733,57 @@ Rules:
 Full incident, numbers, and procedure:
 `codebaseDocumentation/PROPERTY_VALUES_UNIQUE_INDEX.md`.
 
+## Dataset-wide list endpoints must stream, not return a cursor or list
+
+`.pagingParams()` accepts `limit=0`, which means "every document". If the
+handler returns a cursor, a `list(cursor)`, or `jsonSafe(...)` of either,
+Girder materializes the whole result and then `json.dumps` it into one string.
+`GET annotation_property_values?limit=0` did this, and on a 709K-cell Xenium
+dataset Girder grew ~1.6 GiB per 100K documents until the container was
+OOM-killed (fixed 2026-11). A public reader of a large public dataset can do
+that to production.
+
+Return a generator *function* (any callable) instead, which is what
+`streamJsonArray` and `streamRawJsonArray` return. Girder's `endpoint` streams
+only when the value is callable. It runs `list()` on a generator object just as
+it does on a cursor, so returning `gen()` rather than `gen` buffers everything
+again. For documents read straight from a collection, stream the raw batches
+(see "Streaming many documents to JSON" above):
+
+```python
+cursor = self._model.findRawBatches(query, sort=sort, limit=limit,
+                                    offset=offset).hint(...)
+setResponseHeader("Content-Type", "application/json")
+return streamRawJsonArray(prefetchedBatches(cursor, depth=STREAM_PREFETCH_BATCHES),
+                          self._model.collection.codec_options)
+```
+
+For documents built or changed in Python (merged virtual values, computed
+rows), use `streamJsonArray(documents, default=orJsonDefaults)`; both write
+the same bytes. A streamed response can't change its status once the first
+chunk is out, so validate everything that could make the query fail (e.g. a
+projection path and its sub-path: Mongo's "Path collision") before returning
+the generator.
+
+orjson is not Girder's encoder, so moving an endpoint to it changes the output
+in edge cases. It writes Infinity/NaN as null, where Girder (`allow_nan=False`)
+returns a 500, so `jsonSafe` isn't needed. It keeps insertion key order rather
+than sorting keys. A type `orJsonDefaults` doesn't know (anything but ObjectId)
+raises in the middle of the stream, where Girder's encoder `str()`s it. Stored
+JSON bodies never hold such types, but check before streaming a model that
+stores datetimes or sets. The
+Girder 5 ASGI bridge passes chunks through a one-slot queue, so a slow client
+gets backpressure rather than a growing buffer. In tests `resp.json` still
+works, because the test client joins the chunks. To check that an endpoint
+streams, pass `isJson=False` and read `list(resp.body)`: more than one chunk
+means it streamed (`test_list_streaming.py`). Use more than ~500 documents:
+`streamJsonArray` flushes every 1000 list entries (commas included) and a raw
+stream emits a chunk per Mongo batch (the first holds 101 documents), so a
+smaller result can be a single chunk either way. Measure with
+the container's cgroup `anon` memory (`/sys/fs/cgroup/memory.stat`), which is
+what the OOM killer acts on and counts every process in the container, the
+celery workers included. Sample it while the request runs and abort past a cap.
+
 ## Returning a large JSON body from numpy (orjson + raw response)
 
 Two traps, both hit by the spatial plugin's `column` endpoint (hundreds of thousands
@@ -610,8 +792,8 @@ of `(annotationId, value)` pairs):
 - **Girder JSON-encodes whatever the handler returns.** Returning `orjson.dumps(...)`
   bytes without marking the response raw ships a JSON *string* containing JSON — the
   client's `resp.json` is a `str`. Call `setRawResponse()` (from `girder.api.rest`)
-  and set the `Content-Type` header yourself, or return a generator (the annotation
-  plugin's `_streamJsonArray` pattern).
+  and set the `Content-Type` header yourself, or return a generator function (the
+  annotation plugin's `streamJsonArray` pattern; a generator object is `list()`ed).
 - **`orjson.OPT_SERIALIZE_NUMPY` takes numeric and bool arrays only.** A unicode
   (`U24`) array of ids raises `TypeError: unsupported datatype in numpy array`;
   `.tolist()` the string array, keep the numeric one as numpy. Cast integral floats
@@ -625,6 +807,32 @@ return orjson.dumps(
     option=orjson.OPT_SERIALIZE_NUMPY,
 )
 ```
+
+## Bulk endpoints: Girder's encoder and per-item validation are the cost
+
+Profiling a 100K-polygon `POST /upenn_annotation/multiple` found the two largest
+costs were pure Python overhead, not Mongo:
+
+- **Girder's default response encoder** is stdlib `json.dumps(sort_keys=True,
+  cls=JsonEncoder)`: ~3.5 s for 100K annotations, orjson ~0.25 s. An endpoint that
+  returns a large list of documents should return `createdDocumentsResponse(docs)`
+  (`helpers/serialization.py`): a streamed orjson array with sorted keys and
+  Girder's `str()` fallback, so it parses to the same value Girder sent for
+  documents decoded from a JSON body or from Mongo. Python-computed values are
+  not covered: a numpy float becomes a string, and Enums, dataclasses and
+  non-UTC aware datetimes encode differently. Remember that orjson writes
+  NaN/Infinity as `null`, where Girder raised (a 500).
+- **fastjsonschema costs ~1 µs per array item** (it builds key sets per object).
+  For a schema with a large array of small objects (coordinates), a hand-written
+  exact-type check that only ever *accepts* (`coordinatesMatchSchema`), plus the
+  schema compiled without that array's rule, cut validation ~4x. Keep the fast
+  check conservative (`type(x) is dict`, not `isinstance`; `bool` must fail) and
+  fall back to the full validator so rejections keep their exact message. Pin the
+  hand-coded rules to the schema in a test, so a schema edit can't silently
+  diverge (`test_bulk_create.py`).
+- **Don't swap the body parser to `orjson.loads`.** It is only 10–25% faster here,
+  and it parses integers past 64 bits as floats and refuses `1e999`, both of which
+  stdlib `json` (Girder's `getBodyJson`) accepts — a change to accepted inputs.
 
 ## Virtual property paths (`helpers/valueProviders.py`)
 

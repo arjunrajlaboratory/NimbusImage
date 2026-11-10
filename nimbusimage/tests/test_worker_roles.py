@@ -76,6 +76,21 @@ class TestAnnotationComputeRejectsPropertyWorker:
         ):
             accessor.compute(image=PROPERTY_IMAGE)
 
+    def test_known_labels_skip_the_worker_listing(self, gc_with_workers):
+        """A caller that already listed the workers passes the labels;
+        the role check uses them instead of a second slow listing."""
+        accessor = AnnotationAccessor(gc_with_workers, "ds_001")
+        accessor.compute(image=ANNOTATION_IMAGE,
+                         worker_labels=WORKERS[ANNOTATION_IMAGE])
+        gc_with_workers.get.assert_not_called()
+        gc_with_workers.post.assert_called_once()
+        # The check itself still applies to the labels given.
+        with pytest.raises(ValueError, match="property worker"):
+            accessor.compute(image=PROPERTY_IMAGE,
+                             worker_labels=WORKERS[PROPERTY_IMAGE])
+        gc_with_workers.get.assert_not_called()
+        gc_with_workers.post.assert_called_once()
+
     def test_role_comes_from_labels_not_image_prefix(self, mock_gc):
         """A registry-qualified image whose path contains
         'annotations/' is still rejected when its labels say it is a
@@ -107,6 +122,17 @@ class TestPropertyComputeRejectsAnnotationWorker:
         with pytest.raises(ValueError, match="annotation worker"):
             accessor.compute(make_property(ANNOTATION_IMAGE))
         gc_with_workers.post.assert_not_called()
+
+    def test_known_labels_skip_the_worker_listing(self, gc_with_workers):
+        accessor = PropertyAccessor(gc_with_workers, "ds_001")
+        accessor.compute(make_property(PROPERTY_IMAGE),
+                         worker_labels=WORKERS[PROPERTY_IMAGE])
+        gc_with_workers.get.assert_not_called()
+        gc_with_workers.post.assert_called_once()
+        with pytest.raises(ValueError, match="annotation worker"):
+            accessor.compute(make_property(ANNOTATION_IMAGE),
+                             worker_labels=WORKERS[ANNOTATION_IMAGE])
+        gc_with_workers.get.assert_not_called()
 
     def test_error_names_correct_accessor(self, gc_with_workers):
         accessor = PropertyAccessor(gc_with_workers, "ds_001")

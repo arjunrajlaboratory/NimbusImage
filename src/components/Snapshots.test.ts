@@ -1222,6 +1222,44 @@ describe("Snapshots.vue", () => {
       });
     });
 
+    it("stops when its view switch was overtaken, leaving the loaded view alone", async () => {
+      // The mock never switches views, as when another navigation won.
+      const snapshot = makeSnapshot({ datasetViewId: "differentView" });
+      await (wrapper.vm as any).loadSnapshot(new Event("click"), {
+        item: {
+          record: snapshot,
+          name: snapshot.name,
+          datasetName: "",
+          key: "",
+          modified: "",
+        },
+      });
+      expect(store.loadSnapshotLayers).not.toHaveBeenCalled();
+      expect(store.setXY).not.toHaveBeenCalled();
+    });
+
+    it("applies the snapshot once its view switch lands", async () => {
+      const snapshot = makeSnapshot({ datasetViewId: "differentView" });
+      const loadedView = (store as any).datasetView;
+      (store.setDatasetViewId as any).mockImplementationOnce(async () => {
+        (store as any).datasetView = { id: "differentView" };
+      });
+      try {
+        await (wrapper.vm as any).loadSnapshot(new Event("click"), {
+          item: {
+            record: snapshot,
+            name: snapshot.name,
+            datasetName: "",
+            key: "",
+            modified: "",
+          },
+        });
+        expect(store.setXY).toHaveBeenCalledWith(2);
+      } finally {
+        (store as any).datasetView = loadedView;
+      }
+    });
+
     it("loads a snapshot requested from the command palette, then clears it", async () => {
       const snapshot = makeSnapshot();
       snapshotLoadRequest.value = snapshot as ISnapshot;
