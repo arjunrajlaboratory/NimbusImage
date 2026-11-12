@@ -123,10 +123,6 @@ let hydrationGeneration = 0;
 // login/logout (client-side, no page reload) clears the prior user's history.
 // `undefined` until the first check runs.
 let lastKnownUserId: string | null | undefined = undefined;
-// True while handleAuthenticatedUserChange is awaiting a stored conversation.
-// Sends are blocked until it settles so a turn started mid-load can't be
-// clobbered when the stored wire history lands (and vice versa).
-let hydrating = false;
 
 export function setAgentPanelElement(element: HTMLElement | null) {
   panelElement = element;
@@ -149,6 +145,19 @@ function toResultContent(
     }
   }
   return content;
+}
+
+// The result for a tool whose conversation was cleared before it finished.
+// The loop drops it with the rest of that conversation's results.
+function discardedToolResult(toolUseId: string): IAgentToolResultBlock {
+  return {
+    type: "tool_result",
+    tool_use_id: toolUseId,
+    content: toResultContent({
+      discarded: true,
+      reason: "The conversation was cleared before this action finished.",
+    }),
+  };
 }
 
 function toolResultDetail(result: any): string | undefined {
@@ -184,6 +193,17 @@ export class AiPanel extends VuexModule {
   // Index into `items` of the tool card awaiting user approval
   pendingApprovalIndex: number | null = null;
   canRevert: boolean = false;
+  // True while handleAuthenticatedUserChange is awaiting a stored
+  // conversation. Sends are blocked until it settles so a turn started
+  // mid-load can't be clobbered when the stored wire history lands (and vice
+  // versa). State, not a module variable, so the panel can keep the typed
+  // message instead of clearing the input for a send that would be dropped.
+  hydrating: boolean = false;
+
+  @Mutation
+  private setHydrating(value: boolean) {
+    this.hydrating = value;
+  }
 
   @Mutation
   private addItemImpl(item: IAgentPanelItem) {
@@ -360,7 +380,7 @@ export class AiPanel extends VuexModule {
     // superseded this one.
     const generationAtChange = conversationGeneration;
     const hydrationAtChange = ++hydrationGeneration;
-    hydrating = true;
+    this.setHydrating(true);
     try {
       const stored = await loadStoredConversation();
       // A newer user change (or any clear) during the await bumps the
@@ -388,7 +408,7 @@ export class AiPanel extends VuexModule {
       // hydrationGeneration, not conversationGeneration, so a plain clear (which
       // bumps only conversationGeneration) can't leave `hydrating` stuck true.
       if (hydrationGeneration === hydrationAtChange) {
-        hydrating = false;
+        this.setHydrating(false);
       }
     }
   }
@@ -398,7 +418,7 @@ export class AiPanel extends VuexModule {
     const trimmed = text.trim();
     // `hydrating`: a user change is still restoring the stored conversation;
     // starting a turn now could be clobbered when that history lands.
-    if (this.running || hydrating || !trimmed) {
+    if (this.running || this.hydrating || !trimmed) {
       return;
     }
     this.setRunning(true);
@@ -477,6 +497,13 @@ export class AiPanel extends VuexModule {
         const results: IAgentToolResultBlock[] = [];
         let datasetChanged = false;
         for (const toolUse of toolUses) {
+          if (conversationGeneration !== generationAtStart) {
+            // Cleared while an earlier tool ran. Starting the next one would
+            // push its card into the conversation that replaced this one, and
+            // the clear nulled turnSnapshot, so the identity check below would
+            // pass. The results are dropped below anyway.
+            return;
+          }
           if (turnSnapshot && viewIdentityChangedSince(turnSnapshot)) {
             datasetChanged = true;
           }
@@ -573,6 +600,11 @@ export class AiPanel extends VuexModule {
   private async executeToolUse(
     toolUse: IAgentToolUseBlock,
   ): Promise<IAgentToolResultBlock> {
+    // Captured before any await so every path can tell whether the
+    // conversation was cleared or switched to another user (e.g. a
+    // mid-analysis account change) meanwhile. Late notifications (e.g. worker
+    // completion) reference this conversation too.
+    const generation = conversationGeneration;
     // describeAgentToolCall runs on unvalidated model input; never let a
     // formatting error abort the turn (which would strand this tool_use).
     let description: string;
@@ -613,6 +645,12 @@ export class AiPanel extends VuexModule {
       });
       approvalResolver = null;
       this.setPendingApprovalIndex(null);
+      if (generation !== conversationGeneration) {
+        // Cleared while the prompt was open (an approval can land just before
+        // the clear). itemIndex now points into another conversation, and the
+        // clear nulled turnSnapshot, so the identity check below would pass.
+        return discardedToolResult(toolUse.id);
+      }
       if (!approved) {
         this.updateItemImpl({
           index: itemIndex,
@@ -653,11 +691,6 @@ export class AiPanel extends VuexModule {
       }
     }
 
-    // Captured before the await so both the success and error paths can tell
-    // whether the conversation was cleared or switched to another user (e.g. a
-    // mid-analysis account change) while this tool ran. Late notifications
-    // (e.g. worker completion) reference this conversation too.
-    const generation = conversationGeneration;
     try {
       const { result, images, plots } = await executeAgentTool(
         toolUse.name,
@@ -670,9 +703,11 @@ export class AiPanel extends VuexModule {
             }
           },
           // Lets a tool that awaits before mutating (e.g. run_worker) re-check
-          // identity immediately before it acts.
+          // identity immediately before it acts. A clear counts as a change:
+          // it nulls turnSnapshot, and must not make the check pass.
           hasViewIdentityChanged: () =>
-            turnSnapshot != null && viewIdentityChangedSince(turnSnapshot),
+            generation !== conversationGeneration ||
+            (turnSnapshot != null && viewIdentityChangedSince(turnSnapshot)),
           abortSignal: turnAbortController?.signal,
         },
       );
@@ -686,14 +721,7 @@ export class AiPanel extends VuexModule {
         for (const plot of plots ?? []) {
           removePlot(plot.id);
         }
-        return {
-          type: "tool_result",
-          tool_use_id: toolUse.id,
-          content: toResultContent({
-            discarded: true,
-            reason: "The conversation was cleared before this action finished.",
-          }),
-        };
+        return discardedToolResult(toolUse.id);
       }
       this.updateItemImpl({
         index: itemIndex,
@@ -716,15 +744,7 @@ export class AiPanel extends VuexModule {
       const message = error?.message ?? "Tool execution failed";
       if (generation !== conversationGeneration) {
         // Cleared/switched mid-tool; don't touch the now-current transcript.
-        return {
-          type: "tool_result",
-          tool_use_id: toolUse.id,
-          content: toResultContent({
-            discarded: true,
-            reason: "The conversation was cleared before this action finished.",
-          }),
-          is_error: true,
-        };
+        return { ...discardedToolResult(toolUse.id), is_error: true };
       }
       this.updateItemImpl({
         index: itemIndex,

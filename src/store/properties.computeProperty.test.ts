@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { watch } from "vue";
 
 const mocks = vi.hoisted(() => ({
   computeProperty: vi.fn(),
@@ -9,6 +10,9 @@ const mocks = vi.hoisted(() => ({
   completeProgress: vi.fn(),
   createNotification: vi.fn(),
   updateHistograms: vi.fn(),
+  findDatasetViews: vi.fn(),
+  batchResources: vi.fn(),
+  updateProgress: vi.fn(),
 }));
 
 vi.mock("@/store/index", () => ({
@@ -22,6 +26,11 @@ vi.mock("@/store/index", () => ({
       getPropertyValues: (...args: any[]) => mocks.getPropertyValues(...args),
     },
     scheduleAnnotationBrowserSave: vi.fn(),
+    api: {
+      findDatasetViews: (...args: any[]) => mocks.findDatasetViews(...args),
+      batchResources: (...args: any[]) => mocks.batchResources(...args),
+      cancelJob: vi.fn(),
+    },
   },
 }));
 
@@ -45,6 +54,7 @@ vi.mock("@/store/progress", () => ({
   default: {
     create: (...args: any[]) => mocks.createProgress(...args),
     complete: (...args: any[]) => mocks.completeProgress(...args),
+    update: (...args: any[]) => mocks.updateProgress(...args),
     createNotification: (...args: any[]) => mocks.createNotification(...args),
     handleJobProgress: vi.fn(),
   },
@@ -213,6 +223,38 @@ describe("property compute lifecycle", () => {
     expect(mocks.createNotification).toHaveBeenCalledTimes(1);
   });
 
+  // The UI reads `running` reactively. A status created by the run itself
+  // must be written through the store, or the spinner never clears.
+  function watchRunning() {
+    const seen: (boolean | undefined)[] = [];
+    const stop = watch(
+      () => properties.propertyStatuses[property.id]?.running,
+      (running) => seen.push(running),
+      { flush: "sync" },
+    );
+    return { seen, stop };
+  }
+
+  it("tells the UI a first batch run stopped after the API rejects", async () => {
+    mocks.computeProperties.mockRejectedValue(new Error("batch unavailable"));
+    const { seen, stop } = watchRunning();
+
+    await properties.computeProperties([property]);
+    stop();
+
+    expect(seen).toEqual([false, true, false]);
+  });
+
+  it("tells the UI a first single run stopped after the API rejects", async () => {
+    mocks.computeProperty.mockRejectedValue(new Error("worker unavailable"));
+    const { seen, stop } = watchRunning();
+
+    await properties.computeProperty({ property });
+    stop();
+
+    expect(seen).toEqual([false, true, false]);
+  });
+
   it("cleans up batch state when the server omits a job", async () => {
     mocks.computeProperties.mockResolvedValue([
       { propertyId: property.id, jobs: [] },
@@ -269,5 +311,236 @@ describe("property compute lifecycle", () => {
       requested.slice(0, 100),
       {},
     );
+  });
+});
+
+describe("property batch compute lifecycle", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    properties.resetPropertyState();
+    mocks.createProgress.mockResolvedValue("progress-1");
+    mocks.computeProperty.mockResolvedValue({ data: [{ _id: "job-1" }] });
+    mocks.addJob.mockResolvedValue(true);
+    mocks.getPropertyValues.mockResolvedValue({});
+    mocks.updateHistograms.mockResolvedValue(undefined);
+    mocks.findDatasetViews.mockResolvedValue([
+      { datasetId: "ds-a" },
+      { datasetId: "ds-b" },
+    ]);
+    mocks.batchResources.mockResolvedValue({ folder: {} });
+  });
+
+  function runBatch(onComplete = vi.fn()) {
+    return properties.computePropertyBatch({
+      property,
+      configurationId: "config-1",
+      onBatchProgress: vi.fn(),
+      onCancel: vi.fn(),
+      onComplete,
+    });
+  }
+
+  it("releases the running state when listing the batch's datasets fails", async () => {
+    mocks.findDatasetViews.mockRejectedValue(new Error("listing failed"));
+
+    await expect(runBatch()).rejects.toThrow("listing failed");
+
+    expect(status()).toMatchObject({ running: false, previousRun: false });
+  });
+
+  it("finishes the batch when a dataset's progress entry cannot be created", async () => {
+    mocks.createProgress
+      .mockResolvedValueOnce("batch-progress")
+      .mockRejectedValueOnce(new Error("progress failed"))
+      .mockResolvedValue("dataset-progress");
+    const onComplete = vi.fn();
+
+    await runBatch(onComplete);
+
+    expect(onComplete).toHaveBeenCalledWith({
+      succeeded: 1,
+      failed: 1,
+      cancelled: 0,
+    });
+    expect(status()).toMatchObject({ running: false, previousRun: false });
+  });
+
+  // `running` is a flag, so a property runs once at a time: a second run
+  // would let the first to finish clear it while the other still runs.
+  describe("overlapping runs of one property", () => {
+    let releaseJobs!: (success: boolean) => void;
+
+    beforeEach(() => {
+      const jobsDone = new Promise<boolean>((resolve) => {
+        releaseJobs = resolve;
+      });
+      mocks.addJob.mockReturnValue(jobsDone);
+    });
+
+    function watchRunning() {
+      const seen: (boolean | undefined)[] = [];
+      const stop = watch(
+        () => properties.propertyStatuses[property.id]?.running,
+        (running) => seen.push(running),
+        { flush: "sync" },
+      );
+      return { seen, stop };
+    }
+
+    it("refuses a batch while a single run of the property is running", async () => {
+      const { seen, stop } = watchRunning();
+      await properties.computeProperty({ property });
+      const onCancel = vi.fn();
+
+      const started = await properties.computePropertyBatch({
+        property,
+        configurationId: "config-1",
+        onBatchProgress: vi.fn(),
+        onCancel,
+        onComplete: vi.fn(),
+      });
+
+      expect(started).toBe(false);
+      expect(onCancel).not.toHaveBeenCalled();
+      expect(mocks.findDatasetViews).not.toHaveBeenCalled();
+      expect(status().running).toBe(true);
+
+      releaseJobs(true);
+      await vi.waitFor(() => expect(status().running).toBe(false));
+      stop();
+      expect(seen).toEqual([false, true, false]);
+    });
+
+    it("records a refused batch on the property's status, without a toast", async () => {
+      const errorInfo: IErrorInfoList = { errors: [] };
+      await properties.computeProperty({ property, errorInfo });
+
+      const started = await runBatch();
+
+      expect(started).toBe(false);
+      expect(status().errorInfo?.errors.map(({ title }) => title)).toEqual([
+        "Property is already computing",
+      ]);
+      expect(mocks.createNotification).not.toHaveBeenCalled();
+
+      // The refusal does not stand in for the running run's own failure, and
+      // it ends with the run it was refused for.
+      releaseJobs(false);
+      await vi.waitFor(() => expect(status().running).toBe(false));
+      expect(status().errorInfo?.errors.map(({ title }) => title)).toEqual([
+        "Property computation failed",
+      ]);
+    });
+
+    it("drops a refusal when the run it was refused for succeeds", async () => {
+      const errorInfo: IErrorInfoList = { errors: [] };
+      await properties.computeProperty({ property, errorInfo });
+      expect(await runBatch()).toBe(false);
+      expect(await runBatch()).toBe(false);
+      expect(status().errorInfo?.errors).toHaveLength(2);
+
+      releaseJobs(true);
+      await vi.waitFor(() => expect(status().running).toBe(false));
+      expect(status().previousRun).toBe(true);
+      expect(status().errorInfo?.errors).toEqual([]);
+    });
+
+    it("drops a refusal recorded during a batch when the batch ends", async () => {
+      const batch = runBatch();
+      await vi.waitFor(() => expect(mocks.addJob).toHaveBeenCalled());
+      expect(await runBatch()).toBe(false);
+      expect(status().errorInfo?.errors.map(({ title }) => title)).toEqual([
+        "Property is already computing",
+      ]);
+
+      releaseJobs(true);
+      await expect(batch).resolves.toBe(true);
+      expect(status().errorInfo?.errors).toEqual([]);
+    });
+
+    it("starts a batch without the previous run's errors", async () => {
+      await properties.computeProperty({ property });
+      releaseJobs(false);
+      await vi.waitFor(() => expect(status().running).toBe(false));
+      expect(status().errorInfo?.errors).toHaveLength(1);
+
+      // jobsDone is already settled (false); the batch's jobs succeed.
+      mocks.addJob.mockResolvedValue(true);
+      await runBatch();
+
+      expect(status().previousRun).toBe(true);
+      expect(status().errorInfo?.errors).toEqual([]);
+    });
+
+    describe("across a property-state reset", () => {
+      it("refuses a second start after a reset while the first run is in flight", async () => {
+        await properties.computeProperty({ property });
+        properties.resetPropertyState();
+
+        expect(await properties.computeProperty({ property })).toBeNull();
+        expect(await runBatch()).toBe(false);
+        expect(mocks.computeProperty).toHaveBeenCalledTimes(1);
+
+        releaseJobs(true);
+        await vi.waitFor(() => expect(status().running).toBe(false));
+      });
+
+      it("keeps an in-flight status reactive across a reset", async () => {
+        const batch = runBatch();
+        await vi.waitFor(() => expect(mocks.addJob).toHaveBeenCalled());
+        properties.resetPropertyState();
+        const { seen, stop } = watchRunning();
+
+        releaseJobs(true);
+        await expect(batch).resolves.toBe(true);
+        stop();
+
+        expect(seen).toEqual([false]);
+        expect(status()).toMatchObject({ running: false, previousRun: true });
+      });
+
+      it("drops a settled status on reset", async () => {
+        await properties.computeProperty({ property });
+        releaseJobs(true);
+        await vi.waitFor(() => expect(status().running).toBe(false));
+
+        properties.resetPropertyState();
+
+        expect(properties.propertyStatuses).toEqual({});
+      });
+    });
+
+    it("refuses a single run while a batch of the property is running", async () => {
+      const { seen, stop } = watchRunning();
+      const batch = runBatch();
+      await vi.waitFor(() => expect(mocks.addJob).toHaveBeenCalled());
+      const errorInfo: IErrorInfoList = { errors: [] };
+
+      const job = await properties.computeProperty({ property, errorInfo });
+
+      expect(job).toBeNull();
+      expect(errorInfo.errors[0]?.title).toBe("Property is already computing");
+      expect(mocks.createNotification).not.toHaveBeenCalled();
+      // Only the batch's first dataset was submitted
+      expect(mocks.computeProperty).toHaveBeenCalledTimes(1);
+      expect(status().running).toBe(true);
+
+      releaseJobs(true);
+      await expect(batch).resolves.toBe(true);
+      stop();
+      expect(status().running).toBe(false);
+      expect(seen).toEqual([false, true, false]);
+    });
+
+    it("refuses a second single run until the first finishes", async () => {
+      await properties.computeProperty({ property });
+
+      expect(await properties.computeProperty({ property })).toBeNull();
+      expect(mocks.computeProperty).toHaveBeenCalledTimes(1);
+
+      releaseJobs(true);
+      await vi.waitFor(() => expect(status().running).toBe(false));
+      expect(status().previousRun).toBe(true);
+    });
   });
 });

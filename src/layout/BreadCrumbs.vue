@@ -137,7 +137,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, shallowRef, computed, watch, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import store, { girderUrlFromApiRoot } from "@/store";
 import girderResources from "@/store/girderResources";
@@ -207,13 +207,22 @@ const addDatasetFlag = computed({
   },
 });
 
-const datasetView = computed(() => {
-  const datasetViewId = route.params.datasetViewId;
-  if (datasetViewId && typeof datasetViewId === "string") {
-    return store.api.getDatasetView(datasetViewId);
-  }
-  return null;
-});
+// Fetched from a watch on the route param, not a computed: fetchDatasetView
+// reads the REST client and its token, which a computed would track, so a
+// logout or login would refetch the view (unauthenticated, on logout).
+const datasetView = shallowRef<Promise<IDatasetView> | null>(null);
+watch(
+  () => route.params.datasetViewId,
+  (datasetViewId) => {
+    datasetView.value =
+      datasetViewId && typeof datasetViewId === "string"
+        ? store.fetchDatasetView(datasetViewId)
+        : null;
+  },
+  // Not sync: a refresh that read the previous view's request writes
+  // nothing once this replaces it (refreshItems checks its inputs).
+  { immediate: true },
+);
 
 /* eslint-disable vue/no-async-in-computed-properties */
 const datasetId = computed((): Promise<string> | null => {
@@ -272,11 +281,54 @@ function addedDatasets(_datasetIds: string[], datasetViews: IDatasetView[]) {
   }
 }
 
+// What a refresh resolves: the view's request and the ids the route names.
+// Not the datasetId/configurationId promises themselves: those are rebuilt on
+// every query change (the location is in the query), which is not a new view.
+function refreshInputs() {
+  return [
+    datasetView.value,
+    route.name,
+    route.params.datasetId,
+    route.query.datasetId,
+    route.params.configurationId,
+    route.query.configurationId,
+  ];
+}
+
 async function refreshItems(force = false) {
-  const [resolvedConfigurationId, resolvedDatasetId] = await Promise.all([
-    configurationId.value,
-    datasetId.value,
-  ]);
+  // A refresh whose inputs changed while it awaited is for a view the user
+  // left: it writes nothing (the refresh for the new inputs does).
+  const inputs = refreshInputs();
+  const isCurrent = () =>
+    refreshInputs().every((input, index) => input === inputs[index]);
+  let resolvedConfigurationId: string | null;
+  let resolvedDatasetId: string | null;
+  try {
+    [resolvedConfigurationId, resolvedDatasetId] = await Promise.all([
+      configurationId.value,
+      datasetId.value,
+    ]);
+  } catch {
+    // The view could not be fetched (deleted, or no access). The viewer's
+    // own load of it reports that; there is nothing to show here, so the
+    // previous view's breadcrumbs go (and a later return to it refreshes).
+    if (isCurrent()) {
+      currentConfigurationId.value = null;
+      currentDatasetId.value = null;
+      ownerDisplayName.value = null;
+      collectionDisplayName.value = null;
+      items.value = [];
+      previousRefreshInfo.value = {
+        datasetId: null,
+        configurationId: null,
+        routeName: null,
+      };
+    }
+    return;
+  }
+  if (!isCurrent()) {
+    return;
+  }
 
   currentConfigurationId.value = resolvedConfigurationId || null;
   currentDatasetId.value = resolvedDatasetId || null;
@@ -291,11 +343,6 @@ async function refreshItems(force = false) {
   ) {
     return;
   }
-  previousRefreshInfo.value = {
-    datasetId: resolvedDatasetId ?? null,
-    configurationId: resolvedConfigurationId ?? null,
-    routeName: route.name,
-  };
 
   const newItems: IBreadCrumbItem[] = [];
   const datasetParams: Record<string, string> = {};
@@ -321,6 +368,9 @@ async function refreshItems(force = false) {
   let folder;
   if (resolvedDatasetId) {
     folder = await girderResources.getFolder(resolvedDatasetId);
+    if (!isCurrent()) {
+      return;
+    }
     if (folder && datasetItem) {
       datasetItem.text = folder.name;
     }
@@ -343,12 +393,19 @@ async function refreshItems(force = false) {
   }
 
   items.value = newItems;
+  // Recorded once the items are written, not before the fetch: a refresh
+  // that gave way to a newer one must not make a return to its view skip.
+  previousRefreshInfo.value = {
+    datasetId: resolvedDatasetId ?? null,
+    configurationId: resolvedConfigurationId ?? null,
+    routeName: route.name,
+  };
 
   if (folder?.creatorId) {
     girderResources
       .getUser(folder.creatorId)
       .then((user) => {
-        if (user) {
+        if (user && isCurrent()) {
           ownerDisplayName.value = userDisplayInfo(user).full;
         }
       })
@@ -359,7 +416,7 @@ async function refreshItems(force = false) {
     const views = await store.api.findDatasetViews({
       configurationId: resolvedConfigurationId,
     });
-    if (views.length) {
+    if (views.length && isCurrent()) {
       // Pre-resolve dataset names for the dropdown items
       const datasetItems = await Promise.all(
         views.map(async (view: IDatasetView) => {
@@ -379,7 +436,8 @@ async function refreshItems(force = false) {
         }),
       );
 
-      // Replace the datasetItem in items array with subItems added
+      // Replace the datasetItem in items array with subItems added (gone
+      // from items if a newer refresh replaced them)
       const idx = items.value.indexOf(datasetItem);
       if (idx >= 0) {
         const updated = { ...items.value[idx], subItems: datasetItems };

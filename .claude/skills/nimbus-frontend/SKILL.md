@@ -1042,6 +1042,58 @@ cut 708,983 to 72,925.
   read that one list; a new narrowing filter that skips it is invisible on
   all three. See `codebaseDocumentation/ACTIVE_CONSTRAINT_CUES.md`.
 
+## State flags: four shapes that leave the UI stuck
+
+A flag that tracks "what is this doing right now" (`running`, `loading`,
+`configuring`, `isDragging`) is an implicit state machine. An audit of the
+whole UI found about 25 of them; nearly every bug was one of four shapes. See
+`codebaseDocumentation/IMPLICIT_STATE_MACHINES.md` for the list and its
+regression checklist.
+
+1. **Reset after an `await` with no `try/finally`.** Set the flag, await, reset
+   on the next line: a rejection skips the reset and the spinner never stops.
+   Reset in `finally`. Check every `await` between the set and the `try`, too
+   (`progress.create` before the `try` was a repeat offender).
+2. **A boolean where overlapping requests need a count or a token.** The first
+   request to finish clears the flag for the one still running, or an older
+   response overwrites a newer one. Count in-flight requests, or claim a
+   sequence token **before any early return** and let only the newest write.
+   `sync.setSaving` / `sync.setLoading` are counts: every `true` needs its
+   `false` in a `finally`, or the indicator sticks forever.
+3. **One question, several sources.** If "is this tool running" can be read
+   from a component ref and from the jobs store, they will disagree. Derive
+   one from the other. Scope store lookups fully: tool ids are shared by every
+   dataset in a collection, so "the tool's job" must also match the dataset.
+4. **Partial reset.** One reset function, clearing everything the state uses;
+   prefer one state object (`null | {phase, ...}`) over five refs so a reset
+   cannot clear only part of it.
+
+Also: a gesture needs a **cancel** exit as well as a commit (a mouseup that
+never arrives, a blur, the target going away), and state holds reactive
+proxies, so compare a stored socket, map or layer with an event target through
+`toRaw`, never `===`.
+
+An assignment expression yields the raw right-hand side, not the store's
+proxy. `const status = state[id] ?? (state[id] = defaultStatus())` leaves
+every later `status.running = ...` invisible to the UI on the first run, so a
+spinner never clears while the store reads correct. Assign, then read back
+through the store. Check the rendered component too, not only store state.
+
+Two more, both found by review or live testing of code that already used
+sequence tokens:
+
+- Claiming a token makes the older request unable to clear the flag it set.
+  The newest claimant must leave that flag right on every exit, early returns
+  included (`if (!file) { isLoading = false; return; }`).
+- An equality skip ("the URL value equals the store's, nothing to do") reads
+  committed state. While another change is in flight, that state is about to
+  be replaced, and the skipped request is the one that should have overtaken
+  it: view S, open T, back to S within 10 ms ended on T. Give the skip a
+  "nothing of mine pending" condition (`pendingSets` in `useRouteMapper.ts`
+  tracks the mapper's own unsettled `set` calls). Scope it to the caller's
+  own requests: "anything pending anywhere" let an unrelated URL write
+  cancel a view switch started by a snapshot.
+
 ## Logging
 
 **Never use `console.log`, `console.warn`, or `console.error`** — eslint will reject them. `no-console` is an error only when `NODE_ENV=production`, which is how CI lints, so a plain local `pnpm lint:ci` won't flag them.

@@ -167,6 +167,15 @@
             </v-dialog>
           </div>
         </div>
+        <v-alert
+          v-if="importError"
+          type="error"
+          variant="tonal"
+          density="compact"
+          class="import-error mt-2"
+        >
+          {{ importError }}
+        </v-alert>
       </v-card-text>
       <v-card-actions v-if="isJsonLoaded">
         <v-spacer />
@@ -175,7 +184,8 @@
           variant="flat"
           color="primary"
           size="small"
-          :disabled="isOverwriteBlocked"
+          :loading="isImporting"
+          :disabled="isOverwriteBlocked || isImporting"
           @click="submit"
         >
           Import selection
@@ -213,6 +223,7 @@ const jsonFile = ref<File | null>(null);
 const isLoadingFile = ref(false);
 const isJsonLoaded = ref(false);
 const isImporting = ref(false);
+const importError = ref("");
 
 const annotations = ref<ISerializedAnnotation[]>([]);
 const connections = ref<ISerializedConnection[]>([]);
@@ -258,19 +269,31 @@ const isOverwriteBlocked = computed(
   () => overwriteProperties.value && !!overwriteBlockedBy.value,
 );
 
+// Guards against a slow read of an earlier file landing after a newer pick.
+// The newest pick owns isLoadingFile: a superseded read no longer touches it,
+// so every exit below must leave it correct (clearing the file, including the
+// parse-failure path that nulls it, must stop the spinner here).
+let parseToken = 0;
+
 watch(jsonFile, () => {
+  const token = ++parseToken;
   isJsonLoaded.value = false;
+  importError.value = "";
   annotations.value = [];
   connections.value = [];
   properties.value = [];
   values.value = {};
   if (!jsonFile.value) {
+    isLoadingFile.value = false;
     return;
   }
   isLoadingFile.value = true;
   jsonFile.value
     .text()
     .then((jsonText) => {
+      if (token !== parseToken) {
+        return;
+      }
       const parsed = JSON.parse(jsonText) as ISerializedData;
       annotations.value = parsed.annotations;
       connections.value = parsed.annotationConnections;
@@ -279,9 +302,15 @@ watch(jsonFile, () => {
       isJsonLoaded.value = true;
     })
     .catch(() => {
-      jsonFile.value = null;
+      if (token === parseToken) {
+        jsonFile.value = null;
+      }
     })
-    .finally(() => (isLoadingFile.value = false));
+    .finally(() => {
+      if (token === parseToken) {
+        isLoadingFile.value = false;
+      }
+    });
 });
 
 function reset() {
@@ -293,6 +322,7 @@ function reset() {
   isLoadingFile.value = false;
   isJsonLoaded.value = false;
   isImporting.value = false;
+  importError.value = "";
 
   annotations.value = [];
   connections.value = [];
@@ -307,8 +337,22 @@ function reset() {
   overwriteProperties.value = false;
 }
 
+// Closing by any route (Escape, click outside, the owner) clears the dialog,
+// except while an import runs: it keeps its in-progress state so a reopened
+// dialog cannot start a second import, and it resets itself on success.
+watch(importDialog, (open) => {
+  if (!open && !isImporting.value) {
+    reset();
+  }
+});
+
 async function submit() {
-  if (!isJsonLoaded.value || !store.dataset || isOverwriteBlocked.value) {
+  if (
+    isImporting.value ||
+    !isJsonLoaded.value ||
+    !store.dataset ||
+    isOverwriteBlocked.value
+  ) {
     return;
   }
 
@@ -329,12 +373,14 @@ async function submit() {
   };
 
   isImporting.value = true;
+  importError.value = "";
 
   try {
     await importAnnotationsFromData(serializedData, options);
     reset();
   } catch (error) {
     logError("Error importing annotations:", error);
+    importError.value = (error as Error)?.message || "The import failed.";
   } finally {
     isImporting.value = false;
   }
@@ -354,6 +400,9 @@ defineExpose({
   isOverwriteBlocked,
   importDialog,
   isJsonLoaded,
+  isImporting,
+  importError,
+  jsonFile,
   reset,
   annotations,
   connections,

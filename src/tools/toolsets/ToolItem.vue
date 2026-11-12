@@ -86,6 +86,7 @@ import store from "@/store";
 import ToolIcon from "@/tools/ToolIcon.vue";
 import ToolEdition from "@/tools/ToolEdition.vue";
 import jobs from "@/store/jobs";
+import batchRuns from "@/store/batchRuns";
 import { getTourAnchorId } from "@/utils/strings";
 
 const props = defineProps<{
@@ -111,13 +112,25 @@ const isToolSelected = computed(() => {
   return store.selectedTool?.configuration.id === props.tool.id;
 });
 
+// Busy as the tool's menu shows it: its job on the open dataset, or its
+// "apply to all datasets" batch, which may be on another dataset.
 const isToolLoading = computed(() => {
-  return !isToolSelected.value && !!jobId.value;
+  return (
+    !isToolSelected.value &&
+    (!!jobId.value ||
+      !!batchRuns.batchRun(
+        "workerTool",
+        store.selectedConfigurationId,
+        props.tool.id,
+      )?.inFlight)
+  );
 });
 
-const jobId = computed((): string | null => {
-  return jobs.jobIdForToolId[props.tool.id] ?? null;
-});
+// The tool's job on the open dataset, as the tool's menu and the agent read
+// it: tool ids are shared by every dataset of a collection.
+const jobId = computed((): string | null =>
+  jobs.jobIdForToolInDataset(props.tool.id, store.dataset?.id ?? null),
+);
 
 const statusIcon = computed((): string | null => {
   const success = jobs.toolJobOutcome(props.tool.id);

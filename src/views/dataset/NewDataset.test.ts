@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { nextTick } from "vue";
-import { shallowMount } from "@vue/test-utils";
+import { shallowMount, flushPromises } from "@vue/test-utils";
 
 // --- Top-level mock fn handles ---
 const mockGetUserApiKeys = vi.fn().mockResolvedValue([]);
@@ -254,6 +254,7 @@ function createFile(name: string, size = 100): File {
 const mockRouter = { push: vi.fn() };
 
 function mountComponent(props: Record<string, any> = {}, options: any = {}) {
+  const { stubs: extraStubs, ...rest } = options;
   return shallowMount(NewDataset, {
     props: {
       initialUploadLocation: { _id: "folder1", _modelType: "folder" },
@@ -278,14 +279,30 @@ function mountComponent(props: Record<string, any> = {}, options: any = {}) {
           props: ["modelValue", "disabled"],
           emits: ["submit"],
         },
+        ...extraStubs,
       },
       provide: {
         ...routerProvider(mockRouter),
       },
     },
-    ...options,
+    ...rest,
   });
 }
+
+// A MultiSourceConfiguration that cannot read the dataset's files.
+const FailingConfigurationStub = {
+  name: "MultiSourceConfiguration",
+  template: "<div />",
+  props: ["datasetId", "autoDatasetRoute"],
+  data: () => ({
+    initialized: null,
+    initError: { name: "a.tif", message: "Unsupported file" },
+  }),
+  methods: {
+    initialize: () => Promise.reject(new Error("Unsupported file")),
+    submit: vi.fn(),
+  },
+};
 
 function resetUploadWorkflow() {
   Object.assign(mockUploadWorkflow, {
@@ -439,7 +456,7 @@ describe("NewDataset", () => {
     it("returns non-zero when uploading", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.uploading = true;
+      vm.phase = "uploading";
       // Without uploader ref, should return 0% of step 1
       const progress = vm.totalProgressPercentage;
       expect(progress).toBeGreaterThanOrEqual(0);
@@ -449,7 +466,7 @@ describe("NewDataset", () => {
     it("returns progress based on configuring logs", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.configuring = true;
+      vm.phase = "configuring";
       vm.configurationLogs = "line1\nline2\nline3\nline4\nline5";
       const progress = vm.totalProgressPercentage;
       // Should be at step 2 (configuring) with some progress
@@ -459,7 +476,7 @@ describe("NewDataset", () => {
     it("returns progress when creatingView", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.creatingView = true;
+      vm.phase = "creatingView";
       const progress = vm.totalProgressPercentage;
       expect(progress).toBeGreaterThan(0);
     });
@@ -697,7 +714,7 @@ describe("NewDataset", () => {
       mockUploadWorkflow.currentDatasetIndex = 0;
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.configuring = true;
+      vm.phase = "configuring";
       expect(vm.showConfigAtTop).toBe(true);
     });
 
@@ -706,7 +723,7 @@ describe("NewDataset", () => {
       mockUploadWorkflow.batchMode = false;
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.configuring = true;
+      vm.phase = "configuring";
       expect(vm.showConfigAtTop).toBe(false);
     });
 
@@ -717,7 +734,7 @@ describe("NewDataset", () => {
       mockUploadWorkflow.currentDatasetIndex = 0;
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.configuring = true;
+      vm.phase = "configuring";
       expect(vm.showConfigAtTop).toBe(false);
     });
 
@@ -728,7 +745,7 @@ describe("NewDataset", () => {
       mockUploadWorkflow.currentDatasetIndex = 0;
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.configuring = false;
+      vm.phase = "idle";
       expect(vm.showConfigAtTop).toBe(false);
     });
   });
@@ -1032,14 +1049,37 @@ describe("NewDataset", () => {
   });
 
   describe("interruptedUpload", () => {
-    it("resets uploading and hideUploader", () => {
+    it("stops uploading and reports the failure", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.uploading = true;
-      vm.hideUploader = true;
+      vm.phase = "uploading";
       vm.interruptedUpload();
       expect(vm.uploading).toBe(false);
-      expect(vm.hideUploader).toBe(false);
+      expect(vm.pipelineError).toBe(true);
+      expect(vm.failedPhase).toBe("uploading");
+    });
+
+    it("resumes an interrupted upload into the same dataset instead of creating another", async () => {
+      const wrapper = mountComponent();
+      await flushPromises();
+      const vm = wrapper.vm as any;
+      const file = createFile("a.tif");
+      vm.filesChanged([file]);
+      vm.valid = true;
+      // submit() created the dataset and pointed path at its folder.
+      vm.dataset = { id: "ds-1" };
+      vm.path = { _id: "ds-1-folder", _modelType: "folder" };
+      vm.phase = "uploading";
+      await nextTick();
+      const startUpload = vi.spyOn(vm.uploader, "startUpload");
+
+      vm.interruptedUpload();
+      await vm.submit();
+
+      expect(mockCreateDataset).not.toHaveBeenCalled();
+      expect(startUpload).toHaveBeenCalledTimes(1);
+      expect(vm.uploading).toBe(true);
+      expect(vm.pipelineError).toBe(false);
     });
   });
 
@@ -1048,7 +1088,7 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.dataset = { id: "ds-1" };
-      vm.uploading = true;
+      vm.phase = "uploading";
       vm.nextStep();
       expect(vm.hideUploader).toBe(true);
       expect(vm.uploading).toBe(false);
@@ -1089,10 +1129,29 @@ describe("NewDataset", () => {
   });
 
   describe("submit", () => {
-    it("returns early on pipelineError", async () => {
-      const wrapper = mountComponent();
+    it("retries after a failure that happened before any dataset was created", async () => {
+      mockCreateDataset.mockResolvedValue({ id: "ds-new" });
+      const wrapper = mountComponent({ initialUploadLocation: null });
       const vm = wrapper.vm as any;
-      vm.pipelineError = true;
+      vm.failedPhase = "idle";
+      vm.valid = true;
+      vm.path = { _id: "folder1", _modelType: "folder" };
+      vm.name = "Retry";
+      await vm.submit();
+      expect(mockCreateDataset).toHaveBeenCalledTimes(1);
+      expect(vm.pipelineError).toBe(false);
+    });
+
+    it("does not create a second dataset once the files are uploaded", async () => {
+      // e.g. the uploader embedded in AddDatasetToCollection, after nextStep
+      const wrapper = mountComponent({ autoMultiConfig: false });
+      const vm = wrapper.vm as any;
+      vm.filesChanged([createFile("a.tif")]);
+      vm.valid = true;
+      vm.dataset = { id: "ds-1" };
+      vm.path = { _id: "ds-1-folder", _modelType: "folder" };
+      vm.nextStep();
+      expect(vm.uploadDisabled).toBe(true);
       await vm.submit();
       expect(mockCreateDataset).not.toHaveBeenCalled();
     });
@@ -1260,7 +1319,7 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.showBatchErrorDialog = true;
-      vm.pipelineError = true;
+      vm.failedPhase = "configuring";
       vm.batchErrorMessage = "error";
       vm.handleContinueBatch();
       expect(vm.showBatchErrorDialog).toBe(false);
@@ -1271,6 +1330,40 @@ describe("NewDataset", () => {
   });
 
   describe("advanceToNextDataset", () => {
+    it("resets everything the pipeline set for the previous dataset", () => {
+      mockUploadWorkflow.active = true;
+      mockUploadWorkflow.batchMode = true;
+      mockUploadWorkflow.fileGroups = [
+        [createFile("a.tif")],
+        [createFile("b.tif")],
+      ];
+      mockUploadWorkflow.originalPath = {
+        _id: "folder1",
+        _modelType: "folder",
+      };
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.dataset = { id: "ds-1" };
+      vm.phase = "creatingView";
+      vm.failedPhase = "creatingView";
+      vm.failedDataset = "a";
+      vm.progressStatusText = "Transcoding...";
+      vm.totalFrames = 10;
+      vm.currentFrame = 5;
+      vm.hideUploader = true;
+
+      vm.advanceToNextDataset();
+
+      expect(vm.phase).toBe("idle");
+      expect(vm.creatingView).toBe(false);
+      expect(vm.pipelineError).toBe(false);
+      expect(vm.failedDataset).toBe("");
+      expect(vm.progressStatusText).toBe("");
+      expect(vm.totalFrames).toBe(0);
+      expect(vm.currentFrame).toBe(0);
+      expect(vm.hideUploader).toBe(false);
+    });
+
     it("navigates to collection when last dataset", () => {
       mockUploadWorkflow.active = true;
       mockUploadWorkflow.batchMode = true;
@@ -1299,7 +1392,7 @@ describe("NewDataset", () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
       vm.dataset = { id: "ds-1" };
-      vm.configuring = true;
+      vm.phase = "configuring";
       vm.advanceToNextDataset();
       expect(mockAdvanceUploadDatasetIndex).toHaveBeenCalled();
       expect(vm.dataset).toBeNull();
@@ -1375,6 +1468,186 @@ describe("NewDataset", () => {
     });
   });
 
+  describe("pipeline failures", () => {
+    beforeEach(() => {
+      mockUploadWorkflow.active = true;
+      mockUploadWorkflow.quickupload = true;
+      mockUploadWorkflow.batchMode = false;
+    });
+
+    it("stops configuring and shows why when the files cannot be read", async () => {
+      const wrapper = mountComponent(
+        {},
+        { stubs: { MultiSourceConfiguration: FailingConfigurationStub } },
+      );
+      const vm = wrapper.vm as any;
+      vm.dataset = { id: "ds-1" };
+
+      await vm.configureDataset();
+
+      expect(vm.configuring).toBe(false);
+      expect(vm.pipelineError).toBe(true);
+      expect(vm.processingError).toBe(
+        "Could not read the dataset's files (a.tif: Unsupported file)",
+      );
+    });
+
+    // Renders buttons and card actions so their clicks can be driven.
+    const buttonStubs = {
+      VBtn: {
+        template: "<button @click=\"$emit('click')\"><slot /></button>",
+        emits: ["click"],
+      },
+      VCardActions: { template: "<div><slot /></div>" },
+    };
+
+    // Quick import whose files are uploaded and whose first read fails.
+    async function failReadingFiles(initialize: () => Promise<void>) {
+      const stub = {
+        ...FailingConfigurationStub,
+        methods: { initialize, submit: mockConfigurationSubmit },
+      };
+      const wrapper = mountComponent(
+        {},
+        { stubs: { MultiSourceConfiguration: stub, ...buttonStubs } },
+      );
+      await flushPromises();
+      const vm = wrapper.vm as any;
+      vm.dataset = { id: "ds-1" };
+      vm.hideUploader = true;
+      await vm.configureDataset();
+      await nextTick();
+      return wrapper;
+    }
+
+    const mockConfigurationSubmit = vi.fn();
+
+    function buttonNamed(wrapper: any, label: string) {
+      return wrapper
+        .findAll("button")
+        .find((b: any) => b.text().trim() === label);
+    }
+
+    it("says the quick import failed, not that it is in progress", async () => {
+      const wrapper = await failReadingFiles(() =>
+        Promise.reject(new Error("Unsupported file")),
+      );
+
+      expect(wrapper.text()).toContain("Quick Import Failed");
+      expect(wrapper.text()).not.toContain("in Progress");
+      // The files are uploaded, so Upload could only make a second dataset.
+      expect(wrapper.find('[data-tour="upload-button"]').exists()).toBe(false);
+    });
+
+    it("reads the files again on Try again without creating another dataset", async () => {
+      mockConfigurationSubmit.mockClear();
+      const initialize = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Unsupported file"))
+        .mockResolvedValue(undefined);
+      const wrapper = await failReadingFiles(initialize);
+      const vm = wrapper.vm as any;
+      expect(vm.failedPhase).toBe("readingFiles");
+
+      await buttonNamed(wrapper, "Try again")!.trigger("click");
+      await flushPromises();
+
+      expect(initialize).toHaveBeenCalledTimes(2);
+      expect(mockConfigurationSubmit).toHaveBeenCalledTimes(1);
+      expect(vm.pipelineError).toBe(false);
+      expect(vm.processingError).toBeNull();
+      expect(vm.phase).toBe("configuring");
+      expect(mockCreateDataset).not.toHaveBeenCalled();
+      expect(wrapper.text()).toContain("Quick Import in Progress");
+    });
+
+    it("does not offer Try again once generating the configuration has failed", async () => {
+      const wrapper = mountComponent({}, { stubs: buttonStubs });
+      await flushPromises();
+      const vm = wrapper.vm as any;
+      vm.dataset = { id: "ds-1" };
+      vm.hideUploader = true;
+      vm.phase = "configuring";
+      vm.generationFailed("The transcoding job failed");
+      await nextTick();
+
+      expect(vm.failedPhase).toBe("configuring");
+      expect(vm.canRetryReadingFiles).toBe(false);
+      expect(buttonNamed(wrapper, "Try again")).toBeUndefined();
+      vm.retryReadingFiles();
+      expect(vm.pipelineError).toBe(true);
+      expect(buttonNamed(wrapper, "Back to home")).toBeDefined();
+    });
+
+    it("leaves a failed quick import for the home page", async () => {
+      const wrapper = await failReadingFiles(() =>
+        Promise.reject(new Error("Unsupported file")),
+      );
+
+      await buttonNamed(wrapper, "Back to home")!.trigger("click");
+
+      expect(mockRouter.push).toHaveBeenCalledWith({ name: "root" });
+    });
+
+    it("leaves no phase running beside the error when the default view fails", async () => {
+      mockCreateDefaultView.mockResolvedValue(null);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.dataset = { id: "ds-1" };
+      vm.phase = "configuring";
+
+      await vm.createView();
+      await nextTick();
+
+      expect(vm.creatingView).toBe(false);
+      expect(vm.pipelineError).toBe(true);
+      expect(vm.failedPhase).toBe("creatingView");
+      // DatasetInfo stays mounted so a view can be created by hand.
+      expect(vm.viewCreation).toBeTruthy();
+      expect(mockRouter.push).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("upload workflow", () => {
+    it("uses the store's quick-import mode in the template on the routed path", () => {
+      mockUploadWorkflow.active = true;
+      mockUploadWorkflow.quickupload = true;
+      // The newdataset route passes no quickupload prop.
+      const wrapper = mountComponent({ quickupload: false });
+      expect(wrapper.text()).toContain("Quick Import in Progress");
+    });
+
+    it("gives each batch dataset a fresh uploader", async () => {
+      const wrapper = mountComponent();
+      await flushPromises();
+      const first = wrapper.findComponent({ name: "GirderUpload" });
+      expect(first.exists()).toBe(true);
+
+      // The mocked workflow is not reactive: re-render through local state.
+      mockUploadWorkflow.currentDatasetIndex = 1;
+      (wrapper.vm as any).name = "next dataset";
+      await nextTick();
+
+      const second = wrapper.findComponent({ name: "GirderUpload" });
+      expect(second.exists()).toBe(true);
+      expect(second.vm).not.toBe(first.vm);
+    });
+
+    it("completes the workflow when the page is left", () => {
+      mockUploadWorkflow.active = true;
+      mockUploadWorkflow.fileGroups = [[createFile("a.tif")]];
+      const wrapper = mountComponent();
+      wrapper.unmount();
+      expect(mockCompleteUploadWorkflow).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves an inactive workflow alone when the page is left", () => {
+      const wrapper = mountComponent();
+      wrapper.unmount();
+      expect(mockCompleteUploadWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
   describe("generationDone", () => {
     it("calls createView for quick import", async () => {
       mockUploadWorkflow.active = true;
@@ -1413,7 +1686,7 @@ describe("NewDataset", () => {
     it("calls parseTranscodeOutput and updates progress fields", async () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.configuring = true;
+      vm.phase = "configuring";
       vm.configurationLogs = "new log line";
       await nextTick();
       expect(parseTranscodeOutput).toHaveBeenCalledWith("new log line");
@@ -1426,7 +1699,7 @@ describe("NewDataset", () => {
     it("does not update when not configuring", async () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.configuring = false;
+      vm.phase = "idle";
       vm.configurationLogs = "new log line";
       await nextTick();
       // parseTranscodeOutput should not be called since configuring is false
@@ -1502,7 +1775,7 @@ describe("NewDataset", () => {
       mockUploadWorkflow.currentDatasetIndex = 0;
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;
-      vm.configuring = true;
+      vm.phase = "configuring";
       vm.dataset = { id: "ds-1" };
       await nextTick();
       // The form should have v-show=false (display:none) when showConfigAtTop

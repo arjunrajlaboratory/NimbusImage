@@ -1528,6 +1528,11 @@ watch(
     }
     if (open) {
       openPalette("annotationPanel");
+      // Refused (embed mode): put the store back, or it stays "open" over a
+      // closed palette and the next request is no change, so never opens it
+      if (!annotationPanel.value) {
+        annotationPanelChanged();
+      }
     } else {
       annotationPanel.value = false;
     }

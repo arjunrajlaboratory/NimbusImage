@@ -228,8 +228,16 @@ vi.mock("@/store/properties", () => ({
 
 vi.mock("@/store/jobs", () => ({
   default: {
-    jobIdForToolId: {} as { [toolId: string]: string },
-    jobIdForPropertyId: {} as { [propertyId: string]: string },
+    // Tracked tool jobs per dataset: { [datasetId]: { [toolId]: jobId } }
+    trackedToolJobs: {} as Record<string, Record<string, string>>,
+    jobIdForToolInDataset(toolId: string, datasetId: string | null) {
+      return this.trackedToolJobs[String(datasetId)]?.[toolId] ?? null;
+    },
+    // Tracked property jobs per dataset: { [datasetId]: { [propertyId]: jobId } }
+    trackedPropertyJobs: {} as Record<string, Record<string, string>>,
+    jobIdForPropertyInDataset(propertyId: string, datasetId: string | null) {
+      return this.trackedPropertyJobs[String(datasetId)]?.[propertyId] ?? null;
+    },
     // Never settles by default: tests that care resolve their own promise.
     addJob: vi.fn(() => new Promise<boolean>(() => {})),
     getPromiseForJobId: vi.fn(() => undefined as Promise<boolean> | undefined),
@@ -266,6 +274,7 @@ import {
 import { MAX_BOX_POINTS, MAX_PLOT_POINTS, MAX_SAMPLE_ROWS } from "./analysis";
 import { jobStates } from "@/store/jobConstants";
 import { clearPlots, getPlot } from "./plotRegistry";
+import { resetBatchRuns, runBatch } from "@/store/batchRuns";
 
 const mockMain = main as any;
 const mockAnnotations = annotationStore as any;
@@ -314,8 +323,8 @@ beforeEach(() => {
     properties: [],
   }));
   mockFilters.filteredAnnotations = [];
-  mockJobs.jobIdForToolId = {};
-  mockJobs.jobIdForPropertyId = {};
+  mockJobs.trackedToolJobs = {};
+  mockJobs.trackedPropertyJobs = {};
   mockProperties.workerImageList = {};
   mockProperties.properties = [];
   mockProperties.propertyValues = {};
@@ -1134,7 +1143,7 @@ describe("executeAgentTool", () => {
     mockMain.tools = [
       { id: "t1", name: "Cellpose", values: { image: { image: "img:1" } } },
     ];
-    mockJobs.jobIdForToolId = { t1: "job42" };
+    mockJobs.trackedToolJobs = { ds1: { t1: "job42" } };
     const { result } = await executeAgentTool(
       "run_worker",
       { toolId: "t1" },
@@ -1145,11 +1154,59 @@ describe("executeAgentTool", () => {
     expect(mockAnnotations.computeAnnotationsWithWorker).not.toHaveBeenCalled();
   });
 
+  it("does not start a worker whose batch over the collection is running", async () => {
+    mockMain.tools = [
+      { id: "t1", name: "Cellpose", values: { image: { image: "img:1" } } },
+    ];
+    mockMain.selectedConfigurationId = "config-1";
+    // The batch is on another dataset and has not reached this one
+    void runBatch(
+      "workerTool",
+      "config-1",
+      "t1",
+      3,
+      () => new Promise(() => {}),
+    );
+    try {
+      const { result } = await executeAgentTool(
+        "run_worker",
+        { toolId: "t1" },
+        context,
+      );
+      expect(result.started).toBe(false);
+      expect(result.alreadyRunning).toBe(true);
+      expect(
+        mockAnnotations.computeAnnotationsWithWorker,
+      ).not.toHaveBeenCalled();
+    } finally {
+      resetBatchRuns();
+      delete mockMain.selectedConfigurationId;
+    }
+  });
+
+  it("runs a worker whose only running job is on another dataset", async () => {
+    mockMain.tools = [
+      { id: "t1", name: "Cellpose", values: { image: { image: "img:1" } } },
+    ];
+    // Tool ids are shared by every dataset of a collection
+    mockJobs.trackedToolJobs = { "ds-other": { t1: "job42" } };
+    mockAnnotations.computeAnnotationsWithWorker = vi.fn(async () => ({
+      jobId: "job7",
+    }));
+    const { result } = await executeAgentTool(
+      "run_worker",
+      { toolId: "t1" },
+      context,
+    );
+    expect(result.alreadyRunning).toBeUndefined();
+    expect(result.jobId).toBe("job7");
+  });
+
   it("does not submit a worker job if the dataset changed during setup", async () => {
     mockMain.tools = [
       { id: "t1", name: "Cellpose", values: { image: { image: "img:1" } } },
     ];
-    mockJobs.jobIdForToolId = {};
+    mockJobs.trackedToolJobs = {};
     // The active dataset changed while the worker interface was being fetched;
     // the job must not be submitted against the new dataset.
     await expect(
@@ -1169,7 +1226,7 @@ describe("executeAgentTool", () => {
     mockMain.tools = [
       { id: "t1", name: "Cellpose", values: { image: { image: "img:1" } } },
     ];
-    mockJobs.jobIdForToolId = {};
+    mockJobs.trackedToolJobs = {};
     mockAnnotations.computeAnnotationsWithWorker = vi.fn(async () => ({
       jobId: "job7",
     }));
@@ -1199,7 +1256,7 @@ describe("wait_for_job", () => {
     mockMain.tools = [
       { id: "t1", name: "Cellpose", values: { image: { image: "img:1" } } },
     ];
-    mockJobs.jobIdForToolId = {};
+    mockJobs.trackedToolJobs = {};
     let submitted: any;
     mockAnnotations.computeAnnotationsWithWorker = vi.fn(async (args: any) => {
       submitted = args;
@@ -2133,7 +2190,7 @@ describe("property tools", () => {
 
   it("compute_property does not double-submit a running property job", async () => {
     mockProperties.properties = [{ id: "prop1", name: "Intensity" }];
-    mockJobs.jobIdForPropertyId = { prop1: "job99" };
+    mockJobs.trackedPropertyJobs = { ds1: { prop1: "job99" } };
     mockProperties.computeProperty = vi.fn();
     const { result } = await executeAgentTool(
       "compute_property",
@@ -2143,6 +2200,20 @@ describe("property tools", () => {
     expect(result.alreadyRunning).toBe(true);
     expect(result.jobId).toBe("job99");
     expect(mockProperties.computeProperty).not.toHaveBeenCalled();
+  });
+
+  it("compute_property does not report another dataset's run as this one's", async () => {
+    mockProperties.properties = [{ id: "prop1", name: "Intensity" }];
+    // Property ids are shared by every dataset of a collection
+    mockJobs.trackedPropertyJobs = { "ds-other": { prop1: "job99" } };
+    mockProperties.computeProperty = vi.fn(async () => ({ jobId: "job7" }));
+    const { result } = await executeAgentTool(
+      "compute_property",
+      { propertyId: "prop1" },
+      context,
+    );
+    expect(result.alreadyRunning).toBeUndefined();
+    expect(mockProperties.computeProperty).toHaveBeenCalledTimes(1);
   });
 
   it("compute_property reports failure when no job starts", async () => {

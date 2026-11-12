@@ -1684,9 +1684,15 @@ async function applySnapshot(snapshot: ISnapshot) {
     snapshot.datasetViewId !== store.datasetView?.id
   ) {
     await store.setDatasetViewId({ id: snapshot.datasetViewId });
-    // Another navigation overtook this one (or the view failed to load):
-    // the snapshot's layers and location belong to its own view only.
-    if (store.datasetView?.id !== snapshot.datasetViewId) {
+    // Another navigation overtook this one (or the view or its dataset or
+    // configuration failed to load): the snapshot's layers and location
+    // belong to its own view, and are checked against its own dataset.
+    const view = store.datasetView;
+    if (
+      view?.id !== snapshot.datasetViewId ||
+      store.dataset?.id !== view.datasetId ||
+      store.configuration?.id !== view.configurationId
+    ) {
       return;
     }
   }
@@ -1979,12 +1985,12 @@ async function downloadImagesForSetOfSnapshots(snapshots: ISnapshot[]) {
   downloading.value = true;
   downloadError.value = "";
 
-  const progressId = await progress.create({
-    type: ProgressType.SNAPSHOT_BATCH_DOWNLOAD,
-    title: "Downloading snapshot images",
-  });
-
+  let progressId: string | undefined;
   try {
+    progressId = await progress.create({
+      type: ProgressType.SNAPSHOT_BATCH_DOWNLOAD,
+      title: "Downloading snapshot images",
+    });
     const allUrls: IDownloadUrlItem[] = [];
     const totalSnapshots = exports.length;
 
@@ -2033,7 +2039,9 @@ async function downloadImagesForSetOfSnapshots(snapshots: ISnapshot[]) {
         : "Snapshot download failed. Please try again.";
     logError("Snapshot download failed:", error);
   } finally {
-    progress.complete(progressId);
+    if (progressId !== undefined) {
+      progress.complete(progressId);
+    }
     downloading.value = false;
   }
 }
@@ -2443,6 +2451,9 @@ async function getUrlsForMovieWithAnnotations(
     title: "Capturing frames with annotations",
   });
 
+  // Capture steps the viewer through every time point: put it back where
+  // the user was afterwards, whether the capture finished or failed.
+  const originalTime = store.time;
   try {
     for (let i = 0; i < timePoints.length; i++) {
       const timePoint = timePoints[i];
@@ -2517,6 +2528,7 @@ async function getUrlsForMovieWithAnnotations(
     }
   } finally {
     progress.complete(progressId);
+    store.setTime(originalTime);
   }
 
   return dataUrls;
@@ -2524,10 +2536,11 @@ async function getUrlsForMovieWithAnnotations(
 
 async function handleMovieDownload(params: any) {
   const dataset = store.dataset;
-  if (!dataset) return;
+  if (!dataset || downloading.value) return;
 
+  downloading.value = true;
+  downloadError.value = "";
   try {
-    downloading.value = true;
     const timePoints = Array.from(
       { length: params.endTime - params.startTime + 1 },
       (_, i) => params.startTime + i,
@@ -2563,6 +2576,10 @@ async function handleMovieDownload(params: any) {
         logError("Unknown format:", params.format);
     }
   } catch (error) {
+    downloadError.value =
+      error instanceof Error
+        ? `Movie download failed: ${error.message}`
+        : "Movie download failed. Please try again.";
     logError("Movie download failed:", error);
   } finally {
     downloading.value = false;
@@ -3078,14 +3095,32 @@ watch(downloadMode, () => {
   format.value = formatList.value[0].value;
 });
 
-watch(firstMap, () => {
+// The overlay layer belongs to the map it was created on. When that map is
+// replaced or goes away, drop the refs, and remove the layer and handlers
+// from the old map only if it still holds the layer (an exited map has
+// already deleted its layers), never from the new one.
+function detachBoundingBox(oldMap: IGeoJSMap | undefined) {
+  const layer = bboxLayer.value;
+  bboxLayer.value = null;
+  bboxAnnotation.value = null;
+  scalebarAnnotation.value = null;
+  if (!oldMap) {
+    return;
+  }
+  oldMap.geoOff(geojs.event.annotation.mode, doneBoundingBox);
+  oldMap.geoOff(geojs.event.annotation.coordinates, boundingBoxCoordinates);
+  if (layer && oldMap.layers().includes(layer)) {
+    oldMap.deleteLayer(layer);
+    oldMap.draw();
+  }
+}
+
+watch(firstMap, (_map, oldMap) => {
+  detachBoundingBox(oldMap);
   if (props.snapshotVisible) {
-    showSnapshot(false);
     showSnapshot(true);
     markCurrentArea();
     drawBoundingBox();
-  } else {
-    showSnapshot(false);
   }
 });
 

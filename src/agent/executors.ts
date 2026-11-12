@@ -8,6 +8,7 @@ import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
 import propertyStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
+import batchRuns from "@/store/batchRuns";
 import { jobStates } from "@/store/jobConstants";
 import volumeViewStore from "@/store/volumeView";
 import {
@@ -1331,11 +1332,14 @@ async function runWorkerTool(
   context: IAgentToolContext,
 ): Promise<IToolExecutionResult> {
   requireLogin();
-  requireDataset();
+  const dataset = requireDataset();
   const tool: IToolConfiguration | undefined = main.tools.find(
     (t) => t.id === input.toolId,
   );
-  const runningJobId = tool && jobsStore.jobIdForToolId[tool.id];
+  // Running on this dataset: tool ids are shared by every dataset of a
+  // collection, and the tool's menu and palette entry ask the same question.
+  const runningJobId =
+    tool && jobsStore.jobIdForToolInDataset(tool.id, dataset.id);
   if (runningJobId) {
     return {
       result: {
@@ -1345,6 +1349,24 @@ async function runWorkerTool(
         note:
           `A job for tool "${tool.name}" is already running. Call wait_for_job ` +
           "with this jobId instead of starting another run.",
+      },
+    };
+  }
+  // Its "apply to all datasets" batch, as the tool's menu shows it: the
+  // batch may not have reached this dataset yet, and would run it again.
+  if (
+    tool &&
+    batchRuns.batchRun("workerTool", main.selectedConfigurationId, tool.id)
+      ?.inFlight
+  ) {
+    return {
+      result: {
+        started: false,
+        alreadyRunning: true,
+        note:
+          `Tool "${tool.name}" is running on every dataset of this ` +
+          "collection (Apply to all datasets). Wait for that batch to " +
+          "finish instead of starting another run.",
       },
     };
   }
@@ -1407,7 +1429,7 @@ async function runWorkerTool(
   });
   if (!computeJob) {
     throw new ToolExecutionError(
-      "Failed to start the worker job (are you logged in and is a dataset open?)",
+      "Failed to start the worker job: the server rejected the request, or you are not logged in or no dataset is open",
     );
   }
   completion.handler = trackAgentJob({
@@ -2582,7 +2604,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
       context: IAgentToolContext,
     ) => {
       requireLogin();
-      requireDataset();
+      const dataset = requireDataset();
       const property = propertyStore.properties.find(
         (p) => p.id === input.propertyId,
       );
@@ -2592,7 +2614,15 @@ const registry: { [name: string]: IAgentToolEntry } = {
             "or create_property first",
         );
       }
-      const runningJobId = jobsStore.jobIdForPropertyId[property.id];
+      // Running on this dataset: property ids are shared by every dataset of
+      // a collection. A run elsewhere (a single run on another dataset, or a
+      // batch over the collection) is refused by computeProperty below, and
+      // reported as a failure to start: the property's status keeps its
+      // running mark across dataset switches until that run ends.
+      const runningJobId = jobsStore.jobIdForPropertyInDataset(
+        property.id,
+        dataset.id,
+      );
       if (runningJobId) {
         return {
           result: {
@@ -2609,7 +2639,8 @@ const registry: { [name: string]: IAgentToolEntry } = {
       }
       const errorInfo: IErrorInfoList = { errors: [] };
       // computeProperty returns null when the job never started (no dataset,
-      // or job creation failed); don't report success in that case.
+      // job creation failed, or the property is already computing); don't
+      // report success in that case.
       const computeJob = await propertyStore.computeProperty({
         property,
         errorInfo,

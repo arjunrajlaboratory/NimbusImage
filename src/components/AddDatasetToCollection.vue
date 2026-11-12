@@ -89,10 +89,13 @@
             :autoDatasetRoute="false"
             @log="option.configurationLogs = $event"
             @generatedJson="addDatasetConfigurationDone"
+            @generationError="addDatasetConfigurationFailed"
             :class="{ 'd-none': !option.editVariables }"
           />
-          <div class="title mb-2">Configuring the dataset</div>
-          <v-progress-circular indeterminate />
+          <template v-if="!configurationFailed">
+            <div class="title mb-2">Configuring the dataset</div>
+            <v-progress-circular indeterminate />
+          </template>
           <div class="code-container" v-if="option.configurationLogs">
             <code class="code-block">
               {{ option.configurationLogs }}
@@ -175,6 +178,16 @@ const uploadLocation = ref<IGirderLocation | null>(null);
 const configurationRef = ref<InstanceType<
   typeof MultiSourceConfiguration
 > | null>(null);
+
+// Read from the configuration itself, which shows the error and clears it
+// when the user retries, so the progress display here cannot disagree.
+const configurationFailed = computed(
+  () =>
+    !!(
+      configurationRef.value?.initError ||
+      configurationRef.value?.generationErrorMessage
+    ),
+);
 
 onMounted(async () => {
   try {
@@ -302,22 +315,37 @@ async function addDatasetToCollectionUploaded(datasetId: string) {
       option.value.editVariables = true;
       return;
     }
-    await (config.initialized || config.initialize());
+    try {
+      await (config.initialized || config.initialize());
+    } catch (error) {
+      // The configuration shows why; reveal it.
+      logError("Failed to read the new dataset's files:", error);
+      option.value.editVariables = true;
+      return;
+    }
     await config.submit();
   }
 }
 
-async function addDatasetConfigurationDone(jsonId: string | null) {
+// MultiSourceConfiguration reports a generation failure here, never as a
+// generatedJson. It stays mounted (configuring stays true) so its error
+// message and Submit button remain on screen for a retry. A failure to load
+// the files (its initError) is not reported here: its error card replaces
+// the assignments card, and there is no retry control.
+function addDatasetConfigurationFailed() {
+  if (option.value.type !== "upload" || !option.value.uploadedDatasetId) {
+    return;
+  }
+  logError("Failed to generate JSON during configuration of new dataset");
+  option.value.editVariables = true;
+}
+
+async function addDatasetConfigurationDone() {
   if (option.value.type !== "upload" || !option.value.uploadedDatasetId) {
     return;
   }
   option.value.configuring = false;
   const datasetId = option.value.uploadedDatasetId;
-  if (!jsonId) {
-    logError("Failed to generate JSON during configuration of new dataset");
-    option.value.editVariables = true;
-    return;
-  }
   const configCompat = props.collection?.compatibility;
   if (!configCompat) {
     emit(
@@ -379,11 +407,13 @@ defineExpose({
   option,
   uploadLocation,
   configurationRef,
+  configurationFailed,
   addDatasetOptionType,
   canAddDatasetToCollection,
   selectAddDatasetFolder,
   addDatasetToCollectionUploaded,
   addDatasetConfigurationDone,
+  addDatasetConfigurationFailed,
   addDatasetToCollection,
 });
 </script>

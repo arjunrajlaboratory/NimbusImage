@@ -7,6 +7,15 @@ import {
 import store from "./root";
 import { IGeoJSPosition } from "./model";
 
+let lastViewerId = 0;
+
+// Identifies one AnnotationViewer instance to this module. Unroll mode mounts
+// one viewer per layer group and they all share this state, so a viewer that
+// goes away must only clear what it owns.
+export function newLineScanViewerId(): number {
+  return ++lastViewerId;
+}
+
 /**
  * State shared between the linescan tool (AnnotationViewer) and the
  * LineScanPanel that displays the intensity profile.
@@ -35,6 +44,13 @@ export class LineScan extends VuexModule {
   // True after the first click of a segment scan, until the second click
   segmentStartPlaced: boolean = false;
 
+  // Viewer that published the current line (see newLineScanViewerId), or null
+  // when there is no line
+  ownerViewerId: number | null = null;
+
+  // Mounted viewers sharing this state
+  viewerCount: number = 0;
+
   get isActive() {
     return this.points !== null;
   }
@@ -43,18 +59,45 @@ export class LineScan extends VuexModule {
   setLine({
     points,
     isComplete,
+    ownerViewerId = null,
   }: {
     points: IGeoJSPosition[];
     isComplete: boolean;
+    ownerViewerId?: number | null;
   }) {
     this.points = points;
     this.isComplete = isComplete;
+    this.ownerViewerId = ownerViewerId;
   }
 
   @Mutation
   clearLine() {
     this.points = null;
     this.isComplete = false;
+    this.ownerViewerId = null;
+  }
+
+  @Mutation
+  viewerMounted() {
+    this.viewerCount++;
+  }
+
+  // A viewer going away clears the line only if it drew it (its displayed
+  // line and segment start go with it), and the tool state only if it was
+  // the last viewer: the others still show the selected tool.
+  @Mutation
+  viewerUnmounted(viewerId: number) {
+    this.viewerCount = Math.max(0, this.viewerCount - 1);
+    const isLast = this.viewerCount === 0;
+    if (isLast || this.ownerViewerId === viewerId) {
+      this.points = null;
+      this.isComplete = false;
+      this.ownerViewerId = null;
+      this.segmentStartPlaced = false;
+    }
+    if (isLast) {
+      this.toolLineType = null;
+    }
   }
 
   @Mutation

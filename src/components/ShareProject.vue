@@ -102,8 +102,8 @@
                           item-value="value"
                           density="compact"
                           hide-details
-                          :loading="userLoading === user.id"
-                          :disabled="userLoading === user.id"
+                          :loading="isUserPending(user.id)"
+                          :disabled="isUserPending(user.id)"
                           @update:model-value="
                             confirmUpdateUserAccess(user, $event)
                           "
@@ -116,8 +116,8 @@
                           icon
                           size="small"
                           color="error"
-                          :loading="userLoading === user.id"
-                          :disabled="userLoading === user.id"
+                          :loading="isUserPending(user.id)"
+                          :disabled="isUserPending(user.id)"
                           @click="confirmRemoveUser(user)"
                         >
                           <v-icon size="small">mdi-close</v-icon>
@@ -228,6 +228,21 @@
   </v-dialog>
 </template>
 
+<script lang="ts">
+import { reactive } from "vue";
+
+// Sharing changes in flight on the server, keyed by what they change. Kept at
+// module level, like ShareDataset's utils/pendingMutations: a request keeps
+// running after its dialog closes, reopens or remounts, so the guard that
+// stops a second, overlapping change has to outlive the dialog session.
+const pendingChanges = reactive(new Set<string>());
+const changeKeys = {
+  public: (projectId: string) => `public:${projectId}`,
+  user: (projectId: string, userId: string) => `user:${projectId}:${userId}`,
+  addUser: (projectId: string) => `addUser:${projectId}`,
+};
+</script>
+
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import { isAxiosError } from "axios";
@@ -261,9 +276,22 @@ const noticeString = ref("");
 const isPublic = ref(false);
 const users = ref<IDatasetAccessUser[]>([]);
 
-const publicLoading = ref(false);
-const userLoading = ref<string | null>(null);
-const addUserLoading = ref(false);
+// In-progress state follows the requests (pendingChanges), not the dialog
+// session: resetState does not clear it.
+const publicLoading = computed(
+  () =>
+    !!props.project && pendingChanges.has(changeKeys.public(props.project.id)),
+);
+const addUserLoading = computed(
+  () =>
+    !!props.project && pendingChanges.has(changeKeys.addUser(props.project.id)),
+);
+function isUserPending(userId: string): boolean {
+  return (
+    !!props.project &&
+    pendingChanges.has(changeKeys.user(props.project.id, userId))
+  );
+}
 
 const newUserEmail = ref("");
 const newUserAccessLevel = ref(0);
@@ -274,8 +302,6 @@ const confirmMessage = ref("");
 const confirmColor = ref("primary");
 const confirmActionLabel = ref("Confirm");
 const pendingAction = ref<(() => Promise<void>) | null>(null);
-
-const userToRemove = ref<IDatasetAccessUser | null>(null);
 
 const accessLevelItems = [
   { text: "Read", value: 0 },
@@ -321,7 +347,24 @@ watch(dialog, (val) => {
   }
 });
 
+// The dialog's session, bumped by every reset (closing the dialog). Every
+// async handler captures claimDialog() when it starts and writes its result,
+// error or loading flag back only while the dialog still shows that session
+// and project: a late response must not land in a reopened dialog.
+let dialogGeneration = 0;
+
+function claimDialog(): () => boolean {
+  const generation = dialogGeneration;
+  const id = props.project?.id;
+  return () => generation === dialogGeneration && props.project?.id === id;
+}
+
+// Bumped per fetch and by every reset: only the latest fetch may write.
+let accessRequest = 0;
+
 function resetState() {
+  dialogGeneration++;
+  accessRequest++;
   loading.value = false;
   showError.value = false;
   errorString.value = "";
@@ -330,22 +373,53 @@ function resetState() {
   users.value = [];
   newUserEmail.value = "";
   newUserAccessLevel.value = 0;
-  userToRemove.value = null;
+  confirmDialog.value = false;
+  pendingAction.value = null;
+  // In-progress flags are not reset here: they follow the requests
+  // themselves (pendingChanges), which keep running on the server.
 }
 
 async function fetchAccessInfo(projectId: string) {
+  const request = ++accessRequest;
+  const isCurrent = claimDialog();
+  const isLatest = () => request === accessRequest && isCurrent();
   loading.value = true;
   showError.value = false;
   try {
     const accessList = await store.projectsAPI.getProjectAccess(projectId);
+    if (!isLatest()) return;
     isPublic.value = accessList.public;
     users.value = accessList.users;
   } catch (error) {
     logError(`Failed to fetch access info for project ${projectId}`, error);
+    if (!isLatest()) return;
     errorString.value = "Failed to load access information";
     showError.value = true;
   } finally {
-    loading.value = false;
+    if (isLatest()) {
+      loading.value = false;
+    }
+  }
+}
+
+// Runs a sharing change under its pending key. When the change settles after
+// its session ended (its result was dropped) and the dialog is open on the
+// same project, reload: the reopened dialog may have loaded mid-change.
+async function runChange(
+  key: string,
+  projectId: string,
+  change: (isCurrent: () => boolean) => Promise<void>,
+) {
+  if (pendingChanges.has(key)) return;
+  const isCurrent = claimDialog();
+  pendingChanges.add(key);
+  try {
+    await change(isCurrent);
+  } finally {
+    pendingChanges.delete(key);
+    if (!isCurrent() && dialog.value && props.project?.id === projectId) {
+      fetchAccessInfo(projectId);
+    }
   }
 }
 
@@ -371,10 +445,13 @@ function showConfirm(
 }
 
 async function executeConfirmedAction() {
+  // Consume the confirmation now: it is this click's, and another one may be
+  // confirmed while this action runs.
+  const action = pendingAction.value;
+  pendingAction.value = null;
   confirmDialog.value = false;
-  if (pendingAction.value) {
-    await pendingAction.value();
-    pendingAction.value = null;
+  if (action) {
+    await action();
   }
 }
 
@@ -423,29 +500,35 @@ function confirmTogglePublic(newValue: boolean | null) {
 
 async function togglePublic(newValue: boolean) {
   if (!props.project) return;
-  publicLoading.value = true;
-  showError.value = false;
-  try {
-    const { skipped } = await store.projectsAPI.setProjectPublic(
-      props.project.id,
-      newValue,
-    );
-    isPublic.value = newValue;
-    noticeString.value =
-      skipped === 1
-        ? "1 dataset, collection or view in this project that you don't " +
-          "own kept its own visibility."
-        : skipped > 1
-          ? `${skipped} datasets, collections or views in this project ` +
-            "that you don't own kept their own visibility."
-          : "";
-  } catch (error) {
-    logError("Failed to toggle public access", error);
-    errorString.value = "Failed to update public access";
-    showError.value = true;
-  } finally {
-    publicLoading.value = false;
-  }
+  const projectId = props.project.id;
+  await runChange(
+    changeKeys.public(projectId),
+    projectId,
+    async (isCurrent) => {
+      showError.value = false;
+      try {
+        const { skipped } = await store.projectsAPI.setProjectPublic(
+          projectId,
+          newValue,
+        );
+        if (!isCurrent()) return;
+        isPublic.value = newValue;
+        noticeString.value =
+          skipped === 1
+            ? "1 dataset, collection or view in this project that you don't " +
+              "own kept its own visibility."
+            : skipped > 1
+              ? `${skipped} datasets, collections or views in this project ` +
+                "that you don't own kept their own visibility."
+              : "";
+      } catch (error) {
+        logError("Failed to toggle public access", error);
+        if (!isCurrent()) return;
+        errorString.value = "Failed to update public access";
+        showError.value = true;
+      }
+    },
+  );
 }
 
 // --- Update user access level ---
@@ -465,31 +548,29 @@ function confirmUpdateUserAccess(user: IDatasetAccessUser, newLevel: number) {
 
 async function updateUserAccess(user: IDatasetAccessUser, newLevel: number) {
   if (!props.project) return;
-  userLoading.value = user.id;
-  showError.value = false;
-  try {
-    await store.projectsAPI.shareProject(
-      props.project.id,
-      user.login,
-      newLevel,
-    );
-    const userIndex = users.value.findIndex((u) => u.id === user.id);
-    if (userIndex >= 0) {
-      users.value[userIndex].level = newLevel as 0 | 1 | 2;
+  const projectId = props.project.id;
+  const key = changeKeys.user(projectId, user.id);
+  await runChange(key, projectId, async (isCurrent) => {
+    showError.value = false;
+    try {
+      await store.projectsAPI.shareProject(projectId, user.login, newLevel);
+      if (!isCurrent()) return;
+      const userIndex = users.value.findIndex((u) => u.id === user.id);
+      if (userIndex >= 0) {
+        users.value[userIndex].level = newLevel as 0 | 1 | 2;
+      }
+    } catch (error) {
+      logError("Failed to update user access", error);
+      if (!isCurrent()) return;
+      errorString.value = shareErrorMessage(error);
+      showError.value = true;
     }
-  } catch (error) {
-    logError("Failed to update user access", error);
-    errorString.value = shareErrorMessage(error);
-    showError.value = true;
-  } finally {
-    userLoading.value = null;
-  }
+  });
 }
 
 // --- Remove user ---
 
 function confirmRemoveUser(user: IDatasetAccessUser) {
-  userToRemove.value = user;
   showConfirm(
     "Remove Access",
     `Remove access for ${user.name || user.login}? ` +
@@ -497,26 +578,28 @@ function confirmRemoveUser(user: IDatasetAccessUser) {
       "collections in this project that you can share.",
     "Remove",
     "error",
-    () => removeUser(),
+    () => removeUser(user),
   );
 }
 
-async function removeUser() {
-  if (!userToRemove.value || !props.project) return;
-  const user = userToRemove.value;
-  userLoading.value = user.id;
-  showError.value = false;
-  try {
-    await store.projectsAPI.shareProject(props.project.id, user.login, -1);
-    users.value = users.value.filter((u) => u.id !== user.id);
-  } catch (error) {
-    logError("Failed to remove user access", error);
-    errorString.value = shareErrorMessage(error);
-    showError.value = true;
-  } finally {
-    userLoading.value = null;
-    userToRemove.value = null;
-  }
+async function removeUser(user: IDatasetAccessUser) {
+  if (!props.project) return;
+  const projectId = props.project.id;
+  // Same key as an access change: both rewrite this user's access.
+  const key = changeKeys.user(projectId, user.id);
+  await runChange(key, projectId, async (isCurrent) => {
+    showError.value = false;
+    try {
+      await store.projectsAPI.shareProject(projectId, user.login, -1);
+      if (!isCurrent()) return;
+      users.value = users.value.filter((u) => u.id !== user.id);
+    } catch (error) {
+      logError("Failed to remove user access", error);
+      if (!isCurrent()) return;
+      errorString.value = shareErrorMessage(error);
+      showError.value = true;
+    }
+  });
 }
 
 // --- Add user ---
@@ -537,24 +620,28 @@ function confirmAddUser() {
 
 async function addUser() {
   if (!newUserEmail.value || !props.project) return;
-  addUserLoading.value = true;
-  showError.value = false;
-  try {
-    await store.projectsAPI.shareProject(
-      props.project.id,
-      newUserEmail.value,
-      newUserAccessLevel.value,
-    );
-    await fetchAccessInfo(props.project.id);
-    newUserEmail.value = "";
-    newUserAccessLevel.value = 0;
-  } catch (error) {
-    logError("Failed to add user", error);
-    errorString.value = shareErrorMessage(error);
-    showError.value = true;
-  } finally {
-    addUserLoading.value = false;
-  }
+  const projectId = props.project.id;
+  const login = newUserEmail.value;
+  const level = newUserAccessLevel.value;
+  await runChange(
+    changeKeys.addUser(projectId),
+    projectId,
+    async (isCurrent) => {
+      showError.value = false;
+      try {
+        await store.projectsAPI.shareProject(projectId, login, level);
+        if (!isCurrent()) return;
+        newUserEmail.value = "";
+        newUserAccessLevel.value = 0;
+        await fetchAccessInfo(projectId);
+      } catch (error) {
+        logError("Failed to add user", error);
+        if (!isCurrent()) return;
+        errorString.value = shareErrorMessage(error);
+        showError.value = true;
+      }
+    },
+  );
 }
 
 defineExpose({
@@ -566,7 +653,7 @@ defineExpose({
   isPublic,
   users,
   publicLoading,
-  userLoading,
+  isUserPending,
   addUserLoading,
   newUserEmail,
   newUserAccessLevel,
@@ -576,7 +663,6 @@ defineExpose({
   confirmColor,
   confirmActionLabel,
   pendingAction,
-  userToRemove,
   accessLevelItems,
   accessLevelLabels,
   datasetCount,

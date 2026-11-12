@@ -555,7 +555,7 @@ Building a transient tool for an annotation step:
 ```ts
 function buildTransientTool(step: IAnnotationPipelineStep): IToolConfiguration {
   return {
-    id: step.id,                 // fine for jobIdForToolId bookkeeping
+    id: step.id,                 // fine for jobIdForToolInDataset bookkeeping
     name: step.name,
     hotkey: null,
     type: "segmentation",

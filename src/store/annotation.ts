@@ -738,13 +738,16 @@ export class Annotations extends VuexModule {
     }
 
     sync.setSaving(true);
-    const newAnnotation =
-      await this.annotationsAPI.createAnnotation(annotationBase);
-    if (newAnnotation) {
-      this.bumpMutationCounter();
+    try {
+      const newAnnotation =
+        await this.annotationsAPI.createAnnotation(annotationBase);
+      if (newAnnotation) {
+        this.bumpMutationCounter();
+      }
+      return newAnnotation;
+    } finally {
+      sync.setSaving(false);
     }
-    sync.setSaving(false);
-    return newAnnotation;
   }
 
   @Action
@@ -1138,13 +1141,16 @@ export class Annotations extends VuexModule {
       return [];
     }
     sync.setSaving(true);
-    const connections = await this.annotationsAPI.createConnections(
-      annotationsIds,
-      tags,
-      channelId,
-    );
-    sync.setSaving(false);
-    return connections;
+    try {
+      const connections = await this.annotationsAPI.createConnections(
+        annotationsIds,
+        tags,
+        channelId,
+      );
+      return connections;
+    } finally {
+      sync.setSaving(false);
+    }
   }
 
   @Action
@@ -1163,25 +1169,28 @@ export class Annotations extends VuexModule {
       return [];
     }
     sync.setSaving(true);
-    const connectionBases: IAnnotationConnectionBase[] = [];
-    for (const parentId of parentIds) {
-      for (const childId of childIds) {
-        connectionBases.push({
-          label,
-          tags,
-          parentId,
-          childId,
-          datasetId: main.dataset.id,
-        });
+    try {
+      const connectionBases: IAnnotationConnectionBase[] = [];
+      for (const parentId of parentIds) {
+        for (const childId of childIds) {
+          connectionBases.push({
+            label,
+            tags,
+            parentId,
+            childId,
+            datasetId: main.dataset.id,
+          });
+        }
       }
+      const connections =
+        await this.annotationsAPI.createMultipleConnections(connectionBases);
+      if (connections) {
+        this.addMultipleConnections(connections);
+      }
+      return connections || [];
+    } finally {
+      sync.setSaving(false);
     }
-    const connections =
-      await this.annotationsAPI.createMultipleConnections(connectionBases);
-    if (connections) {
-      this.addMultipleConnections(connections);
-    }
-    sync.setSaving(false);
-    return connections || [];
   }
 
   // Create connections from explicit parent/child pairs. Unlike
@@ -1235,16 +1244,21 @@ export class Annotations extends VuexModule {
     return await this.deleteConnections(connectionIds);
   }
 
-  @Action
+  // rawError: propagates the API's rejection through connectionList's
+  // deleteConnectionsById, which is rawError for the same reason.
+  @Action({ rawError: true })
   public async deleteConnections(connectionIds: string[]) {
     if (!main.isLoggedIn) {
       return;
     }
     sync.setSaving(true);
-    await this.annotationsAPI.deleteMultipleConnections(connectionIds);
-    this.deleteMultipleConnections(connectionIds);
-    sync.setSaving(false);
-    return connectionIds;
+    try {
+      await this.annotationsAPI.deleteMultipleConnections(connectionIds);
+      this.deleteMultipleConnections(connectionIds);
+      return connectionIds;
+    } finally {
+      sync.setSaving(false);
+    }
   }
 
   @Action
@@ -1266,13 +1280,16 @@ export class Annotations extends VuexModule {
       return null;
     }
     sync.setSaving(true);
-    const newConnection: IAnnotationConnection | null =
-      await this.annotationsAPI.createConnection(annotationConnectionBase);
-    if (newConnection) {
-      this.addMultipleConnections([newConnection]);
+    try {
+      const newConnection: IAnnotationConnection | null =
+        await this.annotationsAPI.createConnection(annotationConnectionBase);
+      if (newConnection) {
+        this.addMultipleConnections([newConnection]);
+      }
+      return newConnection;
+    } finally {
+      sync.setSaving(false);
     }
-    sync.setSaving(false);
-    return newConnection;
   }
 
   @Action
@@ -1283,27 +1300,35 @@ export class Annotations extends VuexModule {
       return null;
     }
     sync.setSaving(true);
-    const parentAnnotation = this.getAnnotationFromId(
-      annotationConnectionBase.parentId,
-    );
-    const childAnnotation = this.getAnnotationFromId(
-      annotationConnectionBase.childId,
-    );
-    // Make sure that the parentAnnotation.location.Time is less than the childAnnotation.location.Time
-    if (parentAnnotation && childAnnotation) {
-      if (parentAnnotation.location.Time > childAnnotation.location.Time) {
-        [annotationConnectionBase.parentId, annotationConnectionBase.childId] =
-          [annotationConnectionBase.childId, annotationConnectionBase.parentId];
+    try {
+      const parentAnnotation = this.getAnnotationFromId(
+        annotationConnectionBase.parentId,
+      );
+      const childAnnotation = this.getAnnotationFromId(
+        annotationConnectionBase.childId,
+      );
+      // Make sure that the parentAnnotation.location.Time is less than the childAnnotation.location.Time
+      if (parentAnnotation && childAnnotation) {
+        if (parentAnnotation.location.Time > childAnnotation.location.Time) {
+          [
+            annotationConnectionBase.parentId,
+            annotationConnectionBase.childId,
+          ] = [
+            annotationConnectionBase.childId,
+            annotationConnectionBase.parentId,
+          ];
+        }
       }
+      // TODO: Perhaps we want to delete any existing connections between these two annotations?
+      const newConnection: IAnnotationConnection | null =
+        await this.annotationsAPI.createConnection(annotationConnectionBase);
+      if (newConnection) {
+        this.addMultipleConnections([newConnection]);
+      }
+      return newConnection;
+    } finally {
+      sync.setSaving(false);
     }
-    // TODO: Perhaps we want to delete any existing connections between these two annotations?
-    const newConnection: IAnnotationConnection | null =
-      await this.annotationsAPI.createConnection(annotationConnectionBase);
-    if (newConnection) {
-      this.addMultipleConnections([newConnection]);
-    }
-    sync.setSaving(false);
-    return newConnection;
   }
 
   @Action
@@ -1322,106 +1347,108 @@ export class Annotations extends VuexModule {
       return [];
     }
     sync.setSaving(true);
+    try {
+      // Helper functions to calculate distance between annotations
+      const getDistanceBetweenAnnotations = (
+        a1: IAnnotation,
+        a2: IAnnotation,
+      ): number => {
+        const centroid1 = getAnnotationCentroid(a1);
+        const centroid2 = getAnnotationCentroid(a2);
 
-    // Helper functions to calculate distance between annotations
-    const getDistanceBetweenAnnotations = (
-      a1: IAnnotation,
-      a2: IAnnotation,
-    ): number => {
-      const centroid1 = getAnnotationCentroid(a1);
-      const centroid2 = getAnnotationCentroid(a2);
+        if (!centroid1 || !centroid2) {
+          return Infinity; // Return a large number if centroids can't be calculated
+        }
 
-      if (!centroid1 || !centroid2) {
-        return Infinity; // Return a large number if centroids can't be calculated
-      }
-
-      // Calculate Euclidean distance
-      const dx = centroid1.x - centroid2.x;
-      const dy = centroid1.y - centroid2.y;
-      return Math.sqrt(dx * dx + dy * dy);
-    };
-
-    // This calculates the "centroid", but is not the actual centroid;
-    // instead, it just averages the coordinates. Fine enough for our purposes for now.
-    // TODO: Use the actual centroid instead.
-    const getAnnotationCentroid = (
-      annotation: IAnnotation,
-    ): { x: number; y: number } | null => {
-      if (annotation.coordinates.length === 0) {
-        return null;
-      }
-
-      let sumX = 0;
-      let sumY = 0;
-
-      for (const coord of annotation.coordinates) {
-        sumX += coord.x;
-        sumY += coord.y;
-      }
-
-      return {
-        x: sumX / annotation.coordinates.length,
-        y: sumY / annotation.coordinates.length,
+        // Calculate Euclidean distance
+        const dx = centroid1.x - centroid2.x;
+        const dy = centroid1.y - centroid2.y;
+        return Math.sqrt(dx * dx + dy * dy);
       };
-    };
 
-    // 0. Remove all existing connections between the parent and child annotations
-    await this.deleteAllConnections({ parentIds, childIds });
+      // This calculates the "centroid", but is not the actual centroid;
+      // instead, it just averages the coordinates. Fine enough for our purposes for now.
+      // TODO: Use the actual centroid instead.
+      const getAnnotationCentroid = (
+        annotation: IAnnotation,
+      ): { x: number; y: number } | null => {
+        if (annotation.coordinates.length === 0) {
+          return null;
+        }
 
-    // 1. Collect all annotations into a single set
-    const allIds = new Set([...parentIds, ...childIds]);
-    const annotations = Array.from(allIds)
-      .map((id) => this.getAnnotationFromId(id))
-      .filter((a): a is IAnnotation => !!a);
+        let sumX = 0;
+        let sumY = 0;
 
-    // 2. Find closest temporal parent for each annotation
-    const connectionBases: IAnnotationConnectionBase[] = [];
+        for (const coord of annotation.coordinates) {
+          sumX += coord.x;
+          sumY += coord.y;
+        }
 
-    for (const annotation of annotations) {
-      const potentialParents = annotations.filter(
-        (a) => a.location.Time < annotation.location.Time,
-      );
+        return {
+          x: sumX / annotation.coordinates.length,
+          y: sumY / annotation.coordinates.length,
+        };
+      };
 
-      if (potentialParents.length > 0) {
-        // Find max time among potential parents
-        const maxParentTime = Math.max(
-          ...potentialParents.map((a) => a.location.Time),
+      // 0. Remove all existing connections between the parent and child annotations
+      await this.deleteAllConnections({ parentIds, childIds });
+
+      // 1. Collect all annotations into a single set
+      const allIds = new Set([...parentIds, ...childIds]);
+      const annotations = Array.from(allIds)
+        .map((id) => this.getAnnotationFromId(id))
+        .filter((a): a is IAnnotation => !!a);
+
+      // 2. Find closest temporal parent for each annotation
+      const connectionBases: IAnnotationConnectionBase[] = [];
+
+      for (const annotation of annotations) {
+        const potentialParents = annotations.filter(
+          (a) => a.location.Time < annotation.location.Time,
         );
-        const parentsAtMaxTime = potentialParents.filter(
-          (a) => a.location.Time === maxParentTime,
-        );
 
-        if (parentsAtMaxTime.length > 0) {
-          // Find closest parent by centroid distance
-          const parent = parentsAtMaxTime.reduce((closest, current) => {
-            const closestDist = getDistanceBetweenAnnotations(
-              closest,
-              annotation,
-            );
-            const currentDist = getDistanceBetweenAnnotations(
-              current,
-              annotation,
-            );
-            return currentDist < closestDist ? current : closest;
-          }, parentsAtMaxTime[0]);
+        if (potentialParents.length > 0) {
+          // Find max time among potential parents
+          const maxParentTime = Math.max(
+            ...potentialParents.map((a) => a.location.Time),
+          );
+          const parentsAtMaxTime = potentialParents.filter(
+            (a) => a.location.Time === maxParentTime,
+          );
 
-          connectionBases.push({
-            label,
-            tags,
-            parentId: parent.id,
-            childId: annotation.id,
-            datasetId: main.dataset.id,
-          });
+          if (parentsAtMaxTime.length > 0) {
+            // Find closest parent by centroid distance
+            const parent = parentsAtMaxTime.reduce((closest, current) => {
+              const closestDist = getDistanceBetweenAnnotations(
+                closest,
+                annotation,
+              );
+              const currentDist = getDistanceBetweenAnnotations(
+                current,
+                annotation,
+              );
+              return currentDist < closestDist ? current : closest;
+            }, parentsAtMaxTime[0]);
+
+            connectionBases.push({
+              label,
+              tags,
+              parentId: parent.id,
+              childId: annotation.id,
+              datasetId: main.dataset.id,
+            });
+          }
         }
       }
+      const connections =
+        await this.annotationsAPI.createMultipleConnections(connectionBases);
+      if (connections) {
+        this.addMultipleConnections(connections);
+      }
+      return connections || [];
+    } finally {
+      sync.setSaving(false);
     }
-    const connections =
-      await this.annotationsAPI.createMultipleConnections(connectionBases);
-    if (connections) {
-      this.addMultipleConnections(connections);
-    }
-    sync.setSaving(false);
-    return connections || [];
   }
 
   @Mutation
@@ -1458,12 +1485,12 @@ export class Annotations extends VuexModule {
     this.setDeletingState(true);
     sync.setSaving(true);
 
-    const progressId = await progress.create({
-      type: ProgressType.ANNOTATION_DELETE,
-      title: "Deleting annotations",
-    });
-
+    let progressId: string | null = null;
     try {
+      progressId = await progress.create({
+        type: ProgressType.ANNOTATION_DELETE,
+        title: "Deleting annotations",
+      });
       await this.annotationsAPI.deleteMultipleAnnotations(ids);
       this.bumpMutationCounter();
 
@@ -1506,7 +1533,9 @@ export class Annotations extends VuexModule {
       // Always set the state back to false, even if there's an error
       sync.setSaving(false);
       this.setDeletingState(false);
-      progress.complete(progressId);
+      if (progressId !== null) {
+        progress.complete(progressId);
+      }
     }
   }
 
@@ -1725,7 +1754,9 @@ export class Annotations extends VuexModule {
     this.setAnnotationsAtIndices(updates);
   }
 
-  @Action
+  // rawError: propagates updateAnnotationsPerId's rejection, and the AI
+  // agent reports error.message (errors re-wrap at every @Action boundary).
+  @Action({ rawError: true })
   public async addTagsByAnnotationIds({
     annotationIds,
     tags,
@@ -1745,7 +1776,9 @@ export class Annotations extends VuexModule {
     await this.updateAnnotationsPerId({ annotationIds, editFunction });
   }
 
-  @Action
+  // rawError: propagates updateAnnotationsPerId's rejection, and the AI
+  // agent reports error.message (errors re-wrap at every @Action boundary).
+  @Action({ rawError: true })
   public async replaceTagsByAnnotationIds({
     annotationIds,
     tags,
@@ -1759,7 +1792,9 @@ export class Annotations extends VuexModule {
     await this.updateAnnotationsPerId({ annotationIds, editFunction });
   }
 
-  @Action
+  // rawError: propagates updateAnnotationsPerId's rejection, and the AI
+  // agent reports error.message (errors re-wrap at every @Action boundary).
+  @Action({ rawError: true })
   public async removeTagsByAnnotationIds({
     annotationIds,
     tags,
@@ -1818,7 +1853,9 @@ export class Annotations extends VuexModule {
     });
   }
 
-  @Action
+  // rawError: propagates updateAnnotationsPerId's rejection, and the AI
+  // agent reports error.message (errors re-wrap at every @Action boundary).
+  @Action({ rawError: true })
   public async colorAnnotationIds({
     color,
     annotationIds,
@@ -2122,8 +2159,8 @@ export class Annotations extends VuexModule {
       return false;
     }
 
-    sync.setSaving(true);
-
+    // No sync bracket here: each step reports its own save, and an outer
+    // "done" would clear the error a failed step just reported.
     try {
       // Step 1: Update the first annotation with the union coordinates
       await this.updateAnnotationsPerId({
@@ -2214,8 +2251,6 @@ export class Annotations extends VuexModule {
     } catch (error) {
       logError(`Failed to combine annotations: ${(error as Error).message}`);
       return false;
-    } finally {
-      sync.setSaving(false);
     }
   }
 
@@ -2354,32 +2389,42 @@ export class Annotations extends VuexModule {
     // Clear errors
     error.errors = [];
 
-    // Create a progress entry using the new progress store
-    const progressId = await progress.create({
-      type: ProgressType.ANNOTATION_COMPUTE,
-      title: `Computing ${tool.name}`,
-    });
+    // Every way out of the submission must call back, or the caller's
+    // "running" state never ends: a rejected request reports failure too.
+    let progressId: string | undefined;
+    let jobId: string | undefined;
+    try {
+      // Create a progress entry using the new progress store
+      progressId = await progress.create({
+        type: ProgressType.ANNOTATION_COMPUTE,
+        title: `Computing ${tool.name}`,
+      });
 
-    const { location, channel } =
-      await this.getAnnotationLocationFromTool(tool);
-    const tile = { ...location };
-    const response = await this.annotationsAPI.computeAnnotationWithWorker(
-      tool,
-      main.dataset,
-      {
-        location,
-        channel,
-        tile,
-      },
-      workerInterface,
-      main.layers,
-      main.scales,
-    );
+      const { location, channel } =
+        await this.getAnnotationLocationFromTool(tool);
+      const tile = { ...location };
+      const response = await this.annotationsAPI.computeAnnotationWithWorker(
+        tool,
+        main.dataset,
+        {
+          location,
+          channel,
+          tile,
+        },
+        workerInterface,
+        main.layers,
+        main.scales,
+      );
+      jobId = response.data[0]?._id;
+    } catch (submitError) {
+      logError(`Failed to start ${tool.name}`, submitError);
+    }
 
     // Keep track of running jobs
-    const jobId = response.data[0]?._id;
-    if (!jobId) {
-      progress.complete(progressId);
+    if (!jobId || !progressId) {
+      if (progressId) {
+        progress.complete(progressId);
+      }
       callback(false);
       return null;
     }
@@ -2402,24 +2447,31 @@ export class Annotations extends VuexModule {
       errorCallback: createErrorEventCallback(error),
     };
 
+    const jobProgressId = progressId;
     jobs.addJob(computeJob).then(async (success: boolean) => {
-      // Awaited: `callback` consumers (the AI panel's wait_for_job among them)
-      // read annotation state as soon as they are told the worker finished, so
-      // the refresh must complete before the callback fires. fetchAnnotations
-      // handles its own errors and never rejects.
-      await this.fetchAnnotations();
-      // If this was a worker that makes a new large_image, this line will load it
-      // I'm pretty sure this function won't reload the large image if it's already loaded
-      const newLargeImage = await main.loadLargeImages(true); // true means switch to the new large image
-      if (newLargeImage) {
-        // If the computation resulted in at least one new large image, we need to compute the tile frames, max merge cache, and histogram cache
-        main.scheduleTileFramesComputation(datasetId);
-        main.scheduleMaxMergeCache(datasetId);
-        main.scheduleHistogramCache(datasetId);
+      try {
+        // Awaited: `callback` consumers (the AI panel's wait_for_job among
+        // them) read annotation state as soon as they are told the worker
+        // finished, so the refresh must complete before the callback fires.
+        // fetchAnnotations handles its own errors and never rejects.
+        await this.fetchAnnotations();
+        // If this was a worker that makes a new large_image, this line will load it
+        // I'm pretty sure this function won't reload the large image if it's already loaded
+        const newLargeImage = await main.loadLargeImages(true); // true means switch to the new large image
+        if (newLargeImage) {
+          // If the computation resulted in at least one new large image, we need to compute the tile frames, max merge cache, and histogram cache
+          main.scheduleTileFramesComputation(datasetId);
+          main.scheduleMaxMergeCache(datasetId);
+          main.scheduleHistogramCache(datasetId);
+        }
+        // TODO: We may also want to fetch connections and properties here, depending on flags set in the worker image
+      } catch (refreshError) {
+        // The job's own outcome still stands; only the refresh failed.
+        logError(`Failed to refresh after ${tool.name}`, refreshError);
+      } finally {
+        progress.complete(jobProgressId);
+        callback(success);
       }
-      // TODO: We may also want to fetch connections and properties here, depending on flags set in the worker image
-      progress.complete(progressId);
-      callback(success);
     });
 
     return computeJob;
@@ -2431,7 +2483,9 @@ export class Annotations extends VuexModule {
   // caller (e.g. the pipeline runner) drives those once for the whole run.
   // Reads the worker interface values from tool.values.workerInterfaceValues,
   // so transient tools built by the pipeline runner work without extra args.
-  @Action
+  // rawError: a rejected submit propagates, and the pipeline runner shows it
+  // ("Failed to submit job: ...").
+  @Action({ rawError: true })
   public async submitAnnotationWorkerJob({
     tool,
     datasetId,
@@ -2479,7 +2533,9 @@ export class Annotations extends VuexModule {
     return { job: computeJob, completionPromise };
   }
 
-  @Action
+  // rawError: a failed dataset listing propagates to the worker menu, which
+  // logs it.
+  @Action({ rawError: true })
   public async computeAnnotationsWithWorkerBatch({
     tool,
     workerInterface,
@@ -2592,13 +2648,14 @@ export class Annotations extends VuexModule {
       const datasetProgressInfo: IProgressInfo = {};
       const datasetErrorInfo: IErrorInfoList = { errors: [] };
 
-      // Create a progress entry for this specific dataset
-      const datasetProgressId = await progress.create({
-        type: ProgressType.ANNOTATION_COMPUTE,
-        title: `${tool.name}: ${datasetName}`,
-      });
-
+      let datasetProgressId: string | undefined;
       try {
+        // Create a progress entry for this specific dataset
+        datasetProgressId = await progress.create({
+          type: ProgressType.ANNOTATION_COMPUTE,
+          title: `${tool.name}: ${datasetName}`,
+        });
+
         // Submit the job for this dataset
         const result = await this.submitWorkerJobForDataset({
           tool,
@@ -2632,7 +2689,9 @@ export class Annotations extends VuexModule {
       } catch (error) {
         logError(`Failed to process dataset ${datasetName}: ${error}`);
         failed++;
-        progress.complete(datasetProgressId);
+        if (datasetProgressId) {
+          progress.complete(datasetProgressId);
+        }
       }
 
       // Update batch progress
@@ -2656,14 +2715,19 @@ export class Annotations extends VuexModule {
     // Refresh annotations for the currently viewed dataset
     this.fetchAnnotations();
 
-    // Handle any new large images created by the worker
+    // Handle any new large images created by the worker. A failure here
+    // must not keep onComplete from reporting the jobs' outcome.
     const currentDatasetId = main.dataset?.id;
     if (currentDatasetId) {
-      const newLargeImage = await main.loadLargeImages(true);
-      if (newLargeImage) {
-        main.scheduleTileFramesComputation(currentDatasetId);
-        main.scheduleMaxMergeCache(currentDatasetId);
-        main.scheduleHistogramCache(currentDatasetId);
+      try {
+        const newLargeImage = await main.loadLargeImages(true);
+        if (newLargeImage) {
+          main.scheduleTileFramesComputation(currentDatasetId);
+          main.scheduleMaxMergeCache(currentDatasetId);
+          main.scheduleHistogramCache(currentDatasetId);
+        }
+      } catch (refreshError) {
+        logError(`Failed to refresh after batch ${tool.name}`, refreshError);
       }
     }
 
@@ -2672,7 +2736,9 @@ export class Annotations extends VuexModule {
     return { cancel, jobs: submittedJobs };
   }
 
-  @Action
+  // rawError: a rejected submit propagates to the batch loop, which logs it
+  // per dataset.
+  @Action({ rawError: true })
   private async submitWorkerJobForDataset({
     tool,
     workerInterface,

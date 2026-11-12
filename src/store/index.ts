@@ -39,6 +39,7 @@ import { getLayerImages, getLayerSliceIndexes } from "./images";
 import jobs from "./jobs";
 import { jobStates } from "./jobConstants";
 import progress from "./progress";
+import { resetBatchRuns } from "./batchRuns";
 
 import {
   IDataset,
@@ -361,6 +362,71 @@ let recentDatasetViewsRequestId = 0;
 // setDatasetViewId calls, counted so only the latest one applies its view:
 // an earlier view's fetch can resolve after a later one's.
 let datasetViewNavigation = 0;
+// GET dataset_view/<id> requests in flight, by token and id, so concurrent
+// readers share one: a fresh page load of a view fetches it from the route
+// mapper's setDatasetViewId and from BreadCrumbs at the same time. Keyed by
+// token too, so a request made for one session never answers another's.
+const datasetViewRequests = new Map<string, Promise<IDatasetView>>();
+// The latest setDatasetViewId while it fetches its view, before it has
+// started (or decided against) a dataset load. datasetLoading must stay set
+// through that window even if another dataset load settles inside it.
+let navigationFetchingView: number | null = null;
+// setSelectedDataset / setSelectedConfiguration calls, counted so only the
+// latest one commits: an earlier fetch can resolve after a later one's, and
+// left unguarded it would pair one navigation's dataset with another's view.
+// The pending entry is the latest call's target until it settles, and
+// `settled` resolves when that call returns. A call that skips its own load
+// because one of the same target is pending (setDatasetViewId), or that is
+// superseded by a load of the same target, awaits it: so a resolved call
+// means its target is loaded, unless a different target overtook it (then
+// it resolves once its own fetch returns, without waiting for the newer
+// load).
+interface IPendingSelection<T> {
+  id: T;
+  settled: Promise<void>;
+}
+let datasetSelection = 0;
+let pendingDatasetSelection: IPendingSelection<string | null> | null = null;
+let configurationSelection = 0;
+let pendingConfigurationSelection: IPendingSelection<string> | null = null;
+
+function pendingSelection<T>(id: T) {
+  let settle!: () => void;
+  const settled = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  return { pending: { id, settled } as IPendingSelection<T>, settle };
+}
+
+// The newer selection that superseded one for `id`, if it loads the same
+// target: awaiting it is what loading `id` now means.
+async function awaitSameTargetSelection<T>(
+  newer: IPendingSelection<T> | null,
+  id: T,
+) {
+  if (newer && newer.id === id) {
+    await newer.settled;
+  }
+}
+
+// The dataset a "reload what is selected" call (login, unroll toggle) should
+// load: the one being switched to while a switch is in flight. Reloading
+// selectedDatasetId then would supersede the switch with the outgoing dataset.
+function datasetSelectionTarget(selectedId: string | null) {
+  return pendingDatasetSelection ? pendingDatasetSelection.id : selectedId;
+}
+
+function configurationSelectionTarget(selectedId: string | null) {
+  return pendingConfigurationSelection?.id ?? selectedId;
+}
+
+// datasetLoading ends only once no dataset load and no view fetch that may
+// start one is in flight, so whichever settles last clears it.
+function releaseDatasetLoading() {
+  if (pendingDatasetSelection === null && navigationFetchingView === null) {
+    sync.setDatasetLoading(false);
+  }
+}
 
 // Annotation-browser persistence bookkeeping. Module-level rather than Vuex
 // state because the debounce timer is never read by the UI.
@@ -1598,9 +1664,12 @@ export class Main extends VuexModule {
     } else {
       this.setAssetstores([]);
     }
+    // Reload with the new credentials what is selected, or being switched to.
     promises.push(
-      this.setSelectedConfiguration(this.selectedConfigurationId),
-      this.setSelectedDataset(this.selectedDatasetId),
+      this.setSelectedConfiguration(
+        configurationSelectionTarget(this.selectedConfigurationId),
+      ),
+      this.setSelectedDataset(datasetSelectionTarget(this.selectedDatasetId)),
       this.fetchRecentDatasetViews(!this.isAdmin),
     );
     // Initialize notification websocket as soon as the user has logged in because
@@ -1649,14 +1718,27 @@ export class Main extends VuexModule {
     this.authRestored = true;
   }
 
+  // Everything that describes the previous session: its user's locations and
+  // recent views, and the dataset, view, image and tool that were open. The
+  // per-dataset modules (annotations, properties, filters) are reset by the
+  // setSelectedDataset(null) that follows in logout.
   @Mutation
   protected loggedOut() {
     this.girderUser = null;
     this.userStorageInfo = null;
+    this.folderLocation = { type: "users" };
+    this.assetstores = [];
+    this.recentDatasetViews = [];
+    this.history = [];
     this.selectedDatasetId = null;
     this.dataset = null;
     this.selectedConfigurationId = null;
     this.configuration = null;
+    this.datasetView = null;
+    this.pendingCameraDeepLink = null;
+    this.currentLargeImage = null;
+    this.allLargeImages = [];
+    this.selectedTool = null;
     this.hasUserLoggedOut = true;
   }
 
@@ -1755,11 +1837,21 @@ export class Main extends VuexModule {
   ): Promise<IGirderLargeImage | null> {
     if (!this.dataset?.id) return null;
 
+    // Claimed before any await: the images belong to this dataset only. A
+    // switch (or a logout) while they load supersedes the call; it must not
+    // write one dataset's images over another's. Overlapping calls for the
+    // same dataset all apply, so a worker refresh that switches to its new
+    // image is not dropped by a plain reload that started after it.
+    const datasetId = this.dataset.id;
+    const isCurrent = () => this.dataset?.id === datasetId;
+
     const oldAllLargeImages = this.allLargeImages;
 
-    const newAllLargeImages = await this.girderResources.getAllLargeImages(
-      this.dataset.id,
-    );
+    const newAllLargeImages =
+      await this.girderResources.getAllLargeImages(datasetId);
+    if (!isCurrent()) {
+      return null;
+    }
 
     if (newAllLargeImages) {
       // Find all large_image items that are in newAllLargeImages but not in oldAllLargeImages
@@ -1777,9 +1869,18 @@ export class Main extends VuexModule {
           return null;
         }
       } else {
-        if (newAllLargeImages.length > 0 && !this.currentLargeImage) {
+        // The held image may be another dataset's (it is not reset on a
+        // switch), so it only stands if it is one of this dataset's images.
+        const heldImageId = this.currentLargeImage?._id;
+        if (
+          newAllLargeImages.length > 0 &&
+          !newAllLargeImages.some((img) => img._id === heldImageId)
+        ) {
           const currentLargeImage =
-            await this.girderResources.getCurrentLargeImage(this.dataset.id);
+            await this.girderResources.getCurrentLargeImage(datasetId);
+          if (!isCurrent()) {
+            return null;
+          }
           if (currentLargeImage) {
             this.setCurrentLargeImage(currentLargeImage);
             return currentLargeImage;
@@ -2024,7 +2125,20 @@ export class Main extends VuexModule {
     } catch (error) {
       sync.setSaving(error as Error);
     }
+    // Loads started for the previous session are stale: none may commit
+    // after the reset below. setSelectedDataset(null) claims the dataset
+    // token, resets the per-dataset modules and releases datasetLoading,
+    // which no superseded load will clear. (loadLargeImages and
+    // fetchUserStorageInfo check the dataset and user they started for.)
+    ++datasetViewNavigation;
+    navigationFetchingView = null;
+    ++configurationSelection;
+    pendingConfigurationSelection = null;
+    ++recentDatasetViewsRequestId;
     this.loggedOut();
+    // The previous session's batch runs (their jobs keep running server-side)
+    resetBatchRuns();
+    await this.setSelectedDataset(null);
   }
 
   @Mutation
@@ -2213,7 +2327,10 @@ export class Main extends VuexModule {
       }
       // The login is settled here; dataset loading below can take long.
       this.setAuthRestored();
-      await this.initFromUrl();
+      // loggedIn has already reloaded the selected dataset and configuration.
+      if (!user) {
+        await this.initFromUrl();
+      }
       sync.setLoading(false);
     } catch (error) {
       this.setAuthRestored();
@@ -2240,17 +2357,25 @@ export class Main extends VuexModule {
   @Action
   private async initFromUrl() {
     // Note, removed the check for isLoggedIn to allow anonymous users to access datasets
-    if (this.selectedDatasetId) {
-      await this.setSelectedDataset(this.selectedDatasetId);
+    const datasetId = datasetSelectionTarget(this.selectedDatasetId);
+    if (datasetId) {
+      await this.setSelectedDataset(datasetId);
     }
-    if (this.selectedConfigurationId && this.dataset) {
-      await this.setSelectedConfiguration(this.selectedConfigurationId);
+    const configurationId = configurationSelectionTarget(
+      this.selectedConfigurationId,
+    );
+    if (configurationId && this.dataset) {
+      await this.setSelectedConfiguration(configurationId);
     }
   }
 
   @Action
   public async refreshDataset() {
-    await this.setSelectedDataset(this.selectedDatasetId);
+    // During a switch, reload the incoming dataset (with the current unroll
+    // flags), not the outgoing one.
+    await this.setSelectedDataset(
+      datasetSelectionTarget(this.selectedDatasetId),
+    );
   }
 
   @Action
@@ -2287,8 +2412,8 @@ export class Main extends VuexModule {
     // Components & BreadCrumbs can start using Girder API).
     this.api.client.token = restClient.token;
 
+    // Also reloads the selected dataset and configuration.
     await this.loggedIn(restClient);
-    await this.initFromUrl();
   }
 
   // rawError: true because the catch below turns the server's response into a
@@ -2353,76 +2478,113 @@ export class Main extends VuexModule {
   @Action
   async setSelectedDataset(id: string | null) {
     memDiag.autoSnapshot(`setSelectedDataset:enter id=${id ?? "null"}`);
-    // this.dataset still holds the previously selected dataset here (setDataset
-    // runs later), so this detects a genuine switch vs. a same-dataset refresh.
-    const datasetChanged = id !== this.dataset?.id;
-    if (datasetChanged) {
-      // Save the pending location while this.dataset still matches the view.
-      // Callers like Dataset.vue switch datasets without replacing the view,
-      // and once the new dataset lands the save is rejected as a mismatch.
-      // Not awaited: its state reads and commit run synchronously here.
-      this.flushLastLocationInDatasetView();
-    }
-    // Persist any pending annotation-browser change before the resets below
-    // wipe the state it would capture.
-    await this.flushAnnotationBrowserSave();
-    this.api.flushCaches();
-    this.context.dispatch("resetAnnotationState");
-    this.context.dispatch("resetPropertyState");
-    // Connection-list selection/hover/expansion reference ids from the
-    // outgoing dataset. Dispatched by name (actions register unnamespaced) to
-    // avoid an import cycle with the connectionList module, which imports main.
-    this.context.dispatch("resetConnectionListState");
-    // Filters hold unrecoverable user state (tag/property/ROI/ID filters), so
-    // only reset them on an actual dataset change. refreshDataset() re-runs
-    // setSelectedDataset with the same id (e.g. NavigatorPanel unroll toggles);
-    // wiping filters there would discard the user's active filters. The
-    // annotation/property resets above are safe to run every time because they
-    // are repopulated by the reload that follows.
-    if (datasetChanged) {
-      this.context.dispatch("resetFilterState");
-      // Track bounds and the object-hiding opt-in are unrecoverable user
-      // state like the filters above; the unconditional connection-list reset
-      // deliberately leaves them alone.
-      this.context.dispatch("resetConnectionTrackFilters");
-    }
-    if (!id) {
-      this.setDataset({ id, data: null });
-      memDiag.autoSnapshot("setSelectedDataset:exit (null)");
-      return;
-    }
+    // Claimed before any await or early return: a later selection supersedes
+    // this one even if this one's fetch resolves last.
+    const selection = ++datasetSelection;
+    const { pending, settle } = pendingSelection(id);
+    pendingDatasetSelection = pending;
+    const isLatest = () => selection === datasetSelection;
     try {
+      // this.dataset still holds the previously selected dataset here (setDataset
+      // runs later), so this detects a genuine switch vs. a same-dataset refresh.
+      const datasetChanged = id !== this.dataset?.id;
+      if (datasetChanged) {
+        // Save the pending location while this.dataset still matches the view.
+        // Callers like Dataset.vue switch datasets without replacing the view,
+        // and once the new dataset lands the save is rejected as a mismatch.
+        // Not awaited: its state reads and commit run synchronously here.
+        this.flushLastLocationInDatasetView();
+      }
+      // Persist any pending annotation-browser change before the resets below
+      // wipe the state it would capture.
+      try {
+        await this.flushAnnotationBrowserSave();
+      } catch (error) {
+        // Rejects without loading, as before; just don't leave this selection
+        // pending, which would hold datasetLoading for good.
+        if (isLatest()) {
+          pendingDatasetSelection = null;
+          releaseDatasetLoading();
+        }
+        throw error;
+      }
+      if (!isLatest()) {
+        // The newer selection runs the resets and the load.
+        await awaitSameTargetSelection(pendingDatasetSelection, id);
+        return;
+      }
+      this.api.flushCaches();
+      this.context.dispatch("resetAnnotationState");
+      this.context.dispatch("resetPropertyState");
+      // Connection-list selection/hover/expansion reference ids from the
+      // outgoing dataset. Dispatched by name (actions register unnamespaced) to
+      // avoid an import cycle with the connectionList module, which imports main.
+      this.context.dispatch("resetConnectionListState");
+      // Filters hold unrecoverable user state (tag/property/ROI/ID filters), so
+      // only reset them on an actual dataset change. refreshDataset() re-runs
+      // setSelectedDataset with the same id (e.g. NavigatorPanel unroll toggles);
+      // wiping filters there would discard the user's active filters. The
+      // annotation/property resets above are safe to run every time because they
+      // are repopulated by the reload that follows (the one exception, the
+      // status of a property run still in flight, is kept by the reset).
+      if (datasetChanged) {
+        this.context.dispatch("resetFilterState");
+        // Track bounds and the object-hiding opt-in are unrecoverable user
+        // state like the filters above; the unconditional connection-list reset
+        // deliberately leaves them alone.
+        this.context.dispatch("resetConnectionTrackFilters");
+      }
+      if (!id) {
+        this.setDataset({ id, data: null });
+        pendingDatasetSelection = null;
+        releaseDatasetLoading();
+        memDiag.autoSnapshot("setSelectedDataset:exit (null)");
+        return;
+      }
       sync.setLoading(true); // For the Girder activity indicator
       sync.setDatasetLoading(true); // For the dataset loading overlay
-      const unroll = {
-        unrollXY: this.unrollXY,
-        unrollZ: this.unrollZ,
-        unrollT: this.unrollT,
-      };
-      const r = await this.context.dispatch("getDataset", { id, ...unroll });
-      this.setDataset({ id, data: r, unroll });
-      // Before datasetLoading clears: location setters skip their own clamp
-      // while it is set (see locationDataset), so this is where a location
-      // requested for this dataset first meets its dimensions.
-      this.clampLocationToDatasetImpl();
-      await this.loadLargeImages();
-      // setConfiguration only re-fires when the configuration changes; on a
-      // same-dataset refresh (unroll toggles) or a switch that keeps the same
-      // configuration, re-hydrate here to restore the browser state the
-      // resets above wiped.
-      this.hydrateAnnotationBrowserState();
-      sync.setLoading(false);
-      sync.setDatasetLoading(false);
-    } catch (error) {
-      sync.setLoading(error as Error);
-      sync.setDatasetLoading(false);
+      try {
+        const unroll = {
+          unrollXY: this.unrollXY,
+          unrollZ: this.unrollZ,
+          unrollT: this.unrollT,
+        };
+        const r = await this.context.dispatch("getDataset", { id, ...unroll });
+        if (isLatest()) {
+          this.setDataset({ id, data: r, unroll });
+          // Before datasetLoading clears: location setters skip their own
+          // clamp while it is set (see locationDataset), so this is where a
+          // location requested for this dataset first meets its dimensions.
+          this.clampLocationToDatasetImpl();
+          await this.loadLargeImages();
+        }
+        if (isLatest()) {
+          // setConfiguration only re-fires when the configuration changes; on
+          // a same-dataset refresh (unroll toggles) or a switch that keeps the
+          // same configuration, re-hydrate here to restore the browser state
+          // the resets above wiped.
+          this.hydrateAnnotationBrowserState();
+        }
+        sync.setLoading(false);
+      } catch (error) {
+        sync.setLoading(error as Error);
+      }
+      if (!isLatest()) {
+        // Superseded: the newer selection owns datasetLoading and the save.
+        await awaitSameTargetSelection(pendingDatasetSelection, id);
+        return;
+      }
+      pendingDatasetSelection = null;
+      releaseDatasetLoading();
+      // Persist a location the clamp above corrected. Refreshes outside a view
+      // load (unroll toggles, large-image changes) have no other save; a save
+      // that came due mid-load was dropped by its loading guard. A no-op when
+      // the location equals the saved lastLocation.
+      this.updateLastLocationInDatasetView();
+      memDiag.autoSnapshot(`setSelectedDataset:exit id=${id}`);
+    } finally {
+      settle();
     }
-    // Persist a location the clamp above corrected. Refreshes outside a view
-    // load (unroll toggles, large-image changes) have no other save; a save
-    // that came due mid-load was dropped by its loading guard. A no-op when
-    // the location equals the saved lastLocation.
-    this.updateLastLocationInDatasetView();
-    memDiag.autoSnapshot(`setSelectedDataset:exit id=${id}`);
   }
 
   @Action
@@ -2431,28 +2593,50 @@ export class Main extends VuexModule {
     // Needed to view public datasets even as anonymous
     // Note also that this does get called before the user is logged in with a null id,
     // so we need to return early if the id is null.
+    // A null id selects nothing, so it does not supersede a pending load.
     if (id === null) {
       return;
     }
+    // Claimed before any await: only the latest selection commits, even if
+    // an earlier one's fetch resolves last.
+    const selection = ++configurationSelection;
+    const { pending, settle } = pendingSelection(id);
+    pendingConfigurationSelection = pending;
+    const isLatest = () => selection === configurationSelection;
+    sync.setLoading(true);
     try {
-      sync.setLoading(true);
       const configuration = await this.context.dispatch("getConfiguration", id);
-      // Flush any pending annotation-browser save while the previous
-      // configuration is still loaded.
-      // setConfiguration below flips this.configuration to the new one, after
-      // which the debounced save would write to the wrong configuration. This
-      // matters for same-dataset configuration switches within the 500 ms
-      // debounce window, which never pass through setSelectedDataset.
-      await this.flushAnnotationBrowserSave();
-      if (!configuration) {
-        this.setConfiguration({ id: null, data: null });
-      } else {
-        this.setConfiguration({ id, data: configuration });
+      if (isLatest()) {
+        // Flush any pending annotation-browser save while the previous
+        // configuration is still loaded.
+        // setConfiguration below flips this.configuration to the new one,
+        // after which the debounced save would write to the wrong
+        // configuration. This matters for same-dataset configuration
+        // switches within the 500 ms debounce window, which never pass
+        // through setSelectedDataset.
+        await this.flushAnnotationBrowserSave();
+      }
+      if (isLatest()) {
+        if (!configuration) {
+          this.setConfiguration({ id: null, data: null });
+        } else {
+          this.setConfiguration({ id, data: configuration });
+        }
       }
       sync.setLoading(false);
     } catch (error) {
       sync.setLoading(error as Error);
+    } finally {
+      if (isLatest()) {
+        pendingConfigurationSelection = null;
+      }
     }
+    // The catch above takes every failure, so this always runs. (The awaited
+    // promise never rejects.)
+    if (!isLatest()) {
+      await awaitSameTargetSelection(pendingConfigurationSelection, id);
+    }
+    settle();
   }
 
   @Action
@@ -2477,17 +2661,20 @@ export class Main extends VuexModule {
     if (!id) {
       this.setDatasetViewImpl(null);
       // An overtaken load returns without clearing datasetLoading (the
-      // newest navigation owns it), so this one must.
-      sync.setDatasetLoading(false);
+      // newest navigation owns it), so this one must, unless a dataset load
+      // is still in flight (it clears it when it settles).
+      navigationFetchingView = null;
+      releaseDatasetLoading();
     } else {
       // Set datasetLoading immediately BEFORE any async work.
       // Without this, the first await yields to the microtask queue,
       // pending watchers fire, and draw() renders stale tiles because
       // datasetLoading is still false.
       sync.setDatasetLoading(true);
+      navigationFetchingView = navigation;
       let datasetView: IDatasetView;
       try {
-        datasetView = await this.api.getDatasetView(id);
+        datasetView = await this.fetchDatasetView(id);
       } catch (err) {
         if (navigation !== datasetViewNavigation) {
           // Overtaken: the newer navigation owns datasetLoading.
@@ -2498,7 +2685,8 @@ export class Main extends VuexModule {
           `Failed to fetch dataset view ${id}.\nIt may be because it has been deleted or that you don't have the access is forbidden.\n`,
           err,
         );
-        sync.setDatasetLoading(false);
+        navigationFetchingView = null;
+        releaseDatasetLoading();
         return;
       }
       if (navigation !== datasetViewNavigation) {
@@ -2543,14 +2731,32 @@ export class Main extends VuexModule {
         ),
       );
 
-      if (this.dataset?.id !== datasetView.datasetId) {
+      // Compared with what is loaded, or being loaded: a load still in flight
+      // for another id (an overtaken navigation's, or a direct dataset
+      // switch) would otherwise land after this view and replace its pair.
+      // When a load of the same id is already in flight, wait for it instead,
+      // so this resolves once the view's dataset and configuration are in.
+      if (
+        datasetSelectionTarget(this.dataset?.id ?? null) !==
+        datasetView.datasetId
+      ) {
         promises.push(this.setSelectedDataset(datasetView.datasetId));
+      } else if (pendingDatasetSelection) {
+        promises.push(pendingDatasetSelection.settled);
       }
-      if (this.configuration?.id !== datasetView.configurationId) {
+      if (
+        configurationSelectionTarget(this.configuration?.id ?? null) !==
+        datasetView.configurationId
+      ) {
         promises.push(
           this.setSelectedConfiguration(datasetView.configurationId),
         );
+      } else if (pendingConfigurationSelection) {
+        promises.push(pendingConfigurationSelection.settled);
       }
+      // Any dataset load this view needs has started (and holds
+      // datasetLoading itself).
+      navigationFetchingView = null;
       await Promise.all(promises);
       if (navigation !== datasetViewNavigation) {
         // Overtaken while its dataset loaded: the newer navigation owns the
@@ -2565,8 +2771,9 @@ export class Main extends VuexModule {
         this.clampLocationToDatasetImpl();
       }
       // Ensure datasetLoading is cleared even if setSelectedDataset wasn't called
-      // (e.g., same dataset, different config/view settings)
-      sync.setDatasetLoading(false);
+      // (e.g., same dataset, different config/view settings), unless a
+      // dataset load started elsewhere is still in flight.
+      releaseDatasetLoading();
       // Persist a location the clamp corrected, so the view stops reopening
       // out of range. A no-op when it equals the saved lastLocation.
       this.updateLastLocationInDatasetView();
@@ -2576,6 +2783,25 @@ export class Main extends VuexModule {
   @Mutation
   setDatasetViewImpl(datasetView: IDatasetView | null) {
     this.datasetView = datasetView;
+  }
+
+  /**
+   * GET one dataset view, sharing a request already in flight for the same
+   * id and token. Each caller gets its own copy: setDatasetViewId stores and
+   * edits the one it receives. rawError: true so a 403/404 reaches callers
+   * as the original error.
+   */
+  @Action({ rawError: true })
+  async fetchDatasetView(id: string): Promise<IDatasetView> {
+    const key = `${this.girderRest.token}\u0000${id}`;
+    let request = datasetViewRequests.get(key);
+    if (!request) {
+      request = this.api.getDatasetView(id).finally(() => {
+        datasetViewRequests.delete(key);
+      });
+      datasetViewRequests.set(key, request);
+    }
+    return { ...(await request) };
   }
 
   @Action
@@ -2838,6 +3064,7 @@ export class Main extends VuexModule {
           );
         }
       }
+      sync.setSaving(false);
       return itemId;
     } catch (error) {
       sync.setSaving(error as Error);
@@ -2925,6 +3152,10 @@ export class Main extends VuexModule {
     // (and because anonymous users should not access history)
     if (this.isLoggedIn && datasetId !== undefined) {
       const history = await this.api.getHistoryEntries(datasetId);
+      // A dataset switch or a logout while it loaded: not this one's history.
+      if (this.dataset?.id !== datasetId || !this.isLoggedIn) {
+        return;
+      }
       this.setHistory(history);
     } else {
       this.setHistory([]);
@@ -3408,8 +3639,11 @@ export class Main extends VuexModule {
       () => undefined,
     );
     directColorByPropertyWrites.set(configurationId, chained);
+    // Paired with the catch below: the indicator counts saves in flight.
+    sync.setSaving(true);
     try {
       await write;
+      sync.setSaving(false);
     } catch (error) {
       sync.setSaving(error as Error);
     } finally {

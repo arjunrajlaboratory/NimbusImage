@@ -270,6 +270,7 @@ import annotationListServer from "@/store/annotationListServer";
 import progressStore from "@/store/progress";
 import { ProgressType } from "@/store/model";
 import { logWarning } from "@/utils/log";
+import geojs from "geojs";
 import ImageViewer from "./ImageViewer.vue";
 
 const mockedStore = vi.mocked(store);
@@ -789,7 +790,7 @@ describe("ImageViewer", () => {
         initialMouseEvent: new MouseEvent("mousedown"),
       };
 
-      const evt = new MouseEvent("mousemove", {});
+      const evt = new MouseEvent("mousemove", { buttons: 1 });
       Object.defineProperty(evt, "x", { value: 100 });
       Object.defineProperty(evt, "y", { value: 150 });
       const stopPropagation = vi.spyOn(evt, "stopPropagation");
@@ -851,6 +852,103 @@ describe("ImageViewer", () => {
       };
       (wrapper.vm as any).mouseLeave();
       expect((wrapper.vm as any).mouseState).not.toBeNull();
+    });
+
+    // Shift-capture: every end is either an explicit commit or a cancel
+    function startCapture() {
+      const target = document.createElement("div");
+      target.getBoundingClientRect = vi.fn().mockReturnValue({ x: 0, y: 0 });
+      const state = {
+        isMouseMovePreviewState: false,
+        mapEntry: mockedStore.maps[0],
+        target,
+        path: [{ x: 0, y: 0 }],
+        initialMouseEvent: new MouseEvent("mousedown"),
+      };
+      (wrapper.vm as any).mouseState = state;
+      // The reactive proxy the AnnotationViewer receives as its old state
+      return (wrapper.vm as any).mouseState;
+    }
+
+    it("mouseUp ends the capture as an explicit commit", () => {
+      const state = startCapture();
+      (wrapper.vm as any).mouseUp(new MouseEvent("mouseup"));
+      expect(state.outcome).toBe("commit");
+      expect((wrapper.vm as any).mouseState).toBeNull();
+    });
+
+    it("a release outside the map commits the capture", () => {
+      const state = startCapture();
+      document.body.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      expect(state.outcome).toBe("commit");
+      expect((wrapper.vm as any).mouseState).toBeNull();
+    });
+
+    it("commits a release over an empty cell of the map grid", () => {
+      const state = startCapture();
+      wrapper
+        .find(".map-layout")
+        .element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      expect(state.outcome).toBe("commit");
+      expect((wrapper.vm as any).mouseState).toBeNull();
+    });
+
+    it("leaves a release over the map to the map's own mouseup handler", () => {
+      const state = startCapture();
+      const mapLayout = wrapper.find(".map-layout").element;
+      const inside = document.createElement("div");
+      mapLayout.appendChild(inside);
+      // The window capture listener sees it first; it must not end the
+      // capture (mouseUp does, and also stops the event reaching GeoJS)
+      inside.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      expect(state.outcome).toBeUndefined();
+      expect((wrapper.vm as any).mouseState).not.toBeNull();
+    });
+
+    it("cancels a capture whose button was released while away, without blocking pan or hover", () => {
+      const state = startCapture();
+      const target = document.createElement("div");
+      target.getBoundingClientRect = vi.fn().mockReturnValue({ x: 0, y: 0 });
+      const evt = new MouseEvent("mousemove", { buttons: 0 });
+      Object.defineProperty(evt, "target", { value: target });
+      const stopPropagation = vi.spyOn(evt, "stopPropagation");
+
+      (wrapper.vm as any).mouseMove(evt, 0);
+
+      expect(state.outcome).toBe("cancel");
+      expect(state.path).toHaveLength(1);
+      expect(stopPropagation).not.toHaveBeenCalled();
+      expect((wrapper.vm as any).mouseState.isMouseMovePreviewState).toBe(true);
+    });
+
+    it("cancels the capture when the window loses focus", () => {
+      const state = startCapture();
+      window.dispatchEvent(new Event("blur"));
+      expect(state.outcome).toBe("cancel");
+      expect((wrapper.vm as any).mouseState).toBeNull();
+    });
+
+    it("cancels the capture when its map entry is replaced", async () => {
+      const state = startCapture();
+      mockedStore.maps = [
+        { map: mockMap(), imageLayers: [], params: {} } as any,
+      ];
+      await nextTick();
+      expect(state.outcome).toBe("cancel");
+      expect((wrapper.vm as any).mouseState).toBeNull();
+    });
+
+    it("removes its window listeners on unmount", () => {
+      const removeSpy = vi.spyOn(window, "removeEventListener");
+      wrapper.unmount();
+      wrapper = undefined as any;
+      expect(removeSpy).toHaveBeenCalledWith(
+        "mouseup",
+        expect.any(Function),
+        true,
+      );
+      expect(removeSpy).toHaveBeenCalledWith("blur", expect.any(Function));
+      removeSpy.mockRestore();
     });
   });
 
@@ -1062,6 +1160,21 @@ describe("ImageViewer", () => {
       expect(interactor.options).toHaveBeenCalledWith({ actions: [] });
     });
 
+    it("locks a map created while the view is locked", () => {
+      mockedStore.layerStackImages = [createLayerStackImage()];
+      (wrapper.vm as any).toggleViewLock();
+      const created = vi.mocked(geojs.map).mock.results.length;
+
+      // e.g. a dataset change resets the map
+      (wrapper.vm as any)._setupMap(0, createLayerStackImage().images[0], true);
+
+      const newMaps = vi.mocked(geojs.map).mock.results.slice(created);
+      expect(newMaps).toHaveLength(1);
+      expect(newMaps[0].value.interactor().options).toHaveBeenCalledWith({
+        actions: [],
+      });
+    });
+
     it("unlock restores default actions", () => {
       (wrapper.vm as any).toggleViewLock(); // lock
       const savedActions = (wrapper.vm as any).defaultActions;
@@ -1211,6 +1324,66 @@ describe("ImageViewer", () => {
       (wrapper.vm as any).readyLayers.splice(0, 1, true);
       await nextTick();
       expect((wrapper.vm as any).readyLayersCount).toBe(1);
+    });
+
+    it("ignores a replaced layer going idle after a map reset", async () => {
+      // Layers that stay busy: GeoJS queues onIdle handlers until idle
+      const busyLayers: any[] = [];
+      vi.mocked(geojs.map).mockImplementation(() => {
+        const map = mockMap();
+        map.createLayer.mockImplementation(() => {
+          const layer: any = mockLayer();
+          layer.idle = false;
+          layer.idleHandlers = [];
+          layer.onIdle = vi.fn((cb: Function) => {
+            if (layer.idle) cb();
+            else layer.idleHandlers.push(cb);
+          });
+          busyLayers.push(layer);
+          return layer;
+        });
+        return map;
+      });
+      try {
+        mockedStore.layerStackImages = [createLayerStackImage()];
+        wrapper = mountComponent();
+        const oldImageLayers = [...(wrapper.vm as any).maps[0].imageLayers];
+        expect(oldImageLayers).toHaveLength(2);
+        expect((wrapper.vm as any).readyLayers).toEqual([false]);
+
+        // A map reset replaces the map and its layers; the new ones load
+        await wrapper.setProps({ shouldResetMaps: true });
+        const newImageLayers = (wrapper.vm as any).maps[0].imageLayers;
+        expect(
+          newImageLayers.some((l: any) => oldImageLayers.includes(l)),
+        ).toBe(false);
+
+        // The replaced layers finish their old work
+        for (const layer of oldImageLayers) {
+          layer.idle = true;
+          layer.idleHandlers.splice(0).forEach((cb: Function) => cb());
+        }
+        await nextTick();
+        expect((wrapper.vm as any).readyLayers).toEqual([false]);
+        expect((wrapper.vm as any).layersReady).toBe(false);
+        expect(wrapper.emitted("layers-ready")).toBeUndefined();
+
+        // The current layers going idle still mark the layer ready. Every
+        // other busy layer goes idle too: another viewer reacting to the
+        // shared store mock may have replaced the store's map entry.
+        const currentLayers = busyLayers.filter(
+          (layer) => !oldImageLayers.includes(layer),
+        );
+        currentLayers.forEach((layer) => (layer.idle = true));
+        for (const layer of currentLayers) {
+          layer.idleHandlers.splice(0).forEach((cb: Function) => cb());
+        }
+        await nextTick();
+        expect((wrapper.vm as any).readyLayers).toEqual([true]);
+        expect(wrapper.emitted("layers-ready")).toHaveLength(1);
+      } finally {
+        vi.mocked(geojs.map).mockImplementation(() => mockMap());
+      }
     });
 
     it("maps array itself remains reactive", async () => {

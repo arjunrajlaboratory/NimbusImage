@@ -185,16 +185,16 @@ describe("runPipeline", () => {
       },
     );
 
-    const completes: Array<[number, boolean]> = [];
+    const completes: Array<[number, string]> = [];
     const result = await pipelinesStore.runPipeline({
       pipeline: pipeline([annotationStep("a"), annotationStep("b")]),
-      onStepComplete: (i, ok) => completes.push([i, ok]),
+      onStepComplete: (i, status) => completes.push([i, status]),
     });
 
     expect(order).toEqual(["a", "b"]);
     expect(completes).toEqual([
-      [0, true],
-      [1, true],
+      [0, "success"],
+      [1, "success"],
     ]);
     expect(result.succeeded).toBe(2);
     expect(result.failed).toBe(0);
@@ -289,11 +289,13 @@ describe("runPipeline", () => {
       }),
     );
 
+    const completes: Array<[number, string]> = [];
     const runPromise = pipelinesStore.runPipeline({
       pipeline: pipeline([annotationStep("a"), annotationStep("b")]),
       onCancel: (c) => {
         cancelFn = c;
       },
+      onStepComplete: (i, status) => completes.push([i, status]),
     });
 
     // Let the first submit resolve and currentJob get assigned.
@@ -306,6 +308,11 @@ describe("runPipeline", () => {
     // Second step counted as cancelled, not submitted.
     expect(h.annotations.submitAnnotationWorkerJob).toHaveBeenCalledTimes(1);
     expect(result.cancelled).toBeGreaterThanOrEqual(1);
+    // The runner reports the cancellation itself: no caller-side flag needed.
+    expect(completes).toEqual([
+      [0, "cancelled"],
+      [1, "cancelled"],
+    ]);
   });
 
   it("returns an empty result with no enabled steps", async () => {
@@ -728,6 +735,52 @@ describe("runPipelineBatch", () => {
     expect(h.main.api.batchResources).not.toHaveBeenCalled();
     expect(h.annotations.submitAnnotationWorkerJob).not.toHaveBeenCalled();
     expect(pipelinesStore.runningPipelineId).toBeNull();
+  });
+
+  it("takes the run lock before looking up the collection's datasets", async () => {
+    let resolveViews!: (views: any[]) => void;
+    h.main.api.findDatasetViews.mockReturnValueOnce(
+      new Promise((resolve) => (resolveViews = resolve)),
+    );
+
+    const batch = pipelinesStore.runPipelineBatch({
+      pipeline: pipeline([annotationStep("a")]),
+      configurationId: "cfg1",
+    });
+
+    // Still waiting for the dataset lookup: Run must already be locked.
+    expect(pipelinesStore.runningPipelineId).toBe("pipe1");
+    resolveViews([]);
+    await batch;
+    expect(pipelinesStore.runningPipelineId).toBeNull();
+  });
+
+  it("releases the run lock when the dataset lookup rejects", async () => {
+    h.main.api.findDatasetViews.mockRejectedValueOnce(new Error("offline"));
+
+    await expect(
+      pipelinesStore.runPipelineBatch({
+        pipeline: pipeline([annotationStep("a")]),
+        configurationId: "cfg1",
+      }),
+    ).rejects.toThrow("offline");
+
+    expect(pipelinesStore.runningPipelineId).toBeNull();
+  });
+
+  it("releases the run lock when the dataset name lookup rejects", async () => {
+    h.main.api.findDatasetViews.mockResolvedValue([{ datasetId: "d1" }]);
+    h.main.api.batchResources.mockRejectedValueOnce(new Error("offline"));
+
+    await expect(
+      pipelinesStore.runPipelineBatch({
+        pipeline: pipeline([annotationStep("a")]),
+        configurationId: "cfg1",
+      }),
+    ).rejects.toThrow("offline");
+
+    expect(pipelinesStore.runningPipelineId).toBeNull();
+    expect(h.progress.complete).not.toHaveBeenCalled();
   });
 
   it("clears batch running state when a child persistence step fails", async () => {
