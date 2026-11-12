@@ -3147,6 +3147,25 @@ describe("Snapshots.vue", () => {
       expect(vi.mocked(store.setTime).mock.calls.at(-1)?.[0]).toBe(3);
     });
 
+    it("stops stepping the time once another view has opened", async () => {
+      const originalView = (store as any).datasetView;
+      // The old map still answers its screenshot after the navigation.
+      captureMap.screenshot.mockImplementationOnce(async () => {
+        (store as any).datasetView = { id: "view2", datasetId: "dataset2" };
+        return "data:image/png;base64,abc";
+      });
+      try {
+        const { error } = await capture();
+        expect(error?.message).toBe("the view changed during the capture");
+        // Frame 0 only: frame 1 and the restore belong to the view it left.
+        expect(vi.mocked(store.setTime).mock.calls.map((c) => c[0])).toEqual([
+          0,
+        ]);
+      } finally {
+        (store as any).datasetView = originalView;
+      }
+    });
+
     it("leaves the time alone when another view opened during the capture", async () => {
       const originalView = (store as any).datasetView;
       captureMap.screenshot.mockImplementationOnce(async () => {

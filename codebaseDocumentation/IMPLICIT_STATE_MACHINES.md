@@ -493,6 +493,15 @@ preferred a finished job the menu still remembered over the run in flight;
 and the movie capture restored its time point into whichever view was open.
 All fixed, with tests.
 
+Checking those four live (2026-11-12) confirmed three and showed the fourth
+was understated. Codex assumed a navigation makes the capture reject; live,
+the old map kept answering, so the loop carried on calling `setTime` in the
+new view for every remaining frame. The loop now stops when its view is no
+longer current. Note for next time: the Browser pane was not displayed, so
+`requestAnimationFrame` never fired and the capture hung until it was
+replaced with a timer before the capture started; the checks were driven
+with scripted clicks for the same reason.
+
 Independent review of the whole diff (three fresh-context reviewers, one per
 area) found no High findings and one Medium, the import dialog's file spinner
 sticking after an invalid file (a regression from this branch's own parse
@@ -688,6 +697,10 @@ Jobs and runs:
 - A cleanup that restores a value restores it only where it was captured
   (found by Codex):
   *"leaves the time alone when another view opened during the capture"*
+- A loop that steps the viewer stops when the view it started in is gone
+  (found live: the old map keeps answering screenshots, so the capture went
+  on setting the time of the new view for every remaining frame):
+  *"stops stepping the time once another view has opened"*
 
 Upload flow:
 

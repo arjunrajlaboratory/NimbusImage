@@ -2456,13 +2456,25 @@ async function getUrlsForMovieWithAnnotations(
   const originalTime = store.time;
   const originalDatasetId = store.dataset?.id;
   const originalViewId = store.datasetView?.id;
+  const isOriginalView = () =>
+    store.dataset?.id === originalDatasetId &&
+    store.datasetView?.id === originalViewId;
+  // The old map keeps answering screenshots after a navigation, so nothing
+  // else stops the loop: it would step the time of whichever view is open.
+  const stopIfViewChanged = () => {
+    if (!isOriginalView()) {
+      throw new Error("the view changed during the capture");
+    }
+  };
   try {
     for (let i = 0; i < timePoints.length; i++) {
       const timePoint = timePoints[i];
 
+      stopIfViewChanged();
       store.setTime(timePoint);
 
       await waitForRenderingComplete();
+      stopIfViewChanged();
 
       const visibleLayers = map
         .layers()
@@ -2532,10 +2544,7 @@ async function getUrlsForMovieWithAnnotations(
     progress.complete(progressId);
     // Only where it was captured: after a navigation mid-capture this time
     // belongs to another view, and setting it there would be saved there.
-    if (
-      store.dataset?.id === originalDatasetId &&
-      store.datasetView?.id === originalViewId
-    ) {
+    if (isOriginalView()) {
       store.setTime(originalTime);
     }
   }
