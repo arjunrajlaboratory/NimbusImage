@@ -485,6 +485,14 @@ It also surfaced two older gaps the branch's doc had papered over: property
 run state was wiped by every dataset switch, and a multi-property batch
 followed the user into another collection. All fixed, with tests.
 
+A Codex CLI review of the committed branch found four more, all consequences
+of this branch's own fixes: keying the worker menu by tool lost the only
+record of a submission in flight (a duplicate run); keeping in-flight
+property statuses across navigation also kept them across logout; Cancel
+preferred a finished job the menu still remembered over the run in flight;
+and the movie capture restored its time point into whichever view was open.
+All fixed, with tests.
+
 Independent review of the whole diff (three fresh-context reviewers, one per
 area) found no High findings and one Medium, the import dialog's file spinner
 sticking after an invalid file (a regression from this branch's own parse
@@ -663,6 +671,23 @@ Jobs and runs:
 - A tool whose batch is running is busy everywhere, not only in its menu:
   *"does not start a worker whose batch over the collection is running"*,
   *"shows the tool busy while its batch over the collection runs"*
+- A single tool run is held in the store from the request, so replacing the
+  tool's menu before the submission is answered cannot start it twice
+  (found by Codex):
+  *"marks the run in flight from the request until the job settles"*,
+  *"ends the run when the worker request rejects or the job cannot be tracked"*,
+  *"is in flight for its user, dataset and tool until every run ends"*,
+  *"is running while a run another menu instance requested is unanswered"*,
+  *"does not start a worker whose run from the menu is still being submitted"*
+- Cancel stops the run in flight, never a finished job the menu still
+  remembers (found by Codex):
+  *"cancels the tracked job, not a finished job this menu submitted"*,
+  *"does not cancel a finished job when nothing is running"*
+- State kept across navigation is still dropped at logout (found by Codex):
+  *"drops the previous session's property run locks"*
+- A cleanup that restores a value restores it only where it was captured
+  (found by Codex):
+  *"leaves the time alone when another view opened during the capture"*
 
 Upload flow:
 

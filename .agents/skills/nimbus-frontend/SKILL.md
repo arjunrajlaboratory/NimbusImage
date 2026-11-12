@@ -1094,6 +1094,21 @@ sequence tokens:
   own requests: "anything pending anywhere" let an unrelated URL write
   cancel a view switch started by a snapshot.
 
+Three more, found by a Codex review of fixes that were each correct alone:
+
+- Adding a `:key` (or `v-if`) so a component's state does not carry over
+  also throws away its in-flight flags. Before remounting, move every
+  "request sent, no answer yet" flag into a store: the worker menu's
+  `localRunning` was the only record of a submission until the job was
+  tracked, so selecting another tool and coming back allowed a second run
+  (`toolRunsInFlight` in `jobs.ts`).
+- State deliberately kept across navigation (a run's status, a batch) must
+  still be dropped at logout, or keyed by user: the next account cannot read
+  the old job or hear it finish, so the lock never releases.
+- A `finally` that restores a value (a time point, a selection) restores it
+  only if the view it was captured in is still current, and "the job to
+  cancel" is the one in flight, not one a ref still remembers.
+
 ## Logging
 
 **Never use `console.log`, `console.warn`, or `console.error`** — eslint will reject them. `no-console` is an error only when `NODE_ENV=production`, which is how CI lints, so a plain local `pnpm lint:ci` won't flag them.

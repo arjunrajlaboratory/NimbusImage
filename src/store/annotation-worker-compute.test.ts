@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
     },
   },
   addJob: vi.fn(),
+  runsInFlight: [] as string[],
   progress: {
     create: vi.fn(),
     complete: vi.fn(),
@@ -44,7 +45,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./index", () => ({ default: mocks.main }));
 vi.mock("./sync", () => ({ default: { setSaving: vi.fn() } }));
 vi.mock("./jobs", () => ({
-  default: { addJob: (...args: any[]) => mocks.addJob(...args) },
+  default: {
+    addJob: (...args: any[]) => mocks.addJob(...args),
+    toolRunStarted: (key: string) => mocks.runsInFlight.push(key),
+    toolRunEnded: (key: string) =>
+      mocks.runsInFlight.splice(mocks.runsInFlight.indexOf(key), 1),
+  },
+  toolRunKey: (...parts: any[]) => parts.join(":"),
   createProgressEventCallback: () => () => {},
   createErrorEventCallback: () => () => {},
 }));
@@ -70,6 +77,8 @@ describe("worker compute actions report back on every path", () => {
   beforeEach(() => {
     mocks.main.dataset = { id: "ds-1" };
     mocks.main.configuration = { id: "config-1" };
+    mocks.runsInFlight.length = 0;
+    mocks.progress.complete.mockClear();
     mocks.progress.create.mockResolvedValue("progress-1");
     mocks.main.loadLargeImages.mockResolvedValue(false);
     mocks.main.annotationsAPI.computeAnnotationWithWorker.mockResolvedValue({
@@ -98,6 +107,59 @@ describe("worker compute actions report back on every path", () => {
     });
     expect(job).toBeNull();
     expect(callback).toHaveBeenCalledWith(false);
+    expect(mocks.progress.complete).toHaveBeenCalledWith("progress-1");
+  });
+
+  it("marks the run in flight from the request until the job settles", async () => {
+    let answerSubmit!: (response: any) => void;
+    mocks.main.annotationsAPI.computeAnnotationWithWorker.mockReturnValue(
+      new Promise((resolve) => (answerSubmit = resolve)),
+    );
+    let settleJob!: (success: boolean) => void;
+    mocks.addJob.mockReturnValue(
+      new Promise<boolean>((resolve) => (settleJob = resolve)),
+    );
+    const callback = vi.fn();
+    const submitted = annotationStore.computeAnnotationsWithWorker({
+      tool,
+      workerInterface: {},
+      progress: {},
+      error: { errors: [] },
+      callback,
+    });
+    // Before the submission is answered there is no tracked job, so this
+    // mark is all that says the run exists.
+    expect(mocks.runsInFlight).toEqual([":ds-1:tool-1"]);
+    answerSubmit({ data: [{ _id: "job-1" }] });
+    await submitted;
+    expect(mocks.runsInFlight).toEqual([":ds-1:tool-1"]);
+    mocks.main.configuration = null;
+    settleJob(true);
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(true));
+    expect(mocks.runsInFlight).toEqual([]);
+  });
+
+  it("ends the run when the worker request rejects or the job cannot be tracked", async () => {
+    mocks.main.annotationsAPI.computeAnnotationWithWorker.mockRejectedValueOnce(
+      new Error("POST failed"),
+    );
+    const run = () =>
+      annotationStore.computeAnnotationsWithWorker({
+        tool,
+        workerInterface: {},
+        progress: {},
+        error: { errors: [] },
+        callback,
+      });
+    const callback = vi.fn();
+    await run();
+    expect(mocks.runsInFlight).toEqual([]);
+
+    callback.mockClear();
+    mocks.addJob.mockRejectedValue(new Error("no notification stream"));
+    await run();
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(false));
+    expect(mocks.runsInFlight).toEqual([]);
     expect(mocks.progress.complete).toHaveBeenCalledWith("progress-1");
   });
 

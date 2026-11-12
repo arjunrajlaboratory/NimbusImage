@@ -233,6 +233,11 @@ vi.mock("@/store/jobs", () => ({
     jobIdForToolInDataset(toolId: string, datasetId: string | null) {
       return this.trackedToolJobs[String(datasetId)]?.[toolId] ?? null;
     },
+    // Runs requested but not tracked yet: { [datasetId]: toolId[] }
+    toolRunsInFlight: {} as Record<string, string[]>,
+    isToolRunInFlight(toolId: string, datasetId: string | null) {
+      return !!this.toolRunsInFlight[String(datasetId)]?.includes(toolId);
+    },
     // Tracked property jobs per dataset: { [datasetId]: { [propertyId]: jobId } }
     trackedPropertyJobs: {} as Record<string, Record<string, string>>,
     jobIdForPropertyInDataset(propertyId: string, datasetId: string | null) {
@@ -1152,6 +1157,28 @@ describe("executeAgentTool", () => {
     expect(result.alreadyRunning).toBe(true);
     expect(result.jobId).toBe("job42");
     expect(mockAnnotations.computeAnnotationsWithWorker).not.toHaveBeenCalled();
+  });
+
+  it("does not start a worker whose run from the menu is still being submitted", async () => {
+    mockMain.tools = [
+      { id: "t1", name: "Cellpose", values: { image: { image: "img:1" } } },
+    ];
+    // No job is tracked until the submission is answered
+    (mockJobs as any).toolRunsInFlight = { [mockMain.dataset.id]: ["t1"] };
+    try {
+      const { result } = await executeAgentTool(
+        "run_worker",
+        { toolId: "t1" },
+        context,
+      );
+      expect(result.started).toBe(false);
+      expect(result.alreadyRunning).toBe(true);
+      expect(
+        mockAnnotations.computeAnnotationsWithWorker,
+      ).not.toHaveBeenCalled();
+    } finally {
+      (mockJobs as any).toolRunsInFlight = {};
+    }
   });
 
   it("does not start a worker whose batch over the collection is running", async () => {

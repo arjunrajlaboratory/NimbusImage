@@ -425,6 +425,14 @@ export class Properties extends VuexModule {
     }
   }
 
+  // The previous session's runs: their jobs belong to another account, so
+  // this session can neither read them nor hear them finish, and a status
+  // kept "running" would block the property for good.
+  @Mutation
+  clearPropertyRunStatuses() {
+    this.propertyStatuses = {};
+  }
+
   @Mutation
   protected resetPropertyStateImpl() {
     propertyValuesGeneration++;

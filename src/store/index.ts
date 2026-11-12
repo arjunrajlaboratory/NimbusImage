@@ -2139,6 +2139,9 @@ export class Main extends VuexModule {
     // The previous session's batch runs (their jobs keep running server-side)
     resetBatchRuns();
     await this.setSelectedDataset(null);
+    // After the dataset reset, which keeps runs in flight across navigation.
+    // By name: the properties module imports this one.
+    this.context.commit("clearPropertyRunStatuses");
   }
 
   @Mutation

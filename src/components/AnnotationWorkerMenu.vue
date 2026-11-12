@@ -350,15 +350,27 @@ const currentJobId = computed(() => {
     : null;
 });
 
+// The store's run-in-flight mark covers a submission another instance of
+// this menu started and has not had answered yet: selecting another tool and
+// coming back replaces the menu, and the job is not tracked until then.
 const running = computed(
   () =>
-    localRunning.value || !!currentJobId.value || !!batchRun.value?.inFlight,
+    localRunning.value ||
+    !!currentJobId.value ||
+    !!batchRun.value?.inFlight ||
+    (!!props.tool &&
+      jobsStore.isToolRunInFlight(props.tool.id, store.dataset?.id ?? null)),
 );
 
-// The job Cancel stops: the one this instance submitted, else the tool's
-// tracked job (a run started before this menu mounted).
+// The job Cancel stops: the tool's tracked job on this dataset, else the one
+// this instance submitted while it is still running (the user may have moved
+// to another dataset). A finished local job is never the target: a later run
+// started elsewhere, by the agent say, is the one in flight.
 const cancellableJobId = computed(
-  () => currentJob.value?.jobId ?? currentJobId.value ?? null,
+  () =>
+    currentJobId.value ??
+    (localRunning.value ? currentJob.value?.jobId : null) ??
+    null,
 );
 
 const batchProgressPercent = computed(() => {

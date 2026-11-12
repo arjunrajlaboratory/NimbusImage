@@ -10,6 +10,7 @@ import store from "./root";
 import main from "./index";
 import sync from "./sync";
 import jobs, {
+  toolRunKey,
   createProgressEventCallback,
   createErrorEventCallback,
 } from "./jobs";
@@ -2389,6 +2390,11 @@ export class Annotations extends VuexModule {
     // Clear errors
     error.errors = [];
 
+    // Held in the store until the run settles: the caller's own "running"
+    // flag is lost if its component is replaced before the job is tracked.
+    const runKey = toolRunKey(main.girderUser?._id, datasetId, tool.id);
+    jobs.toolRunStarted(runKey);
+
     // Every way out of the submission must call back, or the caller's
     // "running" state never ends: a rejected request reports failure too.
     let progressId: string | undefined;
@@ -2425,6 +2431,7 @@ export class Annotations extends VuexModule {
       if (progressId) {
         progress.complete(progressId);
       }
+      jobs.toolRunEnded(runKey);
       callback(false);
       return null;
     }
@@ -2448,31 +2455,42 @@ export class Annotations extends VuexModule {
     };
 
     const jobProgressId = progressId;
-    jobs.addJob(computeJob).then(async (success: boolean) => {
-      try {
-        // Awaited: `callback` consumers (the AI panel's wait_for_job among
-        // them) read annotation state as soon as they are told the worker
-        // finished, so the refresh must complete before the callback fires.
-        // fetchAnnotations handles its own errors and never rejects.
-        await this.fetchAnnotations();
-        // If this was a worker that makes a new large_image, this line will load it
-        // I'm pretty sure this function won't reload the large image if it's already loaded
-        const newLargeImage = await main.loadLargeImages(true); // true means switch to the new large image
-        if (newLargeImage) {
-          // If the computation resulted in at least one new large image, we need to compute the tile frames, max merge cache, and histogram cache
-          main.scheduleTileFramesComputation(datasetId);
-          main.scheduleMaxMergeCache(datasetId);
-          main.scheduleHistogramCache(datasetId);
+    const endRun = (success: boolean) => {
+      progress.complete(jobProgressId);
+      jobs.toolRunEnded(runKey);
+      callback(success);
+    };
+    jobs.addJob(computeJob).then(
+      async (success: boolean) => {
+        try {
+          // Awaited: `callback` consumers (the AI panel's wait_for_job among
+          // them) read annotation state as soon as they are told the worker
+          // finished, so the refresh must complete before the callback fires.
+          // fetchAnnotations handles its own errors and never rejects.
+          await this.fetchAnnotations();
+          // If this was a worker that makes a new large_image, this line will load it
+          // I'm pretty sure this function won't reload the large image if it's already loaded
+          const newLargeImage = await main.loadLargeImages(true); // true means switch to the new large image
+          if (newLargeImage) {
+            // If the computation resulted in at least one new large image, we need to compute the tile frames, max merge cache, and histogram cache
+            main.scheduleTileFramesComputation(datasetId);
+            main.scheduleMaxMergeCache(datasetId);
+            main.scheduleHistogramCache(datasetId);
+          }
+          // TODO: We may also want to fetch connections and properties here, depending on flags set in the worker image
+        } catch (refreshError) {
+          // The job's own outcome still stands; only the refresh failed.
+          logError(`Failed to refresh after ${tool.name}`, refreshError);
+        } finally {
+          endRun(success);
         }
-        // TODO: We may also want to fetch connections and properties here, depending on flags set in the worker image
-      } catch (refreshError) {
-        // The job's own outcome still stands; only the refresh failed.
-        logError(`Failed to refresh after ${tool.name}`, refreshError);
-      } finally {
-        progress.complete(jobProgressId);
-        callback(success);
-      }
-    });
+      },
+      (trackingError) => {
+        // The job could not be tracked, so nothing will report its outcome.
+        logError(`Failed to track ${tool.name}`, trackingError);
+        endRun(false);
+      },
+    );
 
     return computeJob;
   }

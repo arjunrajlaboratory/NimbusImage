@@ -48,7 +48,8 @@ vi.mock("@/store/progress", () => ({
 
 vi.mock("@/utils/log", () => ({ logError: vi.fn(), logWarning: vi.fn() }));
 
-import jobs from "@/store/jobs";
+import jobs, { toolRunKey } from "@/store/jobs";
+import main from "@/store/index";
 
 const SUCCESS = 3;
 const ERROR = 4;
@@ -289,6 +290,30 @@ describe("jobs store: a property's running job", () => {
       expect(jobs.jobIdForPropertyInDataset("prop-2", "ds-a")).toBeNull();
     } finally {
       jobs.removeJobInfo("property-job");
+    }
+  });
+});
+
+describe("jobs store: a tool run requested but not tracked yet", () => {
+  it("is in flight for its user, dataset and tool until every run ends", () => {
+    const key = toolRunKey("user-1", "ds-a", "tool-1");
+    (main as any).girderUser = { _id: "user-1" };
+    try {
+      jobs.toolRunStarted(key);
+      jobs.toolRunStarted(key);
+      expect(jobs.isToolRunInFlight("tool-1", "ds-a")).toBe(true);
+      expect(jobs.isToolRunInFlight("tool-1", "ds-b")).toBe(false);
+      expect(jobs.isToolRunInFlight("tool-2", "ds-a")).toBe(false);
+      // The module outlives logout: the next account is not locked out
+      (main as any).girderUser = { _id: "user-2" };
+      expect(jobs.isToolRunInFlight("tool-1", "ds-a")).toBe(false);
+      (main as any).girderUser = { _id: "user-1" };
+      jobs.toolRunEnded(key);
+      expect(jobs.isToolRunInFlight("tool-1", "ds-a")).toBe(true);
+      jobs.toolRunEnded(key);
+      expect(jobs.isToolRunInFlight("tool-1", "ds-a")).toBe(false);
+    } finally {
+      delete (main as any).girderUser;
     }
   });
 });

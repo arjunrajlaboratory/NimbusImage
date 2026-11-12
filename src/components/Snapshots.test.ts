@@ -3146,6 +3146,24 @@ describe("Snapshots.vue", () => {
       expect(error?.message).toBe("lost context");
       expect(vi.mocked(store.setTime).mock.calls.at(-1)?.[0]).toBe(3);
     });
+
+    it("leaves the time alone when another view opened during the capture", async () => {
+      const originalView = (store as any).datasetView;
+      captureMap.screenshot.mockImplementationOnce(async () => {
+        (store as any).datasetView = { id: "view2", datasetId: "dataset2" };
+        throw new Error("map destroyed");
+      });
+      try {
+        const { error } = await capture();
+        expect(error?.message).toBe("map destroyed");
+        // Only the capture's own step: time 3 belongs to the view it left.
+        expect(vi.mocked(store.setTime).mock.calls.map((c) => c[0])).toEqual([
+          0,
+        ]);
+      } finally {
+        (store as any).datasetView = originalView;
+      }
+    });
   });
 
   describe("bounding-box overlay when the map goes away", () => {

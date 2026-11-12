@@ -1352,6 +1352,19 @@ async function runWorkerTool(
       },
     };
   }
+  // A run requested from the tool's menu whose submission has not been
+  // answered yet: there is no job id to wait for until it is.
+  if (tool && jobsStore.isToolRunInFlight(tool.id, dataset.id)) {
+    return {
+      result: {
+        started: false,
+        alreadyRunning: true,
+        note:
+          `A run of tool "${tool.name}" is being submitted. Try again in a ` +
+          "moment to get its job id instead of starting another run.",
+      },
+    };
+  }
   // Its "apply to all datasets" batch, as the tool's menu shows it: the
   // batch may not have reached this dataset yet, and would run it again.
   if (

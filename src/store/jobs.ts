@@ -154,6 +154,16 @@ interface IJobInfo {
   log: string;
 }
 
+// Scoped by user: this module outlives logout, and a run the previous
+// account started must not lock the tool for the next one.
+export function toolRunKey(
+  userId: string | undefined,
+  datasetId: string | null,
+  toolId: string,
+) {
+  return [userId, datasetId, toolId].join(":");
+}
+
 @Module({ dynamic: true, store, name: "jobs" })
 export class Jobs extends VuexModule {
   notificationSource: WebSocket | null = null;
@@ -176,6 +186,20 @@ export class Jobs extends VuexModule {
   toolJobOutcomes: {
     [toolId: string]: { scope: string; success: boolean };
   } = {};
+
+  // Single tool runs in flight, from the moment the run is requested until
+  // it settles, counted per user, dataset and tool. A job is only tracked
+  // (jobIdForToolInDataset) once its submission returns, and the tool's menu
+  // is replaced when another tool is selected, so until then nothing else
+  // records that the run exists.
+  toolRunsInFlight: { [key: string]: number } = {};
+
+  get isToolRunInFlight() {
+    return (toolId: string, datasetId: string | null): boolean =>
+      (this.toolRunsInFlight[
+        toolRunKey(main.girderUser?._id, datasetId, toolId)
+      ] ?? 0) > 0;
+  }
 
   // The completion promise for a tracked job, or undefined if the job is not
   // tracked — either it was never registered with addJob, or it already
@@ -310,6 +334,21 @@ export class Jobs extends VuexModule {
       await this.reconcileJobs([job.jobId]);
     }
     return successPromise;
+  }
+
+  @Mutation
+  toolRunStarted(key: string) {
+    this.toolRunsInFlight[key] = (this.toolRunsInFlight[key] ?? 0) + 1;
+  }
+
+  @Mutation
+  toolRunEnded(key: string) {
+    const remaining = (this.toolRunsInFlight[key] ?? 0) - 1;
+    if (remaining > 0) {
+      this.toolRunsInFlight[key] = remaining;
+    } else {
+      delete this.toolRunsInFlight[key];
+    }
   }
 
   @Mutation

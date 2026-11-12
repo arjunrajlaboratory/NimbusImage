@@ -23,6 +23,10 @@ vi.mock("@/store/jobs", async () => {
     trackedToolJobs: {} as Record<string, Record<string, string>>,
     jobIdForToolInDataset: (toolId: string, datasetId: string | null) =>
       jobs.trackedToolJobs[String(datasetId)]?.[toolId] ?? null,
+    // Runs requested but not tracked yet: { [datasetId]: toolId[] }
+    toolRunsInFlight: {} as Record<string, string[]>,
+    isToolRunInFlight: (toolId: string, datasetId: string | null) =>
+      !!jobs.toolRunsInFlight[String(datasetId)]?.includes(toolId),
     toolJobOutcomes: {} as Record<string, { scope: string; success: boolean }>,
     toolJobScope: "user:dataset:config",
     toolJobOutcome: (toolId: string) => {
@@ -116,6 +120,16 @@ describe("ToolItem", () => {
     (jobs as any).trackedToolJobs = { "ds-1": { "tool-1": "job-123" } };
     const wrapper = mountComponent();
     expect((wrapper.vm as any).isToolLoading).toBe(true);
+  });
+
+  it("isToolLoading is true while a run is being submitted", () => {
+    (jobs as any).toolRunsInFlight = { "ds-1": ["tool-1"] };
+    try {
+      const wrapper = mountComponent();
+      expect((wrapper.vm as any).isToolLoading).toBe(true);
+    } finally {
+      (jobs as any).toolRunsInFlight = {};
+    }
   });
 
   it("isToolLoading is false when selected", () => {

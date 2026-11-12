@@ -118,6 +118,7 @@ const isToolLoading = computed(() => {
   return (
     !isToolSelected.value &&
     (!!jobId.value ||
+      jobs.isToolRunInFlight(props.tool.id, store.dataset?.id ?? null) ||
       !!batchRuns.batchRun(
         "workerTool",
         store.selectedConfigurationId,

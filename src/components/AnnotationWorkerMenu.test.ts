@@ -64,6 +64,11 @@ vi.mock("@/store/jobs", () => ({
     jobIdForToolInDataset(toolId: string, datasetId: string | null) {
       return this.trackedToolJobs[String(datasetId)]?.[toolId] ?? null;
     },
+    // Runs requested but not tracked yet: { [datasetId]: toolId[] }
+    toolRunsInFlight: {} as Record<string, string[]>,
+    isToolRunInFlight(toolId: string, datasetId: string | null) {
+      return !!this.toolRunsInFlight[String(datasetId)]?.includes(toolId);
+    },
     getJobLog: vi.fn().mockReturnValue(""),
   },
 }));
@@ -381,9 +386,54 @@ describe("AnnotationWorkerMenu", () => {
   it("cancel calls api.cancelJob when currentJob has jobId", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
+    vm.localRunning = true;
     vm.currentJob = { jobId: "job-xyz", datasetId: "ds-1" };
     vm.cancel();
     expect(store.api.cancelJob).toHaveBeenCalledWith("job-xyz");
+  });
+
+  it("cancels the tracked job, not a finished job this menu submitted", () => {
+    // This menu's own run has ended; the agent then started the tool again.
+    // (The mock is not reactive, so the tracked job is set before mounting.)
+    (jobsStore as any).trackedToolJobs = {
+      [String(store.dataset?.id ?? null)]: { "tool-1": "job-active" },
+    };
+    try {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.localRunning = false;
+      vm.currentJob = { jobId: "job-finished", datasetId: "ds-1" };
+      vm.cancel();
+      expect(store.api.cancelJob).toHaveBeenCalledWith("job-active");
+    } finally {
+      (jobsStore as any).trackedToolJobs = {};
+    }
+  });
+
+  it("does not cancel a finished job when nothing is running", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.localRunning = false;
+    vm.currentJob = { jobId: "job-finished", datasetId: "ds-1" };
+    vm.cancel();
+    expect(store.api.cancelJob).not.toHaveBeenCalled();
+  });
+
+  it("is running while a run another menu instance requested is unanswered", () => {
+    (jobsStore as any).toolRunsInFlight = {
+      [String(store.dataset?.id ?? null)]: ["tool-1"],
+    };
+    try {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.running).toBe(true);
+      vm.compute();
+      expect(
+        annotationsStore.computeAnnotationsWithWorker,
+      ).not.toHaveBeenCalled();
+    } finally {
+      (jobsStore as any).toolRunsInFlight = {};
+    }
   });
 
   it("cancel does nothing when no batchCancel and no currentJob", () => {

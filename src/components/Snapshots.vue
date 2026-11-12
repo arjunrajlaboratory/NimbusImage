@@ -2454,6 +2454,8 @@ async function getUrlsForMovieWithAnnotations(
   // Capture steps the viewer through every time point: put it back where
   // the user was afterwards, whether the capture finished or failed.
   const originalTime = store.time;
+  const originalDatasetId = store.dataset?.id;
+  const originalViewId = store.datasetView?.id;
   try {
     for (let i = 0; i < timePoints.length; i++) {
       const timePoint = timePoints[i];
@@ -2528,7 +2530,14 @@ async function getUrlsForMovieWithAnnotations(
     }
   } finally {
     progress.complete(progressId);
-    store.setTime(originalTime);
+    // Only where it was captured: after a navigation mid-capture this time
+    // belongs to another view, and setting it there would be saved there.
+    if (
+      store.dataset?.id === originalDatasetId &&
+      store.datasetView?.id === originalViewId
+    ) {
+      store.setTime(originalTime);
+    }
   }
 
   return dataUrls;

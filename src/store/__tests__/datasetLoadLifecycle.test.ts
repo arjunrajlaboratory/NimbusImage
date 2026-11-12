@@ -432,6 +432,22 @@ describe("logout", () => {
     expect(main.history).toEqual([]);
   });
 
+  it("drops the previous session's property run locks", async () => {
+    // Kept across dataset navigation, but the next account can neither read
+    // this job nor hear it finish.
+    const propertyState = (rootStore.state as any).properties;
+    propertyState.propertyStatuses = {
+      "prop-1": { running: true, previousRun: null, progressInfo: {} },
+    };
+    Object.assign(state(), { dataset: { id: "ds" }, selectedDatasetId: "ds" });
+
+    await main.setSelectedDataset(null);
+    expect(Object.keys(propertyState.propertyStatuses)).toEqual(["prop-1"]);
+
+    await main.logout();
+    expect(propertyState.propertyStatuses).toEqual({});
+  });
+
   it("a view load in flight at logout does not commit after it", async () => {
     views.a = makeView("a", "dsA", "configA");
     const navigation = main.setDatasetViewId({ id: "a" });
