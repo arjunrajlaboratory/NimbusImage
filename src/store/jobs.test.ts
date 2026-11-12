@@ -261,6 +261,31 @@ describe("jobs store: settling tracked jobs when the stream fails", () => {
     expect(mocks.createNotification).not.toHaveBeenCalled();
   });
 
+  it("stops tracking every job at logout and tells their listeners", async () => {
+    mocks.createNotification.mockClear();
+    const eventCallback = vi.fn();
+    const completion = jobs.addJob({
+      jobId: "previous-session-job",
+      toolId: "tool",
+      datasetId: "shared-ds",
+      eventCallback,
+    } as any);
+    await microtasks();
+    expect(jobs.jobIdForToolInDataset("tool", "shared-ds")).toBe(
+      "previous-session-job",
+    );
+
+    jobs.retireTrackedJobs();
+
+    await expect(completion).resolves.toBe(false);
+    expect(jobs.jobIdForToolInDataset("tool", "shared-ds")).toBeNull();
+    expect(eventCallback).toHaveBeenCalledWith({
+      _id: "previous-session-job",
+      status: ERROR,
+    });
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
   it("keeps tracking a job whose status read fails on the network", async () => {
     vi.useFakeTimers();
     mocks.get.mockImplementation(async () => {

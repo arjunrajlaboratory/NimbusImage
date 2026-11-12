@@ -448,6 +448,25 @@ describe("logout", () => {
     expect(propertyState.propertyStatuses).toEqual({});
   });
 
+  it("stops tracking the previous session's jobs", async () => {
+    // Looked up by dataset and tool alone, so on a shared dataset the next
+    // account's tool would read as running for a job it cannot see.
+    vi.spyOn(jobs, "initializeNotificationSubscription").mockResolvedValue();
+    const completion = jobs.addJob({
+      jobId: "job-a",
+      toolId: "tool",
+      datasetId: "shared-ds",
+    } as any);
+    await vi.waitFor(() =>
+      expect(jobs.jobIdForToolInDataset("tool", "shared-ds")).toBe("job-a"),
+    );
+
+    await main.logout();
+
+    expect(jobs.jobIdForToolInDataset("tool", "shared-ds")).toBeNull();
+    await expect(completion).resolves.toBe(false);
+  });
+
   it("a view load in flight at logout does not commit after it", async () => {
     views.a = makeView("a", "dsA", "configA");
     const navigation = main.setDatasetViewId({ id: "a" });

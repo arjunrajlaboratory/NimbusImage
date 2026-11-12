@@ -1104,7 +1104,9 @@ Three more, found by a Codex review of fixes that were each correct alone:
   (`toolRunsInFlight` in `jobs.ts`).
 - State deliberately kept across navigation (a run's status, a batch) must
   still be dropped at logout, or keyed by user: the next account cannot read
-  the old job or hear it finish, so the lock never releases.
+  the old job or hear it finish, so the lock never releases. Check every store
+  that holds such state, not only the one the finding named: the property
+  statuses were cleared one round before the tracked-job map beside them.
 - A `finally` that restores a value (a time point, a selection) restores it
   only if the view it was captured in is still current, and "the job to
   cancel" is the one in flight, not one a ref still remembers.

@@ -527,12 +527,33 @@ export class Jobs extends VuexModule {
     const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
     if (!jobInfo) return;
     logWarning(`Job ${jobId} no longer exists on the server`);
+    this.endTrackingWithoutOutcome(jobId);
+  }
+
+  // Stops tracking a job whose outcome will never be known here, telling its
+  // listeners it ended so their progress entries and run locks are released.
+  @Action
+  endTrackingWithoutOutcome(jobId: string) {
+    const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
+    if (!jobInfo) return;
     const jobEvent: IJobEventData = { _id: jobId, status: jobStates.error };
     for (const listener of jobInfo.listeners) {
       listener.eventCallback?.(jobEvent);
     }
     jobInfo.successResolve(false);
     this.removeJobInfo(jobId);
+  }
+
+  // At logout. This module outlives the session, and tracked jobs are looked
+  // up by dataset and tool or property alone: left tracked, the previous
+  // account's job would hold the next account's tool "running" on a shared
+  // dataset for as long as its status cannot be read (403). The jobs
+  // themselves keep running server-side.
+  @Action
+  retireTrackedJobs() {
+    for (const jobId of Object.keys(this.jobInfoMap)) {
+      this.endTrackingWithoutOutcome(jobId);
+    }
   }
 
   // While the stream has given up, read tracked jobs' statuses periodically

@@ -511,6 +511,15 @@ cleared), the throw landed in the app's render, and the viewer stayed on
 screen under a logged-out header. It also showed an open item live: the
 canceled job still wrote 1,278 annotations.
 
+A second Codex CLI pass over the whole branch found one P2, the twin of the
+property run lock above: tracked jobs are looked up by dataset and tool
+alone and were not dropped at logout, so on a shared dataset the previous
+account's job held the next account's tool "running" for as long as its
+status could not be read. Logout now retires every tracked job
+(`retireTrackedJobs` in `jobs.ts`). The sweep after the first finding
+cleared the property statuses and missed the job map they are derived
+beside: "dropped at logout" has to be checked per store, not per symptom.
+
 Independent review of the whole diff (three fresh-context reviewers, one per
 area) found no High findings and one Medium, the import dialog's file spinner
 sticking after an invalid file (a regression from this branch's own parse
@@ -702,7 +711,9 @@ Jobs and runs:
   *"cancels the tracked job, not a finished job this menu submitted"*,
   *"does not cancel a finished job when nothing is running"*
 - State kept across navigation is still dropped at logout (found by Codex):
-  *"drops the previous session's property run locks"*
+  *"drops the previous session's property run locks"*,
+  *"stops tracking the previous session's jobs"*,
+  *"stops tracking every job at logout and tells their listeners"*
 - A cleanup that restores a value restores it only where it was captured
   (found by Codex):
   *"leaves the time alone when another view opened during the capture"*

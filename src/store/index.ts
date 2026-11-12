@@ -2138,6 +2138,9 @@ export class Main extends VuexModule {
     this.loggedOut();
     // The previous session's batch runs (their jobs keep running server-side)
     resetBatchRuns();
+    // ...and its tracked jobs, which the next account could not read. By
+    // name: the jobs module imports this one.
+    await this.context.dispatch("retireTrackedJobs");
     await this.setSelectedDataset(null);
     // After the dataset reset, which keeps runs in flight across navigation.
     // By name: the properties module imports this one.
