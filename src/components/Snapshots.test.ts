@@ -1481,6 +1481,25 @@ describe("Snapshots.vue", () => {
       expect((wrapper.vm as any).scalebarAnnotation).toBeNull();
     });
 
+    it("hides the box without throwing once the dataset is gone", () => {
+      const vm = wrapper.vm as any;
+      vm.showSnapshot(true);
+      vm.bboxAnnotation.coordinates = vi.fn(() => [
+        { x: 10, y: 10 },
+        { x: 50, y: 10 },
+        { x: 50, y: 40 },
+        { x: 10, y: 40 },
+      ]);
+      const dataset = (store as any).dataset;
+      (store as any).dataset = null;
+      try {
+        expect(() => vm.showSnapshot(false)).not.toThrow();
+        expect(vm.bboxLayer).toBeNull();
+      } finally {
+        (store as any).dataset = dataset;
+      }
+    });
+
     it("showSnapshot(false) is no-op when no layer", () => {
       (wrapper.vm as any).bboxLayer = null;
       (wrapper.vm as any).showSnapshot(false);

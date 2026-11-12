@@ -1400,8 +1400,15 @@ function setBoundingBox(
   right: number,
   bottom: number,
 ) {
-  const w = store.dataset!.width;
-  const h = store.dataset!.height;
+  // Hiding the box calls this too, and the box is hidden when the panel
+  // closes at logout, after the dataset is gone. A throw here lands in the
+  // app's render and leaves the viewer on screen.
+  const dataset = store.dataset;
+  if (!dataset) {
+    return;
+  }
+  const w = dataset.width;
+  const h = dataset.height;
   bboxLeft.value = Math.min(w - 1, Math.max(0, Math.round(left)));
   bboxRight.value = Math.max(
     bboxLeft.value + 1,

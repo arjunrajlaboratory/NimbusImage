@@ -502,6 +502,15 @@ longer current. Note for next time: the Browser pane was not displayed, so
 replaced with a timer before the capture started; the checks were driven
 with scripted clicks for the same reason.
 
+A second pass the same day, in a visible Chrome tab with real clicks and
+real animation frames, confirmed all four again (the Cancel check against a
+real 60,000-square job, canceled 1.6 s in). It found one more bug, also on
+master: logging out with the Snapshots panel open threw in the panel's
+close watcher (`setBoundingBox` read the dataset the logout had just
+cleared), the throw landed in the app's render, and the viewer stayed on
+screen under a logged-out header. It also showed an open item live: the
+canceled job still wrote 1,278 annotations.
+
 Independent review of the whole diff (three fresh-context reviewers, one per
 area) found no High findings and one Medium, the import dialog's file spinner
 sticking after an invalid file (a regression from this branch's own parse
@@ -701,6 +710,10 @@ Jobs and runs:
   (found live: the old map keeps answering screenshots, so the capture went
   on setting the time of the new view for every remaining frame):
   *"stops stepping the time once another view has opened"*
+- A watcher that runs at teardown does not assume the dataset is still there
+  (found live: closing the Snapshots panel at logout threw during the app's
+  render and left the viewer on screen):
+  *"hides the box without throwing once the dataset is gone"*
 
 Upload flow:
 
