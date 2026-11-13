@@ -966,9 +966,12 @@ async function submit() {
 
   if (dataset.value) {
     // The dataset exists but its upload was interrupted: resume it into the
-    // dataset's folder (path still points there) rather than creating
-    // another dataset inside it.
-    startUpload();
+    // dataset's folder rather than creating another dataset inside it. path
+    // points there already, unless reading the folder is what failed.
+    phase.value = "creatingDataset";
+    if (await enterDatasetFolder(dataset.value)) {
+      startUpload();
+    }
     return;
   }
 
@@ -1007,15 +1010,31 @@ async function submit() {
     }
 
     failedDataset.value = "";
-    path.value = await girderResources.getFolder(dataset.value.id);
-    await nextTick();
   } catch (error) {
     logError("Failed to create the dataset:", error);
     handleBatchError(`Could not create dataset ${datasetName}`);
     return;
   }
 
-  startUpload();
+  if (await enterDatasetFolder(dataset.value)) {
+    startUpload();
+  }
+}
+
+// Point the uploader at the dataset's folder. A failed read returns null
+// rather than rejecting: path keeps its value, so the uploader stays mounted
+// and Upload reads the folder again (see submit). Assigning the null used to
+// unmount the uploader and leave Upload enabled with nothing to do.
+async function enterDatasetFolder(created: IDataset) {
+  const folder = await girderResources.getFolder(created.id);
+  if (!folder) {
+    logError(`Failed to read the folder of dataset ${created.id}`);
+    handleBatchError("Could not open the new dataset's folder");
+    return false;
+  }
+  path.value = folder;
+  await nextTick();
+  return true;
 }
 
 // Upload the selected files into the dataset's folder (path). Files a
@@ -1252,6 +1271,12 @@ watch(
 function nextStep() {
   hideUploader.value = true;
   phase.value = "idle";
+  // Every file is uploaded, so no upload failure is current: one reported
+  // late by a worker of the attempt this upload resumed from would
+  // otherwise label the rest of the import as failed.
+  if (failedPhase.value === "uploading") {
+    failedPhase.value = null;
+  }
 
   if (!dataset.value) {
     logError("nextStep called but dataset is null");

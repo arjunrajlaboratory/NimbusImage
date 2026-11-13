@@ -229,6 +229,23 @@ describe("AnalyzeDialog batch compute", () => {
 
       expect(mocks.computePropertyBatch).toHaveBeenCalledTimes(1);
     });
+
+    // A cancel during the batch's closing refresh finds no job left to
+    // cancel, so the results count none cancelled.
+    it("stops after a Cancel All that had nothing left to cancel", async () => {
+      const vm = mountDialog().vm as any;
+
+      void vm.onComputePropertiesBatch([property, perimeter]);
+      await vi.waitFor(() =>
+        expect(mocks.computePropertyBatch).toHaveBeenCalledTimes(1),
+      );
+      vm.cancelBatch();
+      finishBatch({ succeeded: 3, failed: 0, cancelled: 0 });
+      // A second batch would never settle, so wait a macrotask, not on it
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(mocks.computePropertyBatch).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("neither shows nor waits on another collection's batch", async () => {

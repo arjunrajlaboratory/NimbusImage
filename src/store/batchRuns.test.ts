@@ -30,11 +30,34 @@ describe("batch runs", () => {
 
     const second = await runBatch("workerTool", "config-1", "tool-1", 2, start);
 
-    expect(second).toEqual({ started: false, results: null });
+    expect(second).toEqual({
+      started: false,
+      results: null,
+      cancelRequested: false,
+    });
     expect(start).toHaveBeenCalledTimes(1);
     // Another tool's batch is its own run
     void runBatch("workerTool", "config-1", "tool-2", 2, start);
     expect(start).toHaveBeenCalledTimes(2);
+  });
+
+  // The results cannot tell: a cancel after the last job ended cancels none.
+  it("reports that its cancel was called, whatever the results count", async () => {
+    const cancelJobs = vi.fn();
+    const result = runBatch(
+      "property",
+      "config-1",
+      "property-1",
+      2,
+      async (hooks) => {
+        hooks.onCancel(cancelJobs);
+        batchRuns.batchRun("property", "config-1", "property-1")?.cancel?.();
+        hooks.onComplete({ succeeded: 2, failed: 0, cancelled: 0 });
+      },
+    );
+
+    expect(await result).toMatchObject({ cancelRequested: true });
+    expect(cancelJobs).toHaveBeenCalledTimes(1);
   });
 
   it("tells the UI about the progress and release of a run it just created", async () => {
@@ -130,6 +153,7 @@ describe("batch runs", () => {
     expect(result).toEqual({
       started: true,
       results: { succeeded: 2, failed: 0, cancelled: 0 },
+      cancelRequested: false,
     });
     expect(
       batchRuns.shownRun("workerTool", "config-1")?.progress

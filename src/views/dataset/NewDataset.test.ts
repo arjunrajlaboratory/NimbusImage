@@ -1103,6 +1103,21 @@ describe("NewDataset", () => {
       expect(vm.uploading).toBe(true);
     });
 
+    // A worker of the attempt the upload resumed from can report its
+    // failure after the resume.
+    it("drops an upload failure once every file is uploaded", async () => {
+      const wrapper = mountComponent();
+      await flushPromises();
+      const vm = wrapper.vm as any;
+      vm.dataset = { id: "ds-1" };
+      vm.phase = "uploading";
+      vm.failedPhase = "uploading";
+
+      vm.nextStep();
+
+      expect(vm.failedPhase).toBeNull();
+    });
+
     it("leaves a failure of a later phase alone", async () => {
       const wrapper = mountComponent();
       await flushPromises();
@@ -1238,6 +1253,37 @@ describe("NewDataset", () => {
       });
       expect(vm.dataset).toEqual(mockDataset);
       expect(vm.uploading).toBe(true);
+    });
+
+    // girderResources.getFolder returns null on a failed request.
+    it("keeps Upload working when the new dataset's folder cannot be read", async () => {
+      mockCreateDataset.mockResolvedValue({ id: "ds-1" });
+      const wrapper = mountComponent();
+      await flushPromises();
+      const vm = wrapper.vm as any;
+      vm.filesChanged([createFile("a.tif")]);
+      vm.valid = true;
+      const startUpload = vi.spyOn(vm.uploader, "startUpload");
+      mockGetFolder.mockResolvedValueOnce(null);
+
+      await vm.submit();
+
+      expect(vm.pipelineError).toBe(true);
+      expect(vm.path).not.toBeNull();
+      expect(vm.uploader).toBeTruthy();
+      expect(startUpload).not.toHaveBeenCalled();
+
+      // Upload again: reads the folder, uploads into it, creates nothing.
+      mockGetFolder.mockResolvedValueOnce({
+        _id: "ds-1",
+        _modelType: "folder",
+      });
+      await vm.submit();
+
+      expect(mockCreateDataset).toHaveBeenCalledTimes(1);
+      expect(vm.path).toEqual({ _id: "ds-1", _modelType: "folder" });
+      expect(startUpload).toHaveBeenCalledTimes(1);
+      expect(vm.pipelineError).toBe(false);
     });
 
     it("sets failedDataset when createDataset returns null", async () => {

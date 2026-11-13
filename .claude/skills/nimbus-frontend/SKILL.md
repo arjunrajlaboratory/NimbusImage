@@ -1123,6 +1123,12 @@ More of the same kind, found by reviews of fixes that were each correct alone:
   did not write. The Girder uploader's "Resume Upload" restarted the upload
   past `submit()`, leaving the parent's failure state set (`NewDataset.vue`
   watches the uploader's `uploading` flag).
+- "Was it cancelled?" cannot be read from a count of cancelled items: a
+  cancel that arrives after the last item ended cancels nothing. Record the
+  request itself (`cancelRequested` from `runBatch`).
+- Never assign a nullable lookup straight into the ref a child's `v-if`
+  hangs on: `path.value = await getFolder(id)` unmounted the uploader when
+  the read failed (`getFolder` returns null, it does not reject).
 - A `finally` that restores a value (a time point, a selection) restores it
   only if the view it was captured in is still current, and "the job to
   cancel" is the one in flight, not one a ref still remembers.

@@ -262,7 +262,10 @@ export interface IBatchHooks {
  * store, and releases the run however the action ends. A finished batch's
  * progress lingers for BATCH_PROGRESS_LINGER_MS; a batch that throws, or
  * whose action returns `false` (it refused to start), leaves no progress.
- * Rethrows what the action throws.
+ * `cancelRequested` tells whether the batch's cancel function was called,
+ * which the results cannot: a cancel after the last job ended (during the
+ * batch's closing refresh) cancels nothing, yet a caller running several
+ * batches in a row must still stop. Rethrows what the action throws.
  */
 export async function runBatch(
   kind: BatchKind,
@@ -270,9 +273,13 @@ export async function runBatch(
   id: string,
   total: number,
   start: (hooks: IBatchHooks) => Promise<unknown>,
-): Promise<{ started: boolean; results: IBatchResults | null }> {
+): Promise<{
+  started: boolean;
+  results: IBatchResults | null;
+  cancelRequested: boolean;
+}> {
   if (batchRuns.batchRun(kind, configurationId, id)?.inFlight) {
-    return { started: false, results: null };
+    return { started: false, results: null, cancelRequested: false };
   }
   const run = { kind, configurationId, id };
   const timerKey = `${kind}:${runKey(configurationId, id)}`;
@@ -283,6 +290,7 @@ export async function runBatch(
 
   let results = null as IBatchResults | null;
   let keepProgress = false;
+  let cancelRequested = false;
   try {
     const outcome = await start({
       onBatchProgress: (progress) => {
@@ -292,7 +300,13 @@ export async function runBatch(
       },
       onCancel: (cancel) => {
         if (current()) {
-          batchRuns.setRunCancel({ ...run, cancel });
+          batchRuns.setRunCancel({
+            ...run,
+            cancel: () => {
+              cancelRequested = true;
+              cancel();
+            },
+          });
         }
       },
       onComplete: (batchResults) => {
@@ -314,7 +328,7 @@ export async function runBatch(
       }
     }
   }
-  return { started: true, results };
+  return { started: true, results, cancelRequested };
 }
 
 // Forget every batch run and pending hide (logout, tests). Batches still

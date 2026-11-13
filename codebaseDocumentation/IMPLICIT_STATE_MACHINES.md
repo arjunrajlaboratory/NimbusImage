@@ -390,6 +390,31 @@ Still open:
 - **A worker's own error and warning lines** are written into the kept
   status while a run is in flight, so they show on another dataset of the
   collection until the run ends. Only the end outcome is scoped.
+- **State that outlives the login session** (also on master). Store modules
+  and module-level variables live as long as the page, and `logout()` resets
+  them one by one. Not reset today:
+  - `progress.ts` notifications: a sticky "Job Failed" or worker error toast
+    of the previous account is shown to the next one.
+  - `girderResources.ts` resource cache: a cached private collection renders
+    on `#/configuration/<id>` for the next person at the tab with no
+    request. (Datasets and views are fetched fresh and refused.)
+  - `projects.ts`: a cached private project renders on `#/project/<id>`.
+  - `datasetMetadataImport.ts`: an abandoned Zenodo import's annotations and
+    collection file are applied to the next upload in the tab (reachable
+    without a logout too; nothing calls `clearAllFiles`).
+  - `progress.trackHistogramJob` / `trackMaxMergeJob` create their entry and
+    then return without completing it when the dataset is gone.
+
+  The fix that closes the class is a full page reload at logout; a per-store
+  reset fixes each item but cannot show that the list is complete. Not
+  decided.
+- **Transitions the upload page does not own** (also on master, all narrow):
+  the uploader's "Clear all" during dataset creation starts an upload of no
+  files; `MultiSourceConfiguration`'s Submit is clickable again while the
+  page finalizes a batch's first dataset; "Skip and Continue" and "Add
+  dataset" have no double-click guard.
+- **The AI run loop's `catch`** has no generation check, so a request that
+  fails after a forced clear adds its error to the new conversation.
 
 ## Live verification (2026-11-10)
 
@@ -563,6 +588,27 @@ directly, past the parent's `submit()`. The resumed upload ran with
 `failedPhase` still set, so the import went on under "Quick Import Failed"
 and a later failure was recorded as the upload's. `NewDataset.vue` now
 follows the uploader's `uploading` flag into its own phase.
+
+After five rounds that each found one more instance, the findings were
+reduced to three causes and the whole branch was swept for each by two
+fresh-context reviewers, every report checked against the code:
+
+1. **State outlives the login session**, and logout resets it piecemeal.
+   Every store and module-level variable was listed with a verdict, and
+   every waiter on a tracked job was read for what it does once logout
+   settles the job. The waiters are all guarded; the stores still not reset
+   are on master too and are listed under "Still open".
+2. **A transition the machine's owner did not write**: a child component's
+   own button, an exposed method, a dismissal, a second instance. Three
+   fixed here: a late error from a superseded upload attempt labeled a
+   finished upload as failed (`nextStep` now drops an upload failure); a
+   failed folder read after dataset creation set `path` to null, which
+   unmounted the uploader and left Upload enabled with nothing to do
+   (`enterDatasetFolder`); and Cancel All pressed during a property batch's
+   closing refresh cancelled nothing and so did not stop the remaining
+   properties (`runBatch` reports `cancelRequested`).
+3. **A newly added `await` its callers did not expect.** Every function that
+   gained one on the branch was read with its callers; none remains.
 
 Independent review of the whole diff (three fresh-context reviewers, one per
 area) found no High findings and one Medium, the import dialog's file spinner
@@ -779,7 +825,13 @@ Jobs and runs:
 - A child component's own control cannot move the flow past the parent's
   phase: the uploader's "Resume Upload" button (found by Codex):
   *"clears the failure and returns to the uploading phase"*,
-  *"leaves a failure of a later phase alone"*
+  *"leaves a failure of a later phase alone"*,
+  *"drops an upload failure once every file is uploaded"*
+- Upload still works after the new dataset's folder could not be read:
+  *"keeps Upload working when the new dataset's folder cannot be read"*
+- Cancel All stops a run of several batches even when it cancelled no job:
+  *"reports that its cancel was called, whatever the results count"*,
+  *"stops after a Cancel All that had nothing left to cancel"*
 - A cleanup that restores a value restores it only where it was captured
   (found by Codex):
   *"leaves the time alone when another view opened during the capture"*

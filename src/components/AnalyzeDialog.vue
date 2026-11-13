@@ -102,7 +102,7 @@
 import { ref, computed, watch } from "vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
-import batchRuns, { IBatchResults, runBatch } from "@/store/batchRuns";
+import batchRuns, { runBatch } from "@/store/batchRuns";
 import { useCollectionDatasetCount } from "@/utils/useCollectionDatasetCount";
 import AnalyzePanel from "@/components/AnalyzePanel.vue";
 import PropertyPicker from "@/components/PropertyPicker.vue";
@@ -161,18 +161,18 @@ async function onComputePropertyBatch(property: IAnnotationProperty) {
   }
 }
 
-// Runs one property's batch over the given configuration; null when it did
-// not start or threw.
+// Runs one property's batch over the given configuration. Resolves to
+// whether the user cancelled it; false when it did not start or threw.
 async function computePropertyBatchIn(
   property: IAnnotationProperty,
   configurationId: string,
   total: number,
-): Promise<IBatchResults | null> {
+): Promise<boolean> {
   // One batch at a time: the dialog shows one progress and one Cancel All.
-  if (batchRuns.anyInFlight("property", configurationId)) return null;
+  if (batchRuns.anyInFlight("property", configurationId)) return false;
 
   try {
-    const { results } = await runBatch(
+    const { cancelRequested } = await runBatch(
       "property",
       configurationId,
       property.id,
@@ -184,10 +184,10 @@ async function computePropertyBatchIn(
           ...hooks,
         }),
     );
-    return results;
+    return cancelRequested;
   } catch (error) {
     logError(`Batch computation of ${property.name} failed`, error);
-    return null;
+    return false;
   }
 }
 
@@ -200,12 +200,9 @@ async function onComputePropertiesBatch(properties: IAnnotationProperty[]) {
   const total = collectionDatasetCount.value;
   for (const property of properties) {
     if (store.selectedConfigurationId !== configurationId) return;
-    const results = await computePropertyBatchIn(
-      property,
-      configurationId,
-      total,
-    );
-    if (results && results.cancelled > 0) return;
+    if (await computePropertyBatchIn(property, configurationId, total)) {
+      return;
+    }
   }
 }
 
