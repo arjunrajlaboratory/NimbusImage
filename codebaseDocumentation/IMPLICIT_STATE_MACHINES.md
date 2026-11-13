@@ -556,6 +556,14 @@ to be read after logout began settling it.
 - Movie capture compared view ids only; leaving and returning to the same
   view replaces the map, and the loop went on capturing from the old one.
 
+A fifth Codex CLI pass found one P2 in the first commit's upload flow, not
+in a later fix: the Girder uploader shows its own "Resume Upload" button
+beside an upload error, and that button calls the uploader's `startUpload`
+directly, past the parent's `submit()`. The resumed upload ran with
+`failedPhase` still set, so the import went on under "Quick Import Failed"
+and a later failure was recorded as the upload's. `NewDataset.vue` now
+follows the uploader's `uploading` flag into its own phase.
+
 Independent review of the whole diff (three fresh-context reviewers, one per
 area) found no High findings and one Medium, the import dialog's file spinner
 sticking after an invalid file (a regression from this branch's own parse
@@ -768,6 +776,10 @@ Jobs and runs:
   *"settles from the stream while the status read is still pending"*
 - Movie capture stops when the map it captures from is replaced:
   *"stops capturing once the map has been replaced"*
+- A child component's own control cannot move the flow past the parent's
+  phase: the uploader's "Resume Upload" button (found by Codex):
+  *"clears the failure and returns to the uploading phase"*,
+  *"leaves a failure of a later phase alone"*
 - A cleanup that restores a value restores it only where it was captured
   (found by Codex):
   *"leaves the time alone when another view opened during the capture"*

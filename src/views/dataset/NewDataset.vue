@@ -466,6 +466,7 @@ type GWCUpload = ComponentPublicInstance & {
   inputFilesChanged(files: File[]): void;
   startUpload(): any;
   totalProgressPercent: number;
+  uploading: boolean;
 };
 
 // Custom Girder upload manager that allows us to set the option `use_S3_transfer_acceleration`
@@ -1230,6 +1231,23 @@ function addMoreFiles(newFiles: File[]) {
 function interruptedUpload() {
   handleBatchError("The upload was interrupted");
 }
+
+// The uploader's own "Resume Upload" button, shown beside its error, calls
+// its startUpload directly, past submit(). Follow it into the uploading
+// phase, or the failure it resumes from would outlive a successful upload:
+// the import would go on under "Quick Import Failed", and a later failure
+// would be recorded as this one.
+watch(
+  () => uploader.value?.uploading,
+  (uploaderRunning) => {
+    if (uploaderRunning && phase.value === "idle") {
+      if (failedPhase.value === "uploading") {
+        failedPhase.value = null;
+      }
+      phase.value = "uploading";
+    }
+  },
+);
 
 function nextStep() {
   hideUploader.value = true;

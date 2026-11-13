@@ -225,6 +225,7 @@ const GirderUploadStub = {
     files: [],
     dropzoneMessage: "Drag files here or click to select them",
     totalProgressPercent: 0,
+    uploading: false,
   }),
   methods: {
     inputFilesChanged(this: any, files: File[]) {
@@ -1080,6 +1081,38 @@ describe("NewDataset", () => {
       expect(startUpload).toHaveBeenCalledTimes(1);
       expect(vm.uploading).toBe(true);
       expect(vm.pipelineError).toBe(false);
+    });
+  });
+
+  // The uploader's own "Resume Upload" button calls its startUpload
+  // directly, past submit().
+  describe("resuming from the uploader's own button", () => {
+    it("clears the failure and returns to the uploading phase", async () => {
+      const wrapper = mountComponent();
+      await flushPromises();
+      const vm = wrapper.vm as any;
+      vm.dataset = { id: "ds-1" };
+      vm.phase = "uploading";
+      vm.interruptedUpload();
+      expect(vm.failedPhase).toBe("uploading");
+
+      vm.uploader.uploading = true;
+      await nextTick();
+
+      expect(vm.pipelineError).toBe(false);
+      expect(vm.uploading).toBe(true);
+    });
+
+    it("leaves a failure of a later phase alone", async () => {
+      const wrapper = mountComponent();
+      await flushPromises();
+      const vm = wrapper.vm as any;
+      vm.failedPhase = "readingFiles";
+
+      vm.uploader.uploading = true;
+      await nextTick();
+
+      expect(vm.failedPhase).toBe("readingFiles");
     });
   });
 

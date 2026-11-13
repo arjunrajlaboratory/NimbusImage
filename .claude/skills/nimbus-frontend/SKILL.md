@@ -1118,6 +1118,11 @@ More of the same kind, found by reviews of fixes that were each correct alone:
   dataset the run was for (`finishPropertyRun`). "The dataset open" is the
   one being loaded, not `store.dataset`, which is the old one until the load
   lands (`shownDatasetId` in `store/index.ts`).
+- When a parent holds a phase for a flow that a third-party child component
+  runs, list the child's own buttons: each one is a transition the parent
+  did not write. The Girder uploader's "Resume Upload" restarted the upload
+  past `submit()`, leaving the parent's failure state set (`NewDataset.vue`
+  watches the uploader's `uploading` flag).
 - A `finally` that restores a value (a time point, a selection) restores it
   only if the view it was captured in is still current, and "the job to
   cancel" is the one in flight, not one a ref still remembers.
