@@ -222,16 +222,18 @@ export default batchRuns;
 // the same run cancels its predecessor's, so it never hides the new progress.
 const progressHideTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-// Advanced by every reset. A batch started before a reset (a logout) keeps
-// running, but must not write into the cleared module or into a later run
-// with the same key, nor schedule a hide.
+// Advanced by every reset. A batch started before a reset (a logout) stops
+// submitting (sessionEndedSignal), and while it winds down must not write
+// into the cleared module or into a later run with the same key, nor
+// schedule a hide.
 let resetGeneration = 0;
 
-// For the loops that submit one job after another (batches, pipelines):
-// true once a reset (a logout) has ended the session the loop started in.
-// Logout settles the loop's tracked job as not successful, and without this
-// check the loop would take that for an ordinary failure and submit its next
-// job. Unlike a cancel, stopping leaves the jobs already submitted running.
+// For whatever waits on a tracked job (a batch loop, a single run, a tool's
+// outcome icon): true once a reset (a logout) has ended the session it
+// started in. Logout settles the tracked job as not successful, and without
+// this check a loop would take that for an ordinary failure and submit its
+// next job, and a run would report a failure for a job that is still
+// running server-side. Unlike a cancel, stopping leaves submitted jobs alone.
 export function sessionEndedSignal(): () => boolean {
   const generation = resetGeneration;
   return () => generation !== resetGeneration;

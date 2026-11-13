@@ -249,6 +249,25 @@ describe("ToolItem", () => {
     expect((wrapper.vm as any).statusIcon).toBeNull();
   });
 
+  // Logout settles tracked jobs as not successful without them failing, and
+  // the same user may log back in to the same scope.
+  it("records no outcome for a job that logout ended", async () => {
+    (jobs as any).trackedToolJobs = { "ds-1": { "tool-1": "job-789" } };
+    let finish!: (success: boolean) => void;
+    const settled = new Promise<boolean>((resolve) => (finish = resolve));
+    (jobs.getPromiseForJobId as any).mockReturnValue(settled);
+    const wrapper = mountComponent();
+    (jobs.setToolJobOutcome as any).mockClear();
+    (wrapper.vm as any).onJobChanged();
+
+    resetBatchRuns();
+    finish(false);
+    await settled;
+    await Promise.resolve();
+
+    expect(jobs.setToolJobOutcome).not.toHaveBeenCalled();
+  });
+
   it("the pin button pins an unpinned tool without toggling it", async () => {
     const wrapper = mountComponent();
     await wrapper.find(".tool-item__pin").trigger("click");

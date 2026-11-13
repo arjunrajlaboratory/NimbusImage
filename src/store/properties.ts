@@ -30,7 +30,7 @@ import {
   SPATIAL_PROPERTY_ID,
 } from "./model";
 
-import main, { adoptServerConfirmedPropertyId } from "./index";
+import main, { adoptServerConfirmedPropertyId, shownDatasetId } from "./index";
 
 import { canComputeAnnotationProperty } from "@/utils/annotation";
 import {
@@ -203,6 +203,8 @@ interface IPropertyRun {
   property: IAnnotationProperty;
   // The dataset the run computes on
   datasetId: string;
+  // True once a logout has ended the session the run started in
+  sessionEnded: () => boolean;
   status: IPropertyStatus;
   errorInfo: IErrorInfoList;
   progressId: string;
@@ -213,6 +215,15 @@ function finishPropertyRun(
   success: boolean,
   error?: { title: string; value: unknown; notify?: boolean },
 ) {
+  // Logout settles the tracked job as not successful (retireTrackedJobs),
+  // but the job did not fail: it is still running server-side. Release the
+  // run without reporting a failure to whoever logs in next.
+  if (run.sessionEnded()) {
+    progress.complete(run.progressId);
+    run.status.running = false;
+    run.status.progressInfo = {};
+    return;
+  }
   dropAlreadyComputingErrors(run.errorInfo);
   if (error) {
     addComputeError(
@@ -235,7 +246,7 @@ function finishPropertyRun(
   // resetPropertyStateImpl), so the dataset on screen may be another one of
   // the same collection. The lock is released there, but the outcome is not
   // shown: it would read as that dataset's own failed or finished run.
-  if (main.dataset?.id === run.datasetId) {
+  if (shownDatasetId() === run.datasetId) {
     run.status.previousRun = success && !error;
     run.status.errorInfo = run.errorInfo;
   } else {
@@ -437,9 +448,9 @@ export class Properties extends VuexModule {
     }
   }
 
-  // The previous session's runs: their jobs belong to another account, so
-  // this session can neither read them nor hear them finish, and a status
-  // kept "running" would block the property for good.
+  // The previous session's runs. Logout settles their tracked jobs, which
+  // releases most of them; one whose job was not tracked yet would stay
+  // "running" and block the property for good.
   @Mutation
   clearPropertyRunStatuses() {
     this.propertyStatuses = {};
@@ -908,6 +919,7 @@ export class Properties extends VuexModule {
     const propertyId = property.id;
     const datasetId = main.dataset.id;
     const scales = main.scales;
+    const sessionEnded = sessionEndedSignal();
 
     // One run of a property at a time: `running` is a flag, so a second run
     // would let the first to finish clear it while the other still runs, and
@@ -951,6 +963,7 @@ export class Properties extends VuexModule {
     const run: IPropertyRun = {
       property,
       datasetId,
+      sessionEnded,
       status,
       errorInfo: activeErrorInfo,
       progressId,
@@ -1017,6 +1030,7 @@ export class Properties extends VuexModule {
       return [];
     }
     const datasetId = main.dataset.id;
+    const sessionEnded = sessionEndedSignal();
     const eligibleProperties = requestedProperties
       .filter((property) => !this.propertyStatuses[property.id]?.running)
       .slice(0, MAX_PROPERTY_COMPUTE_BATCH);
@@ -1041,7 +1055,14 @@ export class Properties extends VuexModule {
           type: ProgressType.PROPERTY_COMPUTE,
           title: `Computing ${property.name}`,
         });
-        runs.push({ property, datasetId, status, errorInfo, progressId });
+        runs.push({
+          property,
+          datasetId,
+          sessionEnded,
+          status,
+          errorInfo,
+          progressId,
+        });
       } catch (error) {
         addComputeError(errorInfo, "Property progress tracking failed", error);
         status.running = false;

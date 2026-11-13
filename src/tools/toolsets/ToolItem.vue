@@ -86,7 +86,7 @@ import store from "@/store";
 import ToolIcon from "@/tools/ToolIcon.vue";
 import ToolEdition from "@/tools/ToolEdition.vue";
 import jobs from "@/store/jobs";
-import batchRuns from "@/store/batchRuns";
+import batchRuns, { sessionEndedSignal } from "@/store/batchRuns";
 import { getTourAnchorId } from "@/utils/strings";
 
 const props = defineProps<{
@@ -152,11 +152,14 @@ function onJobChanged() {
   // Undefined if the job already settled (the jobs store drops finished
   // entries), in which case there is no outcome left to show an icon for.
   // The outcome goes to the store so it survives this item remounting.
-  jobs
-    .getPromiseForJobId(jobId.value)
-    ?.then((success: boolean) =>
-      jobs.setToolJobOutcome({ toolId, scope, success }),
-    );
+  // Logout settles the job as not successful without it having failed, and
+  // the same user may log back in to this scope.
+  const sessionEnded = sessionEndedSignal();
+  jobs.getPromiseForJobId(jobId.value)?.then((success: boolean) => {
+    if (!sessionEnded()) {
+      jobs.setToolJobOutcome({ toolId, scope, success });
+    }
+  });
 }
 
 watch(jobId, onJobChanged);

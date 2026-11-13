@@ -3185,6 +3185,26 @@ describe("Snapshots.vue", () => {
       }
     });
 
+    // Same view, new map: leaving and coming back within one render wait.
+    it("stops capturing once the map has been replaced", async () => {
+      // Reactive, so replacing the entry recomputes firstMap as the real
+      // store's maps array does.
+      const maps = reactive([{ map: markRaw(captureMap) }]);
+      (store as any).maps = maps;
+      wrapper = mountComponent();
+      (wrapper.vm as any).addScalebar = false;
+      captureMap.screenshot.mockImplementationOnce(async () => {
+        maps.splice(0, 1, { map: markRaw({ ...captureMap }) });
+        return "data:image/png;base64,abc";
+      });
+      const { error } = await capture();
+      expect(error?.message).toBe("the view changed during the capture");
+      // Frame 0, then the restore: the view is still the one it started in.
+      expect(vi.mocked(store.setTime).mock.calls.map((c) => c[0])).toEqual([
+        0, 3,
+      ]);
+    });
+
     it("leaves the time alone when another view opened during the capture", async () => {
       const originalView = (store as any).datasetView;
       captureMap.screenshot.mockImplementationOnce(async () => {

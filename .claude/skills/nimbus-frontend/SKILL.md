@@ -1094,7 +1094,7 @@ sequence tokens:
   own requests: "anything pending anywhere" let an unrelated URL write
   cancel a view switch started by a snapshot.
 
-Three more, found by a Codex review of fixes that were each correct alone:
+More of the same kind, found by reviews of fixes that were each correct alone:
 
 - Adding a `:key` (or `v-if`) so a component's state does not carry over
   also throws away its in-flight flags. Before remounting, move every
@@ -1110,10 +1110,14 @@ Three more, found by a Codex review of fixes that were each correct alone:
 - Settling a promise to release a lock also resumes every loop awaiting it.
   Retiring tracked jobs at logout resolved them as "not successful", and the
   batch loops took that for a failed dataset and submitted the next one. Stop
-  the loop first (`sessionEndedSignal` in `batchRuns.ts`), then settle.
+  the loop first (`sessionEndedSignal` in `batchRuns.ts`), then settle. Then
+  read every other waiter on that promise: a single property run raised a
+  "computation failed" toast for a job that was still running.
 - A status kept across navigation is shown on whatever dataset is open when
   the run ends. Release the lock there, but show the outcome only on the
-  dataset the run was for (`finishPropertyRun`).
+  dataset the run was for (`finishPropertyRun`). "The dataset open" is the
+  one being loaded, not `store.dataset`, which is the old one until the load
+  lands (`shownDatasetId` in `store/index.ts`).
 - A `finally` that restores a value (a time point, a selection) restores it
   only if the view it was captured in is still current, and "the job to
   cancel" is the one in flight, not one a ref still remembers.

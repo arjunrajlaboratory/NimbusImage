@@ -1360,8 +1360,8 @@ async function runWorkerTool(
         started: false,
         alreadyRunning: true,
         note:
-          `A run of tool "${tool.name}" is being submitted. Try again in a ` +
-          "moment to get its job id instead of starting another run.",
+          `A run of tool "${tool.name}" is being submitted or is finishing. ` +
+          "Check again in a moment instead of starting another run.",
       },
     };
   }

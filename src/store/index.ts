@@ -390,6 +390,14 @@ let pendingDatasetSelection: IPendingSelection<string | null> | null = null;
 let configurationSelection = 0;
 let pendingConfigurationSelection: IPendingSelection<string> | null = null;
 
+// The dataset the viewer shows, or is loading: during a load `main.dataset`
+// is still the one being left.
+export function shownDatasetId(): string | null {
+  return pendingDatasetSelection
+    ? pendingDatasetSelection.id
+    : main.dataset?.id ?? null;
+}
+
 function pendingSelection<T>(id: T) {
   let settle!: () => void;
   const settled = new Promise<void>((resolve) => {

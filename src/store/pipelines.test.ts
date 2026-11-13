@@ -97,6 +97,7 @@ import pipelinesStore, {
   CONFIGURATION_CHANGED_DURING_RUN,
   mergeMaterializedPropertyIds,
 } from "./pipelines";
+import { resetBatchRuns } from "./batchRuns";
 import rootStore from "./root";
 import { resolveLinkedStep, stepLinkState } from "@/utils/pipelineLinks";
 import { AnnotationShape, IPipeline } from "./model";
@@ -1705,6 +1706,32 @@ describe("configuration switch during a run", () => {
     expect(h.properties.createProperty).not.toHaveBeenCalled();
     expect(errors).toHaveLength(1);
     expect(errors[0].error).toContain(CONFIGURATION_CHANGED_DURING_RUN);
+    expect(h.main.updateConfigurationPipelines).not.toHaveBeenCalled();
+    expect(pipelinesStore.runningPipelineId).toBeNull();
+  });
+
+  // Logout ends a run by settling its step's job as not successful; the
+  // write would be the previous account's.
+  it("does not write a materialized property id after a logout", async () => {
+    const step = propertyStep("p", ["nuclei"]);
+    const pipe = pipeline([step]);
+    h.main.configuration.pipelines = [cloneForStore(pipe)];
+    h.properties.createProperty.mockResolvedValue({
+      id: "prop-created",
+      image: "img/prop",
+      shape: AnnotationShape.Polygon,
+      tags: { tags: ["nuclei"], exclusive: false },
+      workerInterface: {},
+    });
+    h.properties.submitPropertyJob.mockImplementation(async () => {
+      resetBatchRuns();
+      switchConfiguration();
+      return submitResult("j", false);
+    });
+
+    await pipelinesStore.runPipeline({ pipeline: pipe });
+
+    expect(h.main.api.updateConfigurationKey).not.toHaveBeenCalled();
     expect(h.main.updateConfigurationPipelines).not.toHaveBeenCalled();
     expect(pipelinesStore.runningPipelineId).toBeNull();
   });

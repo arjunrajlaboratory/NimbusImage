@@ -325,13 +325,16 @@ export class Jobs extends VuexModule {
     // would settle it until the next reconnect. A stream that is still
     // connecting reconciles every tracked job when it opens, so read only on
     // one already open. A job tracked before was read when it was added.
+    // Not awaited: the caller waits on this action before it gets the
+    // completion, so a slow read would hold back an outcome the stream has
+    // already delivered. (readJobStatus does not reject.)
     if (
       !subscribing &&
       !alreadyTracked &&
       this.notificationSource?.readyState === WebSocket.OPEN &&
       job.jobId in this.jobInfoMap
     ) {
-      await this.reconcileJobs([job.jobId]);
+      void this.reconcileJobs([job.jobId]);
     }
     return successPromise;
   }
@@ -530,8 +533,10 @@ export class Jobs extends VuexModule {
     this.endTrackingWithoutOutcome(jobId);
   }
 
-  // Stops tracking a job whose outcome will never be known here, telling its
-  // listeners it ended so their progress entries and run locks are released.
+  // Stops tracking a job whose outcome will never be known here. Its promise
+  // resolves false, which is what releases the waiters' progress entries and
+  // run locks; listeners get an ended event. A waiter that reports failures
+  // must tell this from one (sessionEndedSignal at logout).
   @Action
   endTrackingWithoutOutcome(jobId: string) {
     const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];

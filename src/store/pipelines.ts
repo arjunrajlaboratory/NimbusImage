@@ -14,6 +14,7 @@ import annotations from "./annotation";
 import properties from "./properties";
 import { createProgressEventCallback, createErrorEventCallback } from "./jobs";
 import progress from "./progress";
+import { sessionEndedSignal } from "./batchRuns";
 import { BATCH_DATASET_LIMIT } from "./constants";
 import { logError } from "@/utils/log";
 import { findSourceProperty, resolveLinkedStep } from "@/utils/pipelineLinks";
@@ -525,6 +526,7 @@ export class Pipelines extends VuexModule {
     const runConfigurationId = configurationId ?? main.configuration.id;
     const configurationChanged = () =>
       main.configuration?.id !== runConfigurationId;
+    const sessionEnded = sessionEndedSignal();
     // The run's configuration object: the loaded one while it is still the
     // run's (a reload may replace the object), else the last one seen.
     let runConfiguration = main.configuration;
@@ -811,7 +813,9 @@ export class Pipelines extends VuexModule {
       // only when something actually changed - an annotation-only run (or one
       // whose property steps all reused an already-matching property) has
       // nothing new to write back to the configuration.
-      if (materializedSteps.length > 0) {
+      // Not after a logout, which ends the run by settling its step's job:
+      // the write would be the previous account's, and is refused.
+      if (materializedSteps.length > 0 && !sessionEnded()) {
         const storedPipeline = currentRunConfiguration().pipelines?.find(
           (candidate) => candidate.id === pipeline.id,
         );

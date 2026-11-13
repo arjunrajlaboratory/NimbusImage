@@ -13,9 +13,13 @@ const mocks = vi.hoisted(() => ({
   findDatasetViews: vi.fn(),
   batchResources: vi.fn(),
   updateProgress: vi.fn(),
+  // The dataset the viewer shows or is loading (see shownDatasetId)
+  shownDatasetId: "dataset-1",
 }));
 
 vi.mock("@/store/index", () => ({
+  shownDatasetId: () => mocks.shownDatasetId,
+  adoptServerConfirmedPropertyId: vi.fn(),
   default: {
     dataset: { id: "dataset-1" },
     isLoggedIn: true,
@@ -74,7 +78,6 @@ vi.mock("@/utils/log", () => ({
 vi.mock("geojs", () => ({ default: { util: {} } }));
 
 import properties from "@/store/properties";
-import main from "@/store/index";
 import { resetBatchRuns } from "@/store/batchRuns";
 import type { IAnnotationProperty, IErrorInfoList } from "@/store/model";
 
@@ -187,7 +190,7 @@ describe("property compute lifecycle", () => {
       new Promise<boolean>((resolve) => (endJob = resolve)),
     );
     await properties.computeProperty({ property });
-    (main as any).dataset = { id: "dataset-2" };
+    mocks.shownDatasetId = "dataset-2";
     try {
       properties.resetPropertyState();
       expect(status().running).toBe(true);
@@ -198,8 +201,28 @@ describe("property compute lifecycle", () => {
       expect(status().previousRun).toBeNull();
       expect(status().errorInfo?.errors).toEqual([]);
     } finally {
-      (main as any).dataset = { id: "dataset-1" };
+      mocks.shownDatasetId = "dataset-1";
     }
+  });
+
+  // Logout settles the tracked job as not successful, but it did not fail:
+  // no failure is recorded or shown to whoever logs in next.
+  it("reports no failure for a run that logout ended", async () => {
+    let endJob!: (success: boolean) => void;
+    mocks.addJob.mockReturnValue(
+      new Promise<boolean>((resolve) => (endJob = resolve)),
+    );
+    const errorInfo: IErrorInfoList = { errors: [] };
+    await properties.computeProperty({ property, errorInfo });
+    const runStatus = status();
+
+    resetBatchRuns();
+    endJob(false);
+    await vi.waitFor(() => expect(runStatus.running).toBe(false));
+
+    expect(errorInfo.errors).toEqual([]);
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+    expect(mocks.completeProgress).toHaveBeenCalledWith("progress-1");
   });
 
   it("surfaces worker failure when job completes unsuccessfully", async () => {

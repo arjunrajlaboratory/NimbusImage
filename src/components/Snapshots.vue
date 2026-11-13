@@ -2468,8 +2468,10 @@ async function getUrlsForMovieWithAnnotations(
     store.datasetView?.id === originalViewId;
   // The old map keeps answering screenshots after a navigation, so nothing
   // else stops the loop: it would step the time of whichever view is open.
+  // The map is checked too: leaving and coming back to the same view within
+  // one render wait replaces it, and the frames would be the dead map's.
   const stopIfViewChanged = () => {
-    if (!isOriginalView()) {
+    if (!isOriginalView() || firstMap.value !== map) {
       throw new Error("the view changed during the capture");
     }
   };

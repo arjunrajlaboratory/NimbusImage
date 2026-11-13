@@ -203,6 +203,27 @@ describe("jobs store: settling tracked jobs when the stream fails", () => {
     expect(latestSocket()).toBe(socket);
   });
 
+  // The caller gets the completion only once addJob returns, so the status
+  // read must not hold it back.
+  it("settles from the stream while the status read is still pending", async () => {
+    await track("earlier-job");
+    const socket = latestSocket();
+    socket.readyState = 1;
+    await socket.onopen(new Event("open"));
+    mocks.get.mockImplementation(() => new Promise(() => {}));
+    const job = await track("slow-read-job");
+
+    await socket.onmessage({
+      data: JSON.stringify({
+        type: "job_status",
+        data: { _id: "slow-read-job", status: SUCCESS },
+      }),
+    });
+    await microtasks();
+
+    expect(job.settled()).toBe(true);
+  });
+
   it("leaves reading a job added while the stream connects to the open", async () => {
     await track("connecting-job");
     await track("second-connecting-job");

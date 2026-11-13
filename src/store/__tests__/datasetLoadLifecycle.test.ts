@@ -7,7 +7,7 @@
  * datasetLocationClamp.test.ts), each held until the test answers it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import main from "../index";
+import main, { shownDatasetId } from "../index";
 import sync from "../sync";
 import jobs from "../jobs";
 import rootStore from "../root";
@@ -395,6 +395,24 @@ describe("dataset load lifecycle", () => {
 
     expect(loads).toEqual(["ds"]);
     expect(main.dataset?.id).toBe("ds");
+  });
+});
+
+describe("shownDatasetId", () => {
+  it("is the dataset being loaded, then the loaded one", async () => {
+    Object.assign(state(), { dataset: { id: "old" } });
+    expect(shownDatasetId()).toBe("old");
+
+    const load = main.setSelectedDataset("new");
+    await vi.advanceTimersByTimeAsync(0);
+    // main.dataset is still the one being left
+    expect(main.dataset?.id).toBe("old");
+    expect(shownDatasetId()).toBe("new");
+
+    await answer(heldDatasets, "new");
+    await vi.advanceTimersByTimeAsync(0);
+    await load;
+    expect(shownDatasetId()).toBe("new");
   });
 });
 

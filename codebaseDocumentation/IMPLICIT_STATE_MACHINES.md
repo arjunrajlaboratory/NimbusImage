@@ -381,6 +381,15 @@ Still open:
   tour is open. That is how tours work; it surprised the live pass.
 - **A canceled worker job can still write its annotations** if it had already
   produced them. Worker and backend, not UI state.
+- **A submission still unanswered when logout completes** is tracked after
+  the retirement and is not retired: its POST has to outlast the logout
+  request. The next account would then see that tool or property running on
+  a shared dataset, as before `retireTrackedJobs`.
+- **An upload's transcoding job retired at logout** reports "the transcoding
+  job failed" to the sync indicator after the logout.
+- **A worker's own error and warning lines** are written into the kept
+  status while a run is in flight, so they show on another dataset of the
+  collection until the run ends. Only the end outcome is scoped.
 
 ## Live verification (2026-11-10)
 
@@ -529,6 +538,23 @@ Pipelines already stop there, because logout clears the configuration they
 check. And a property status kept across navigation showed dataset A's
 failed run on dataset B of the same collection; a run that ends on another
 dataset now releases the lock without recording an outcome.
+
+A fourth round (Codex CLI, and an independent regression pass over the fix
+commits) found more of the same: every waiter on a tracked job's promise had
+to be read after logout began settling it.
+
+- `addJob` awaited the status read it starts for a job added on an open
+  stream, so a slow read held back an outcome the stream had already
+  delivered (Codex). The read is no longer awaited.
+- A single property run that logout ended raised a persistent "Property
+  computation failed" toast for a job still running server-side. Runs,
+  pipelines and the tool outcome icon now check `sessionEndedSignal` before
+  reporting, writing the configuration or recording an outcome.
+- The dataset check of the previous round read `main.dataset`, which is the
+  dataset being left until the next one has loaded. It reads
+  `shownDatasetId` (`store/index.ts`) now.
+- Movie capture compared view ids only; leaving and returning to the same
+  view replaces the map, and the loop went on capturing from the old one.
 
 Independent review of the whole diff (three fresh-context reviewers, one per
 area) found no High findings and one Medium, the import dialog's file spinner
@@ -730,7 +756,18 @@ Jobs and runs:
   *"submits no further batch dataset once the session has ended"*
 - A run that ends while another dataset is open releases its lock without
   showing an outcome there (found by Codex):
-  *"does not show a run's outcome on another dataset"*
+  *"does not show a run's outcome on another dataset"*,
+  *"is the dataset being loaded, then the loaded one"*
+- Logout settling a job is not a failure: no toast, no configuration write,
+  no outcome icon (found by the independent pass):
+  *"reports no failure for a run that logout ended"*,
+  *"does not write a materialized property id after a logout"*,
+  *"records no outcome for a job that logout ended"*
+- A status read never holds back an outcome the stream delivered (found by
+  Codex):
+  *"settles from the stream while the status read is still pending"*
+- Movie capture stops when the map it captures from is replaced:
+  *"stops capturing once the map has been replaced"*
 - A cleanup that restores a value restores it only where it was captured
   (found by Codex):
   *"leaves the time alone when another view opened during the capture"*
