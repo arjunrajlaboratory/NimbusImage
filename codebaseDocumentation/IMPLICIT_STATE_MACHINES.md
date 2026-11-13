@@ -520,6 +520,16 @@ status could not be read. Logout now retires every tracked job
 cleared the property statuses and missed the job map they are derived
 beside: "dropped at logout" has to be checked per store, not per symptom.
 
+A third Codex CLI pass found two P2s, both consequences of earlier fixes on
+this branch. Retiring tracked jobs at logout settles each one as not
+successful, and the "apply to all" loops (worker tool and property) took
+that for a failed dataset and submitted the next one after logout; they now
+check `sessionEndedSignal` (`batchRuns.ts`) and count the rest as cancelled.
+Pipelines already stop there, because logout clears the configuration they
+check. And a property status kept across navigation showed dataset A's
+failed run on dataset B of the same collection; a run that ends on another
+dataset now releases the lock without recording an outcome.
+
 Independent review of the whole diff (three fresh-context reviewers, one per
 area) found no High findings and one Medium, the import dialog's file spinner
 sticking after an invalid file (a regression from this branch's own parse
@@ -714,6 +724,13 @@ Jobs and runs:
   *"drops the previous session's property run locks"*,
   *"stops tracking the previous session's jobs"*,
   *"stops tracking every job at logout and tells their listeners"*
+- A batch loop submits nothing after logout, although logout settles the
+  job it was waiting on (found by Codex):
+  *"submits no further dataset once the session has ended"*,
+  *"submits no further batch dataset once the session has ended"*
+- A run that ends while another dataset is open releases its lock without
+  showing an outcome there (found by Codex):
+  *"does not show a run's outcome on another dataset"*
 - A cleanup that restores a value restores it only where it was captured
   (found by Codex):
   *"leaves the time alone when another view opened during the capture"*

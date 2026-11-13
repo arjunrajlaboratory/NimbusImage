@@ -64,6 +64,7 @@ vi.mock("@/tools/creation/templates/AnnotationConfiguration.vue", () => ({}));
 
 import annotationStore from "./annotation";
 import rootStore from "./root";
+import { resetBatchRuns } from "./batchRuns";
 import { logError } from "@/utils/log";
 
 const tool = {
@@ -204,6 +205,47 @@ describe("worker compute actions report back on every path", () => {
       succeeded: 1,
       failed: 1,
       cancelled: 0,
+    });
+  });
+
+  // Logout settles the tracked job as not successful; the loop must not
+  // take that for a failed dataset and go on to the next one.
+  it("submits no further batch dataset once the session has ended", async () => {
+    mocks.main.api.findDatasetViews.mockResolvedValue([
+      { datasetId: "ds-a" },
+      { datasetId: "ds-b" },
+    ]);
+    mocks.main.api.batchResources.mockResolvedValue({ folder: {} });
+    mocks.main.annotationsAPI.computeAnnotationWithWorker.mockClear();
+    let endJob!: (success: boolean) => void;
+    mocks.addJob.mockReset();
+    mocks.addJob.mockReturnValue(
+      new Promise<boolean>((resolve) => (endJob = resolve)),
+    );
+    const onComplete = vi.fn();
+    const batch = annotationStore.computeAnnotationsWithWorkerBatch({
+      tool,
+      workerInterface: {},
+      configurationId: "config-1",
+      onBatchProgress: vi.fn(),
+      onJobProgress: vi.fn(),
+      onJobError: vi.fn(),
+      onCancel: vi.fn(),
+      onComplete,
+    });
+    await vi.waitFor(() => expect(mocks.addJob).toHaveBeenCalled());
+
+    resetBatchRuns();
+    endJob(false);
+    await batch;
+
+    expect(
+      mocks.main.annotationsAPI.computeAnnotationWithWorker,
+    ).toHaveBeenCalledTimes(1);
+    expect(onComplete).toHaveBeenCalledWith({
+      succeeded: 0,
+      failed: 0,
+      cancelled: 2,
     });
   });
 });

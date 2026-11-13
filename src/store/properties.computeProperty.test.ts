@@ -74,6 +74,8 @@ vi.mock("@/utils/log", () => ({
 vi.mock("geojs", () => ({ default: { util: {} } }));
 
 import properties from "@/store/properties";
+import main from "@/store/index";
+import { resetBatchRuns } from "@/store/batchRuns";
 import type { IAnnotationProperty, IErrorInfoList } from "@/store/model";
 
 const property = {
@@ -175,6 +177,29 @@ describe("property compute lifecycle", () => {
     expect(mocks.getPropertyValues).toHaveBeenCalledTimes(1);
     expect(mocks.updateHistograms).toHaveBeenCalledTimes(1);
     expect(mocks.completeProgress).toHaveBeenCalledWith("progress-1");
+  });
+
+  // The status of a run in flight is kept across navigation, so the dataset
+  // on screen when it ends may be another one of the same collection.
+  it("does not show a run's outcome on another dataset", async () => {
+    let endJob!: (success: boolean) => void;
+    mocks.addJob.mockReturnValue(
+      new Promise<boolean>((resolve) => (endJob = resolve)),
+    );
+    await properties.computeProperty({ property });
+    (main as any).dataset = { id: "dataset-2" };
+    try {
+      properties.resetPropertyState();
+      expect(status().running).toBe(true);
+
+      endJob(false);
+      await vi.waitFor(() => expect(status().running).toBe(false));
+
+      expect(status().previousRun).toBeNull();
+      expect(status().errorInfo?.errors).toEqual([]);
+    } finally {
+      (main as any).dataset = { id: "dataset-1" };
+    }
   });
 
   it("surfaces worker failure when job completes unsuccessfully", async () => {
@@ -363,6 +388,29 @@ describe("property batch compute lifecycle", () => {
       cancelled: 0,
     });
     expect(status()).toMatchObject({ running: false, previousRun: false });
+  });
+
+  // Logout settles the tracked job as not successful; the loop must not
+  // take that for a failed dataset and go on to the next one.
+  it("submits no further dataset once the session has ended", async () => {
+    let endJob!: (success: boolean) => void;
+    mocks.addJob.mockReturnValue(
+      new Promise<boolean>((resolve) => (endJob = resolve)),
+    );
+    const onComplete = vi.fn();
+    const batch = runBatch(onComplete);
+    await vi.waitFor(() => expect(mocks.addJob).toHaveBeenCalled());
+
+    resetBatchRuns();
+    endJob(false);
+    await batch;
+
+    expect(mocks.computeProperty).toHaveBeenCalledTimes(1);
+    expect(onComplete).toHaveBeenCalledWith({
+      succeeded: 0,
+      failed: 0,
+      cancelled: 2,
+    });
   });
 
   // `running` is a flag, so a property runs once at a time: a second run

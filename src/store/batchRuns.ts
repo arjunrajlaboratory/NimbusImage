@@ -227,6 +227,16 @@ const progressHideTimers = new Map<string, ReturnType<typeof setTimeout>>();
 // with the same key, nor schedule a hide.
 let resetGeneration = 0;
 
+// For the loops that submit one job after another (batches, pipelines):
+// true once a reset (a logout) has ended the session the loop started in.
+// Logout settles the loop's tracked job as not successful, and without this
+// check the loop would take that for an ordinary failure and submit its next
+// job. Unlike a cancel, stopping leaves the jobs already submitted running.
+export function sessionEndedSignal(): () => boolean {
+  const generation = resetGeneration;
+  return () => generation !== resetGeneration;
+}
+
 function cancelProgressHide(timerKey: string) {
   const timer = progressHideTimers.get(timerKey);
   if (timer !== undefined) {
@@ -306,7 +316,8 @@ export async function runBatch(
 }
 
 // Forget every batch run and pending hide (logout, tests). Batches still
-// running keep their server jobs but stop reporting here.
+// running keep their server jobs, but stop reporting here and submit nothing
+// further (sessionEndedSignal).
 export function resetBatchRuns() {
   ++resetGeneration;
   for (const timer of progressHideTimers.values()) {

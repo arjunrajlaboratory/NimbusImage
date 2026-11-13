@@ -9,6 +9,7 @@ import store from "./root";
 
 import main from "./index";
 import sync from "./sync";
+import { sessionEndedSignal } from "./batchRuns";
 import jobs, {
   toolRunKey,
   createProgressEventCallback,
@@ -2591,6 +2592,7 @@ export class Annotations extends VuexModule {
   }> {
     const submittedJobs: IAnnotationComputeJob[] = [];
     let isCancelled = false;
+    const sessionEnded = sessionEndedSignal();
 
     // Create the cancel function and notify the caller immediately
     const cancel = () => {
@@ -2641,7 +2643,7 @@ export class Annotations extends VuexModule {
 
     // Process each dataset
     for (const datasetId of datasetIds) {
-      if (isCancelled) {
+      if (isCancelled || sessionEnded()) {
         cancelled++;
         onBatchProgress({
           total,
@@ -2693,7 +2695,7 @@ export class Annotations extends VuexModule {
           // (avoids race condition where job finishes before we look it up)
           const success = await result.completionPromise;
 
-          if (isCancelled) {
+          if (isCancelled || sessionEnded()) {
             cancelled++;
           } else if (success) {
             completed++;

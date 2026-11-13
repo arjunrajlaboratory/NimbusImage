@@ -42,6 +42,7 @@ import {
 } from "@/utils/propertyValues";
 import { createSequenceGuard } from "@/utils/sequenceGuard";
 import annotations from "./annotation";
+import { sessionEndedSignal } from "./batchRuns";
 import jobs, {
   createProgressEventCallback,
   createErrorEventCallback,
@@ -200,6 +201,8 @@ function dropAlreadyComputingErrors(errorInfo: IErrorInfoList) {
 
 interface IPropertyRun {
   property: IAnnotationProperty;
+  // The dataset the run computes on
+  datasetId: string;
   status: IPropertyStatus;
   errorInfo: IErrorInfoList;
   progressId: string;
@@ -227,9 +230,18 @@ function finishPropertyRun(
   }
   progress.complete(run.progressId);
   run.status.running = false;
-  run.status.previousRun = success && !error;
   run.status.progressInfo = {};
-  run.status.errorInfo = run.errorInfo;
+  // The status is kept across navigation while the run is in flight (see
+  // resetPropertyStateImpl), so the dataset on screen may be another one of
+  // the same collection. The lock is released there, but the outcome is not
+  // shown: it would read as that dataset's own failed or finished run.
+  if (main.dataset?.id === run.datasetId) {
+    run.status.previousRun = success && !error;
+    run.status.errorInfo = run.errorInfo;
+  } else {
+    run.status.previousRun = null;
+    run.status.errorInfo = { errors: [] };
+  }
 }
 
 async function finishPropertyRuns(
@@ -938,6 +950,7 @@ export class Properties extends VuexModule {
     }
     const run: IPropertyRun = {
       property,
+      datasetId,
       status,
       errorInfo: activeErrorInfo,
       progressId,
@@ -1028,7 +1041,7 @@ export class Properties extends VuexModule {
           type: ProgressType.PROPERTY_COMPUTE,
           title: `Computing ${property.name}`,
         });
-        runs.push({ property, status, errorInfo, progressId });
+        runs.push({ property, datasetId, status, errorInfo, progressId });
       } catch (error) {
         addComputeError(errorInfo, "Property progress tracking failed", error);
         status.running = false;
@@ -1180,6 +1193,7 @@ export class Properties extends VuexModule {
     const scales = main.scales;
     const submittedJobIds: string[] = [];
     let isCancelled = false;
+    const sessionEnded = sessionEndedSignal();
 
     // Refuse while the property runs anywhere (a single run or another
     // batch), as computeProperty does; returns false without calling any
@@ -1257,7 +1271,7 @@ export class Properties extends VuexModule {
       let cancelled = 0;
 
       for (const datasetId of datasetIds) {
-        if (isCancelled) {
+        if (isCancelled || sessionEnded()) {
           cancelled++;
           onBatchProgress({
             total,
@@ -1315,7 +1329,7 @@ export class Properties extends VuexModule {
 
             const success = await jobs.addJob(computeJob);
 
-            if (isCancelled) {
+            if (isCancelled || sessionEnded()) {
               cancelled++;
             } else if (success) {
               completed++;
