@@ -120,7 +120,8 @@ let conversationGeneration = 0;
 // `hydrating` true and block every future send.
 let hydrationGeneration = 0;
 // Identity of the last authenticated user the conversation belonged to, so a
-// login/logout (client-side, no page reload) clears the prior user's history.
+// user change that does not reload the page (a login, or a session ending
+// without the Logout button) clears the prior user's history.
 // `undefined` until the first check runs.
 let lastKnownUserId: string | null | undefined = undefined;
 

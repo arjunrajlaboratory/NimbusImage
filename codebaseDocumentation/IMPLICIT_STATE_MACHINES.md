@@ -381,29 +381,17 @@ Still open:
   tour is open. That is how tours work; it surprised the live pass.
 - **A canceled worker job can still write its annotations** if it had already
   produced them. Worker and backend, not UI state.
-- **An upload's transcoding job retired at logout** reports "the transcoding
-  job failed" to the sync indicator after the logout.
 - **A worker's own error and warning lines** are written into the kept
   status while a run is in flight, so they show on another dataset of the
   collection until the run ends. Only the end outcome is scoped.
-- **State that outlives the login session** (also on master). Store modules
-  and module-level variables live as long as the page, and `logout()` resets
-  them one by one. Not reset today:
-  - `progress.ts` notifications: a sticky "Job Failed" or worker error toast
-    of the previous account is shown to the next one.
-  - `girderResources.ts` resource cache: a cached private collection renders
-    on `#/configuration/<id>` for the next person at the tab with no
-    request. (Datasets and views are fetched fresh and refused.)
-  - `projects.ts`: a cached private project renders on `#/project/<id>`.
-  - `datasetMetadataImport.ts`: an abandoned Zenodo import's annotations and
-    collection file are applied to the next upload in the tab (reachable
-    without a logout too; nothing calls `clearAllFiles`).
-  - `progress.trackHistogramJob` / `trackMaxMergeJob` create their entry and
-    then return without completing it when the dataset is gone.
-
-  The fix that closes the class is a full page reload at logout; a per-store
-  reset fixes each item but cannot show that the list is complete. Not
-  decided.
+- **An abandoned Zenodo import** (`datasetMetadataImport.ts`) applies its
+  annotations and collection file to the next upload in the tab; nothing
+  calls `clearAllFiles`. No logout is needed to reach it. Also on master.
+- **`progress.trackHistogramJob` / `trackMaxMergeJob`** create their entry
+  and then return without completing it when the dataset is gone.
+- **A session that ends without the Logout button** (a token that expires or
+  is revoked) reloads nothing: the page keeps showing the account until a
+  request fails. Also on master.
 - **Transitions the upload page does not own** (also on master, all narrow):
   the uploader's "Clear all" during dataset creation starts an upload of no
   files; `MultiSourceConfiguration`'s Submit is clickable again while the
@@ -411,6 +399,35 @@ Still open:
   dataset" have no double-click guard.
 - **The AI run loop's `catch`** has no generation check, so a request that
   fails after a forced clear adds its error to the new conversation.
+
+### Logout reloads the page
+
+State that outlives the login session was the largest class in the review
+rounds: four of them each found one more store, map or waiter that
+`logout()` did not reset, and the last sweep still listed stores nobody had
+reset (`progress.ts` notifications, the `girderResources.ts` and
+`projects.ts` caches, a transcoding job reported as failed after the
+logout). A per-store reset fixes each item and cannot show the list is
+complete, so the Logout button now ends in a full page reload
+(`UserProfileSettings.vue`, `utils/logoutRestart.ts`): every store module
+and module-level variable is discarded at once.
+
+On master the page stayed alive after a logout; now it does not. What
+depended on that:
+
+- **The login dialog.** It opens on a fresh visit to the root page, and
+  `hasUserLoggedOut` kept it closed after a logout. The reload would lose
+  that, so one marker crosses it in `sessionStorage`, is read once when the
+  store is created, and the dialog's first-load rule checks it.
+- **The AI conversation.** The watcher on the logged-in user wipes the stored
+  conversation at logout, asynchronously; the reload would cut that short
+  and the same account logging back in would get the conversation back. The
+  button awaits the wipe before reloading.
+- **`store.logout()`'s own resets** stay. They cover the time between the
+  logout request and the reload (the wipe and the navigation are awaited),
+  which is where the session guards (`sessionEndedSignal`, `trackJob`) act.
+
+A wipe or a navigation that fails is logged and the reload still happens.
 
 ## Live verification (2026-11-10)
 
@@ -735,6 +752,23 @@ Change any of the code below, re-check these.
 - AI panel: nothing from a cleared run reaches the new conversation:
   *"does not push a later tool's card into the conversation that replaced it"*,
   *"keeps the typed message when sending while a stored conversation loads"*
+
+### Logout
+
+- The Logout button ends in a page reload, after the server logout, the AI
+  conversation wipe and the navigation to root:
+  *"logs out, wipes the AI conversation, goes to root, then reloads"*
+- A failed wipe or navigation does not leave the previous account's page up:
+  *"still reloads when the AI conversation cannot be wiped"*,
+  *"still reloads when the navigation to root fails"*
+- The reloaded page knows it follows a logout, once:
+  *"tells the reloaded page once that it follows a logout"*,
+  *"starts the reloaded page's store as logged out by the user"*,
+  *"starts an ordinary page load's store as not logged out by the user"*
+- ...and does not greet the user with the login dialog:
+  *"does not open the login on the page a logout reloaded"*
+- Storage being unavailable does not stop the reload:
+  *"still reloads when the marker cannot be stored"*
 
 ### Second pass: the remaining machines and the review findings
 

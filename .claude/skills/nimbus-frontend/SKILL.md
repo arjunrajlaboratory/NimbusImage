@@ -1107,6 +1107,13 @@ More of the same kind, found by reviews of fixes that were each correct alone:
   the old job or hear it finish, so the lock never releases. Check every store
   that holds such state, not only the one the finding named: the property
   statuses were cleared one round before the tracked-job map beside them.
+  The Logout button now reloads the page (`utils/logoutRestart.ts`), which
+  discards every store at once; the per-store resets in `store.logout()`
+  cover only the time until the reload. Two things must be done before a
+  reload because it cuts async work short: await any cleanup of persisted
+  data (the AI conversation in IndexedDB), and carry anything the next page
+  load needs to know in `sessionStorage`, read once (the "follows a logout"
+  marker that keeps the login dialog closed).
 - Settling a promise to release a lock also resumes every loop awaiting it.
   Retiring tracked jobs at logout resolved them as "not successful", and the
   batch loops took that for a failed dataset and submitted the next one. Stop

@@ -125,6 +125,7 @@ import {
 import { createObjectSegmentationToolStateFromToolConfiguration } from "@/pipelines/objectSegmentationPipeline";
 import { isEqual } from "lodash";
 import { logError, logWarning } from "@/utils/log";
+import { takeLogoutRestart } from "@/utils/logoutRestart";
 
 const apiRootSuffix = "/api/v1";
 const defaultGirderUrl =
@@ -815,7 +816,9 @@ export class Main extends VuexModule {
   girderUser: IGirderUser | null = this.girderRest.user as IGirderUser | null;
   folderLocation: IGirderLocation = this.girderUser || { type: "users" };
   assetstores: IGirderAssetstore[] = [];
-  hasUserLoggedOut: boolean = false;
+  // True from a logout on, including on the page load that follows it:
+  // logout reloads the page (see utils/logoutRestart.ts).
+  hasUserLoggedOut: boolean = takeLogoutRestart();
   // True once startup has finished restoring the stored login (or found
   // none). Until then isLoggedIn is false even for a logged-in user, so a
   // page that sends logged-out users to login must wait for this.
@@ -2124,6 +2127,10 @@ export class Main extends VuexModule {
     this.isLayerDragging = value;
   }
 
+  // The Logout button reloads the page once this has run
+  // (UserProfileSettings.vue), which is what discards every store's state.
+  // The resets below cover the time until then, and the stale work that
+  // would otherwise run in it.
   @Action
   async logout() {
     sync.setSaving(true);
