@@ -39,6 +39,7 @@ import {
   resolveVisibilityConfig,
   resolveAnnotationOverviewConfig,
   ANNOTATION_LIST_SERVER_THRESHOLD,
+  IComputeJob,
 } from "./model";
 import type AnnotationsAPI from "./AnnotationsAPI";
 
@@ -99,6 +100,15 @@ function cloneAnnotation(annotation: IAnnotation): IAnnotation {
     location: { ...rawAnnotation.location },
     coordinates: toRaw(rawAnnotation.coordinates),
   });
+}
+
+// Track a submitted job, unless the session it was submitted in has ended.
+// The submit request can still be unanswered when logout retires the tracked
+// jobs; tracked after that, the job would be the previous account's, held
+// "running" for the next account on a shared dataset (which cannot read it).
+// Resolves false, as a retired job does: the waiter releases its run.
+function trackJob(job: IComputeJob, sessionEnded: () => boolean) {
+  return sessionEnded() ? Promise.resolve(false) : jobs.addJob(job);
 }
 
 @Module({ dynamic: true, store, name: "annotation" })
@@ -2387,6 +2397,7 @@ export class Annotations extends VuexModule {
       return null;
     }
     const datasetId = main.dataset.id;
+    const sessionEnded = sessionEndedSignal();
 
     // Clear errors
     error.errors = [];
@@ -2461,7 +2472,7 @@ export class Annotations extends VuexModule {
       jobs.toolRunEnded(runKey);
       callback(success);
     };
-    jobs.addJob(computeJob).then(
+    trackJob(computeJob, sessionEnded).then(
       async (success: boolean) => {
         try {
           // Awaited: `callback` consumers (the AI panel's wait_for_job among
@@ -2522,6 +2533,7 @@ export class Annotations extends VuexModule {
     if (!main.isLoggedIn) {
       return null;
     }
+    const sessionEnded = sessionEndedSignal();
     const workerInterface = (tool.values?.workerInterfaceValues ??
       {}) as IWorkerInterfaceValues;
     const { location, channel } =
@@ -2548,7 +2560,7 @@ export class Annotations extends VuexModule {
     };
     // Capture the completion promise immediately (a fast job can be removed
     // from the job map before we could look it up later).
-    const completionPromise = jobs.addJob(computeJob);
+    const completionPromise = trackJob(computeJob, sessionEnded);
     return { job: computeJob, completionPromise };
   }
 
@@ -2784,6 +2796,7 @@ export class Annotations extends VuexModule {
     if (!main.configuration || !main.isLoggedIn) {
       return null;
     }
+    const sessionEnded = sessionEndedSignal();
 
     // Clear errors
     errorInfo.errors = [];
@@ -2834,7 +2847,7 @@ export class Annotations extends VuexModule {
 
     // Capture the completion promise before the job can finish and
     // be removed from the job map (race condition fix)
-    const completionPromise = jobs.addJob(computeJob);
+    const completionPromise = trackJob(computeJob, sessionEnded);
 
     return { job: computeJob, completionPromise };
   }

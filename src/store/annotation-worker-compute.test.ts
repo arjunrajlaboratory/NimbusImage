@@ -208,6 +208,61 @@ describe("worker compute actions report back on every path", () => {
     });
   });
 
+  // The submit request can outlast a logout, which has by then retired the
+  // tracked jobs: tracked afterwards, the job would hold the tool "running"
+  // for the next account on a shared dataset.
+  describe("a submission answered after the session ended", () => {
+    let answer!: (response: unknown) => void;
+    beforeEach(() => {
+      mocks.addJob.mockReset();
+      mocks.main.annotationsAPI.computeAnnotationWithWorker.mockReturnValue(
+        new Promise((resolve) => (answer = resolve)),
+      );
+    });
+    async function answerAfterLogout() {
+      await vi.waitFor(() =>
+        expect(
+          mocks.main.annotationsAPI.computeAnnotationWithWorker,
+        ).toHaveBeenCalled(),
+      );
+      resetBatchRuns();
+      answer({ data: [{ _id: "job-late" }] });
+    }
+
+    it("is not tracked by a single run, which ends", async () => {
+      const callback = vi.fn();
+      const run = annotationStore.computeAnnotationsWithWorker({
+        tool,
+        workerInterface: {},
+        progress: {},
+        error: { errors: [] },
+        callback,
+      });
+      await answerAfterLogout();
+      await run;
+
+      await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(false));
+      expect(mocks.addJob).not.toHaveBeenCalled();
+      expect(mocks.runsInFlight).toEqual([]);
+      expect(mocks.progress.complete).toHaveBeenCalledWith("progress-1");
+    });
+
+    it("is not tracked by a pipeline step's submit", async () => {
+      const submit = annotationStore.submitAnnotationWorkerJob({
+        tool: {
+          ...tool,
+          values: { ...tool.values, workerInterfaceValues: {} },
+        },
+        datasetId: "ds-1",
+      });
+      await answerAfterLogout();
+      const submitted = await submit;
+
+      expect(mocks.addJob).not.toHaveBeenCalled();
+      expect(await submitted?.completionPromise).toBe(false);
+    });
+  });
+
   // Logout settles the tracked job as not successful; the loop must not
   // take that for a failed dataset and go on to the next one.
   it("submits no further batch dataset once the session has ended", async () => {

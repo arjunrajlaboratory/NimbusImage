@@ -205,6 +205,27 @@ describe("property compute lifecycle", () => {
     }
   });
 
+  // The submit request can outlast a logout, which has by then retired the
+  // tracked jobs: tracked afterwards, the job would hold the property
+  // "running" for the next account on a shared dataset.
+  it("does not track a job whose submission is answered after logout", async () => {
+    let answer!: (response: unknown) => void;
+    mocks.computeProperty.mockReturnValue(
+      new Promise((resolve) => (answer = resolve)),
+    );
+    const run = properties.computeProperty({ property });
+    await vi.waitFor(() => expect(mocks.computeProperty).toHaveBeenCalled());
+    const runStatus = status();
+
+    resetBatchRuns();
+    answer({ data: [{ _id: "job-late" }] });
+    await run;
+
+    await vi.waitFor(() => expect(runStatus.running).toBe(false));
+    expect(mocks.addJob).not.toHaveBeenCalled();
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
   // Logout settles the tracked job as not successful, but it did not fail:
   // no failure is recorded or shown to whoever logs in next.
   it("reports no failure for a run that logout ended", async () => {
@@ -434,6 +455,22 @@ describe("property batch compute lifecycle", () => {
       failed: 0,
       cancelled: 2,
     });
+  });
+
+  it("does not track a batch job whose submission is answered after logout", async () => {
+    let answer!: (response: unknown) => void;
+    mocks.computeProperty.mockReturnValue(
+      new Promise((resolve) => (answer = resolve)),
+    );
+    const batch = runBatch();
+    await vi.waitFor(() => expect(mocks.computeProperty).toHaveBeenCalled());
+
+    resetBatchRuns();
+    answer({ data: [{ _id: "job-late" }] });
+    await batch;
+
+    expect(mocks.addJob).not.toHaveBeenCalled();
+    expect(mocks.computeProperty).toHaveBeenCalledTimes(1);
   });
 
   // `running` is a flag, so a property runs once at a time: a second run

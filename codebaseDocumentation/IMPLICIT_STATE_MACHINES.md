@@ -381,10 +381,6 @@ Still open:
   tour is open. That is how tours work; it surprised the live pass.
 - **A canceled worker job can still write its annotations** if it had already
   produced them. Worker and backend, not UI state.
-- **A submission still unanswered when logout completes** is tracked after
-  the retirement and is not retired: its POST has to outlast the logout
-  request. The next account would then see that tool or property running on
-  a shared dataset, as before `retireTrackedJobs`.
 - **An upload's transcoding job retired at logout** reports "the transcoding
   job failed" to the sync indicator after the logout.
 - **A worker's own error and warning lines** are written into the kept
@@ -610,6 +606,13 @@ fresh-context reviewers, every report checked against the code:
 3. **A newly added `await` its callers did not expect.** Every function that
    gained one on the branch was read with its callers; none remains.
 
+A sixth Codex CLI pass then found the one session-end case this document
+had listed as open: a worker or property submission still unanswered when
+logout retires the tracked jobs was tracked afterwards, and held the tool
+"running" for the next account. Every submit site in `annotation.ts` and
+`properties.ts` now tracks through `trackJob`, which checks the session the
+submission started in.
+
 Independent review of the whole diff (three fresh-context reviewers, one per
 area) found no High findings and one Medium, the import dialog's file spinner
 sticking after an invalid file (a regression from this branch's own parse
@@ -812,6 +815,12 @@ Jobs and runs:
   showing an outcome there (found by Codex):
   *"does not show a run's outcome on another dataset"*,
   *"is the dataset being loaded, then the loaded one"*
+- A job whose submission is answered after logout is not tracked (found by
+  Codex):
+  *"is not tracked by a single run, which ends"*,
+  *"is not tracked by a pipeline step's submit"*,
+  *"does not track a job whose submission is answered after logout"*,
+  *"does not track a batch job whose submission is answered after logout"*
 - Logout settling a job is not a failure: no toast, no configuration write,
   no outcome icon (found by the independent pass):
   *"reports no failure for a run that logout ended"*,

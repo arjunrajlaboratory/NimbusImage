@@ -1112,7 +1112,9 @@ More of the same kind, found by reviews of fixes that were each correct alone:
   batch loops took that for a failed dataset and submitted the next one. Stop
   the loop first (`sessionEndedSignal` in `batchRuns.ts`), then settle. Then
   read every other waiter on that promise: a single property run raised a
-  "computation failed" toast for a job that was still running.
+  "computation failed" toast for a job that was still running. And a reset
+  that empties a map does not cover a request still in flight, which adds
+  its entry afterwards: check the session before adding (`trackJob`).
 - A status kept across navigation is shown on whatever dataset is open when
   the run ends. Release the lock there, but show the outcome only on the
   dataset the run was for (`finishPropertyRun`). "The dataset open" is the

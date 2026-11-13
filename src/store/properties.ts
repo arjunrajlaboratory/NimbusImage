@@ -28,6 +28,7 @@ import {
   MessageType,
   NotificationType,
   SPATIAL_PROPERTY_ID,
+  IComputeJob,
 } from "./model";
 
 import main, { adoptServerConfirmedPropertyId, shownDatasetId } from "./index";
@@ -296,6 +297,15 @@ async function finishPropertyRuns(
       finishPropertyRun(run, success);
     }
   }
+}
+
+// Track a submitted job, unless the session it was submitted in has ended.
+// The submit request can still be unanswered when logout retires the tracked
+// jobs; tracked after that, the job would be the previous account's, held
+// "running" for the next account on a shared dataset (which cannot read it).
+// Resolves false, as a retired job does: the waiter releases its run.
+function trackJob(job: IComputeJob, sessionEnded: () => boolean) {
+  return sessionEnded() ? Promise.resolve(false) : jobs.addJob(job);
 }
 
 @Module({ dynamic: true, store, name: "properties" })
@@ -1013,7 +1023,7 @@ export class Properties extends VuexModule {
       errorCallback: createErrorEventCallback(activeErrorInfo),
     };
 
-    const completion = jobs.addJob(computeJob);
+    const completion = trackJob(computeJob, sessionEnded);
     void finishPropertyRuns([{ run, completion }], async () => {
       await this.fetchPropertyValues();
       await (await import("./filters")).default.updateHistograms();
@@ -1127,7 +1137,11 @@ export class Properties extends VuexModule {
         },
         errorCallback: createErrorEventCallback(run.errorInfo),
       };
-      tracked.push({ run, job, completion: jobs.addJob(job) });
+      tracked.push({
+        run,
+        job,
+        completion: trackJob(job, sessionEnded),
+      });
     }
 
     void finishPropertyRuns(tracked, async () => {
@@ -1160,6 +1174,7 @@ export class Properties extends VuexModule {
     if (!main.isLoggedIn) {
       return null;
     }
+    const sessionEnded = sessionEndedSignal();
     const response = await this.propertiesAPI.computeProperty(
       property.id,
       datasetId,
@@ -1179,7 +1194,7 @@ export class Properties extends VuexModule {
     };
     // Capture the completion promise immediately (a fast job can be removed
     // from the job map before we could look it up later).
-    const completionPromise = jobs.addJob(computeJob);
+    const completionPromise = trackJob(computeJob, sessionEnded);
     return { job: computeJob, completionPromise };
   }
 
@@ -1348,7 +1363,7 @@ export class Properties extends VuexModule {
               },
             };
 
-            const success = await jobs.addJob(computeJob);
+            const success = await trackJob(computeJob, sessionEnded);
 
             if (isCancelled || sessionEnded()) {
               cancelled++;
