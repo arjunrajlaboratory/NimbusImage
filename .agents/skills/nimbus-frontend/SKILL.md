@@ -1068,7 +1068,9 @@ only that file.
    or one that implies another, are one state: use a single
    `null | { phase: "dragging" | "saving", ... }` so an impossible
    combination cannot be written and one assignment resets everything
-   (`dragState` in `AnnotationViewer.vue`, `phase` in `NewDataset.vue`).
+   (`dragState` in `AnnotationViewer.vue`). A longer flow gets one named
+   phase value, with where it failed recorded beside it and not as another
+   running state (`phase` and `failedPhase` in `NewDataset.vue`).
 3. **Who writes each transition?** List every writer, including the ones you
    did not write: a child component's own buttons and exposed methods, a
    `v-if` or `:key` that remounts the owner, a route change, a dataset
@@ -1086,7 +1088,7 @@ only that file.
    | nothing beyond this component | a local ref | unmount |
    | a remount (`:key`, `v-if`, a dialog closing, another tool selected) | a store module | you, on every exit |
    | only the open dataset | the per-dataset store state | `setSelectedDataset` |
-   | navigation between datasets | a store map keyed by every id that scopes it (configuration, dataset, tool or property) | you, plus the session check below |
+   | navigation between datasets | a store map keyed by every id that scopes it (user, configuration, dataset, tool or property; see `toolRunKey` in `store/jobs.ts`) | you, plus the session check below |
 
    Tool and property ids are shared by every dataset of a collection, so a
    key of the tool id alone is the wrong scope. Anything kept across
@@ -1106,18 +1108,20 @@ only that file.
 
 ### Owners that already exist
 
-Derive from these. Do not add a flag beside them.
+Read these (a computed over the getter). Do not add a flag beside them.
+Two are private to their module, marked below: a change that needs them
+extends that module instead of keeping a second record elsewhere.
 
 | Question | Owner |
 |---|---|
 | Is a save or load in flight? What was the last error? | `sync.setSaving` / `sync.setLoading` (`store/sync.ts`); they are counts, so every `true` needs its `false` in a `finally` |
 | Is a dataset or view loading? Which dataset is on screen? | `sync.datasetLoading`; `shownDatasetId()` (`store/index.ts`), not `store.dataset`, which is the outgoing one until the load lands |
 | Is this worker tool running here? Which job? How did it end? | `jobs.isToolRunInFlight`, `jobIdForToolInDataset`, `toolJobOutcome` (`store/jobs.ts`); submit through the store actions so the run is recorded before the job exists |
-| Is this property computing? How did the last run end? | `propertyStore.propertyStatuses[id]`; `jobs.jobIdForPropertyInDataset` |
+| Is this property computing? How did the last run end? | `propertyStore.getStatus(id)`; `jobs.jobIdForPropertyInDataset` |
 | Is a pipeline running? | `pipelinesStore.runningPipelineId`, and the controller from `usePipelineRun.ts` |
 | Is an "apply to all" batch running? Was it cancelled? | `runBatch` and `batchRuns.shownRun` / `anyInFlight` (`store/batchRuns.ts`); `runBatch` returns `cancelRequested` |
-| Has the login session ended since this started? | `sessionEndedSignal()` (`store/batchRuns.ts`), captured before the first `await`; `trackJob` for a submission answered late |
-| Is a route-driven change of mine still in flight? | `pendingSets` in `utils/useRouteMapper.ts` |
+| Has the login session ended since this started? | `sessionEndedSignal()` (`store/batchRuns.ts`), captured before the first `await`. For a submission answered late, `trackJob`, a file-local helper in `store/annotation.ts` and in `store/properties.ts` (private): every submit site in those files goes through it |
+| Is a route-driven change of mine still in flight? | `pendingSets` in `utils/useRouteMapper.ts` (private) |
 | Where is the upload flow? | `store.uploadWorkflow`, and `phase` / `failedPhase` in `NewDataset.vue` |
 
 ### Tests that go with it

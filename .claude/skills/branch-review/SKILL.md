@@ -122,6 +122,7 @@ This keeps every actionable item discoverable from the Findings Summary table by
 | **Stale String Reference** | `dispatch("...")`/event-name string not updated when the member was renamed |
 | **Hidden-Mounted Work** | Expensive work in hidden-but-mounted content not gated on visibility: mount-time work in `FloatingPalette` slots, per-scrub computeds in palettes or once-opened `VWindowItem` tabs |
 | **Overlay Stacking** | New floating palette/panel absent from the shared right-edge clearance computation |
+| **State Flag Machine** | A loading/running/pending flag that duplicates a store's record, lacks a failure or abandonment exit, lets two requests overlap, or outlives the dataset or session it describes |
 
 ## Cross-Cutting Checks
 
@@ -325,7 +326,7 @@ A new floating palette or edge-anchored panel must join the shared right-edge cl
 
 ### 15. State Flags Are State Machines
 Grep the diff for added or changed "what is this doing right now" state: `ref(false)` / `ref<... | null>(null)` named `loading`, `running`, `saving`, `submitting`, `pending`, `is*ing`, a phase string, a store field or module-level variable of the same kind, and any new `await` inside a function that sets one. For each, ask the seven questions in the nimbus-frontend skill ("State flags are state machines"). The ones that produce findings:
-- **Duplicate owner.** Is the same fact already in a store (`sync`, `jobs`, `batchRuns`, `propertyStatuses`, `runningPipelineId`)? A component ref beside it will disagree. Flag it and name the owner to derive from.
+- **Duplicate owner.** Is the same fact already in a store (`sync`, `jobs`, `batchRuns`, `propertyStore.getStatus`, `runningPipelineId`)? A component ref beside it will disagree. Flag it and name the owner to derive from.
 - **Missing exit.** Follow every path out of the state: success, rejection (is the reset in `finally`, and is every `await` after the set inside the `try`?), cancel, and abandonment (unmount, blur, navigation, the target going away). A gesture with a commit and no cancel, or a reset on the line after an `await`, is a finding.
 - **Overlap.** Call it twice in your head before the first call settles. A boolean cleared by the first to finish, a lock taken after an `await`, or a late response writing over a newer one is a finding.
 - **Transitions the author did not write.** A child component's own buttons and exposed methods, a `:key` or `v-if` that remounts the owner (it throws away the only record of a request in flight), a route change, a dataset switch, a logout. List them and check each lands in a defined state.
