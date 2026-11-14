@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -280,6 +280,17 @@ import { MAX_BOX_POINTS, MAX_PLOT_POINTS, MAX_SAMPLE_ROWS } from "./analysis";
 import { jobStates } from "@/store/jobConstants";
 import { clearPlots, getPlot } from "./plotRegistry";
 import { resetBatchRuns, runBatch } from "@/store/batchRuns";
+import {
+  PANELS,
+  PANEL_IDS,
+  PanelId,
+  WORKSPACES,
+  applyOpen,
+} from "@/utils/panelRegistry";
+import {
+  IPanelLayoutController,
+  registerPanelLayoutController,
+} from "@/utils/panelLayoutController";
 
 const mockMain = main as any;
 const mockAnnotations = annotationStore as any;
@@ -1926,6 +1937,169 @@ describe("display + view mode tools", () => {
     await expect(
       executeAgentTool("set_display_options", {}, context),
     ).rejects.toBeInstanceOf(ToolExecutionError);
+  });
+
+  describe("set_panels", () => {
+    // A stand-in for App.vue's layout owner that applies the real placement
+    // rules, so "what ends up open" is what the app would do.
+    function registerLayout(overrides: Partial<IPanelLayoutController> = {}): {
+      open: PanelId[];
+      unregister: () => void;
+    } {
+      const state = { open: ["navigatorPanel", "layersPanel"] as PanelId[] };
+      const unregister = registerPanelLayoutController({
+        inViewer: () => true,
+        openPanels: () => [...state.open],
+        minimizedPanels: () => [],
+        allHidden: () => false,
+        isAvailable: (id) => id !== "transcriptsPanel",
+        open: (id) => {
+          state.open = [...applyOpen(new Set(state.open), id)];
+        },
+        close: (id) => {
+          state.open = state.open.filter((other) => other !== id);
+        },
+        applyOpenSet: (ids) => {
+          state.open = [...ids];
+        },
+        ...overrides,
+      });
+      return {
+        get open() {
+          return state.open;
+        },
+        unregister,
+      };
+    }
+
+    let layout: ReturnType<typeof registerLayout> | null = null;
+    afterEach(() => {
+      layout?.unregister();
+      layout = null;
+    });
+
+    it("applies a workspace, then opens and closes, and reports what is open", async () => {
+      layout = registerLayout();
+      const { result } = (await executeAgentTool(
+        "set_panels",
+        { workspace: "plot", open: ["toolsPanel"], close: ["layersPanel"] },
+        context,
+      )) as any;
+      expect(layout.open).toEqual([
+        "filtersPanel",
+        "analysisPanel",
+        "toolsPanel",
+      ]);
+      expect(result.panels.open.map((panel: any) => panel.title)).toEqual([
+        "Filters",
+        "Analysis",
+        "Tools",
+      ]);
+      expect(result.notOpen).toBeUndefined();
+    });
+
+    it("says which requested panels the placement rules displaced", async () => {
+      layout = registerLayout();
+      const { result } = (await executeAgentTool(
+        "set_panels",
+        { open: ["annotationPanel", "settingsPanel"] },
+        context,
+      )) as any;
+      expect(layout.open).toContain("settingsPanel");
+      expect(layout.open).not.toContain("annotationPanel");
+      expect(result.notOpen).toEqual(["Object Browser"]);
+      expect(result.note).toMatch(/only one/);
+    });
+
+    it("refuses outside the viewer, an unknown name, an unavailable panel and an empty request", async () => {
+      await expect(
+        executeAgentTool("set_panels", { workspace: "plot" }, context),
+      ).rejects.toThrow(/dataset viewer/);
+
+      layout = registerLayout();
+      for (const [input, message] of [
+        [{ workspace: "party" }, /Unknown workspace/],
+        [{ open: ["sidePanel"] }, /Unknown panel/],
+        [{ close: "layersPanel" }, /list of panel ids/],
+        [{ open: ["transcriptsPanel"] }, /not available/],
+        [{}, /Give a workspace/],
+      ] as const) {
+        await expect(
+          executeAgentTool("set_panels", input, context),
+        ).rejects.toThrow(message);
+      }
+      // Nothing was changed by a refused request.
+      expect(layout.open).toEqual(["navigatorPanel", "layersPanel"]);
+
+      layout.unregister();
+      layout = registerLayout({ inViewer: () => false });
+      await expect(
+        executeAgentTool("set_panels", { workspace: "plot" }, context),
+      ).rejects.toThrow(/dataset viewer/);
+    });
+
+    it("is not gated: it is visible and reversible", () => {
+      expect(isGatedTool("set_panels")).toBe(false);
+    });
+
+    it("describes the call in words", () => {
+      expect(
+        describeAgentToolCall("set_panels", {
+          workspace: "analyze",
+          close: ["layersPanel"],
+        }),
+      ).toBe("Switch to the Analyze workspace; close Layers");
+      expect(
+        describeAgentToolCall("set_panels", { open: ["annotationPanel"] }),
+      ).toBe("Open Object Browser");
+    });
+
+    it("the interface state lists the panels, and nothing outside the viewer", () => {
+      expect(buildInterfaceState().panels).toBeNull();
+      layout = registerLayout({
+        minimizedPanels: () => ["layersPanel"],
+        allHidden: () => true,
+      });
+      const panels = buildInterfaceState().panels!;
+      expect(panels.open).toEqual([
+        { id: "navigatorPanel", title: "Navigator" },
+      ]);
+      expect(panels.minimized).toEqual([
+        { id: "layersPanel", title: "Layers" },
+      ]);
+      expect(panels.allHidden).toBe(true);
+      expect(panels.available.map((panel) => panel.id)).not.toContain(
+        "transcriptsPanel",
+      );
+      expect(panels.workspaces.map((workspace) => workspace.id)).toEqual(
+        WORKSPACES.map((workspace) => workspace.id),
+      );
+    });
+
+    it("the schema the model is given names every workspace and panel", () => {
+      const schema = JSON.parse(
+        readFileSync(
+          resolve(
+            process.cwd(),
+            "devops/girder/plugins/girder-claude-chat/girder_claude_chat/agent_tools.json",
+          ),
+          "utf8",
+        ),
+      ).find((tool: { name: string }) => tool.name === "set_panels");
+      const properties = schema.input_schema.properties;
+      expect(properties.workspace.enum).toEqual(
+        WORKSPACES.map((workspace) => workspace.id),
+      );
+      expect(properties.open.items.enum).toEqual(PANEL_IDS);
+      expect(properties.close.items.enum).toEqual(PANEL_IDS);
+      // The description is where the model learns what each one is.
+      for (const workspace of WORKSPACES) {
+        expect(schema.description).toContain(workspace.id);
+      }
+      for (const panel of PANELS) {
+        expect(schema.description).toContain(`${panel.id} (${panel.title}`);
+      }
+    });
   });
 
   it("set_view_mode switches 2D/3D and rejects other values", async () => {

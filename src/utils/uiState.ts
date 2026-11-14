@@ -14,7 +14,7 @@
 //   * It only touches keys under its own prefix. `nimbus.girderToken` is the
 //     user's live session.
 
-import { Ref, ref, watch } from "vue";
+import { Ref, effectScope, ref, watch } from "vue";
 
 const KEY_PREFIX = "nimbus.ui.";
 const ANONYMOUS_SCOPE = "anonymous";
@@ -122,4 +122,49 @@ export function usePersistedUiState<T>(
     { deep: true, flush: "sync" },
   );
   return state;
+}
+
+// One ref per key, shared by every component that asks for it. For state
+// that several instances of a component read and write (which layer rows are
+// expanded): with a ref each, every instance would hold its own copy of the
+// list and the last one to write would drop the others' changes.
+const sharedStates = new Map<string, Ref<unknown>>();
+let sharedScope = effectScope(true);
+
+/**
+ * `usePersistedUiState`, but the same ref for everyone using `key`. It lives
+ * for the page, so it can be called from any component's setup.
+ */
+export function useSharedPersistedUiState<T>(
+  key: string,
+  defaultValue: () => T,
+  validate: (raw: unknown) => T | null,
+): Ref<T> {
+  let state = sharedStates.get(key);
+  if (!state) {
+    state = sharedScope.run(() =>
+      usePersistedUiState(key, defaultValue, validate),
+    )!;
+    sharedStates.set(key, state);
+  }
+  return state as Ref<T>;
+}
+
+/** For tests: drop the shared refs, as a page load would. */
+export function forgetSharedUiState(): void {
+  sharedScope.stop();
+  sharedScope = effectScope(true);
+  sharedStates.clear();
+}
+
+/** `validate` for a stored boolean. */
+export function asStoredBoolean(raw: unknown): boolean | null {
+  return typeof raw === "boolean" ? raw : null;
+}
+
+/** `validate` for a stored list of strings; anything else in it is dropped. */
+export function asStoredStrings(raw: unknown): string[] | null {
+  return Array.isArray(raw)
+    ? raw.filter((item): item is string => typeof item === "string")
+    : null;
 }

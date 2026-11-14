@@ -8,6 +8,7 @@ import {
   layoutWithOpen,
   layoutWithOpenSet,
   leftOrderAfterDrop,
+  leftOrderAfterStep,
   validateArrangement,
   validateLayout,
 } from "./panelLayout";
@@ -164,6 +165,38 @@ describe("panelLayout", () => {
             { id: "toolsPanel", center: 500 },
           ]),
         ).toEqual(["layersPanel", "toolsPanel", "navigatorPanel"]);
+      });
+    });
+
+    describe("leftOrderAfterStep", () => {
+      const order = ["navigatorPanel", "layersPanel", "toolsPanel"] as const;
+      const all = [...order];
+
+      it("moves one place, and stops at either end", () => {
+        expect(leftOrderAfterStep(order, "layersPanel", -1, all)).toEqual([
+          "layersPanel",
+          "navigatorPanel",
+          "toolsPanel",
+        ]);
+        expect(leftOrderAfterStep(order, "layersPanel", 1, all)).toEqual([
+          "navigatorPanel",
+          "toolsPanel",
+          "layersPanel",
+        ]);
+        expect(leftOrderAfterStep(order, "navigatorPanel", -1, all)).toEqual(
+          order,
+        );
+        expect(leftOrderAfterStep(order, "toolsPanel", 1, all)).toEqual(order);
+      });
+
+      it("steps past a palette that is not showing, so every press moves it on screen", () => {
+        // Layers is closed: Navigator's neighbor on screen is Tools.
+        expect(
+          leftOrderAfterStep(order, "navigatorPanel", 1, [
+            "navigatorPanel",
+            "toolsPanel",
+          ]),
+        ).toEqual(["toolsPanel", "layersPanel", "navigatorPanel"]);
       });
     });
 

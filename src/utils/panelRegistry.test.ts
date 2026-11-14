@@ -7,6 +7,7 @@ import {
   applyOpen,
   countBadge,
   isPanelAvailable,
+  isPanelRelevant,
   panelBadge,
 } from "./panelRegistry";
 
@@ -51,6 +52,7 @@ describe("panelRegistry", () => {
       activeFilterCount: 0,
       activeAnalysisGateCount: 0,
       transcriptsReachable: false,
+      hasUnseenJobResults: false,
     };
 
     it("a count badge is empty at zero and capped at 9+", () => {
@@ -68,6 +70,15 @@ describe("panelRegistry", () => {
         panelBadge("analysisPanel", { ...quiet, activeAnalysisGateCount: 12 }),
       ).toBe("9+");
       expect(panelBadge("layersPanel", context)).toBeNull();
+    });
+
+    it("only the Object Browser is accented, and only for unseen job results", () => {
+      for (const id of PANEL_IDS) {
+        expect(isPanelRelevant(id, quiet)).toBe(false);
+        expect(
+          isPanelRelevant(id, { ...quiet, hasUnseenJobResults: true }),
+        ).toBe(id === "annotationPanel");
+      }
     });
 
     it("only Transcripts depends on the dataset, and every other panel is always available", () => {

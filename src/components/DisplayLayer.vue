@@ -1,6 +1,6 @@
 <template>
-  <v-expansion-panels>
-    <v-expansion-panel>
+  <v-expansion-panels v-model="expandedModel">
+    <v-expansion-panel :value="EXPANDED">
       <v-expansion-panel-title class="displayLayerHeader">
         <div class="layer-title-row">
           <div class="layer-name-cell">
@@ -74,8 +74,8 @@
             :label="channelName(channel)"
           />
         </v-radio-group>
-        <v-expansion-panels>
-          <v-expansion-panel>
+        <v-expansion-panels v-model="advancedModel">
+          <v-expansion-panel :value="EXPANDED">
             <v-expansion-panel-title
               >Advanced layer options</v-expansion-panel-title
             >
@@ -136,10 +136,63 @@ import store from "../store";
 import { IHotkey } from "@/utils/v-mousetrap";
 import { useCommand } from "@/commands/registry";
 import { boundHotkey } from "@/commands/hotkeys";
+import {
+  asStoredBoolean,
+  asStoredStrings,
+  useSharedPersistedUiState,
+} from "@/utils/uiState";
+import { usePanelVisible } from "@/utils/panelVisibility";
 
 const props = defineProps<{
   modelValue: IDisplayLayer;
 }>();
+
+// Which rows are expanded is remembered between visits, per user. The list
+// is shared by every row (one ref for the key), holds layer ids only as
+// "this row was open" (an id that matches no layer here does nothing), and
+// is kept to the most recent so it cannot grow without bound.
+const EXPANDED = "expanded";
+const MAX_REMEMBERED_EXPANDED_LAYERS = 200;
+const expandedLayerIds = useSharedPersistedUiState<string[]>(
+  "layers.expandedIds",
+  () => [],
+  asStoredStrings,
+);
+// A remembered row is expanded only while its palette is on screen: expanded,
+// it reads the layer's histogram, which is a request per frame change, and a
+// row restored at page load in a palette nobody opened must not start that.
+const panelVisible = usePanelVisible();
+const expandedModel = computed({
+  get: () =>
+    panelVisible.value && expandedLayerIds.value.includes(props.modelValue.id)
+      ? EXPANDED
+      : undefined,
+  set: (value: string | undefined) => {
+    if (!panelVisible.value) {
+      return;
+    }
+    const others = expandedLayerIds.value.filter(
+      (id) => id !== props.modelValue.id,
+    );
+    expandedLayerIds.value = (
+      value === EXPANDED ? [...others, props.modelValue.id] : others
+    ).slice(-MAX_REMEMBERED_EXPANDED_LAYERS);
+  },
+});
+
+// One setting for every layer: someone who works in the advanced options
+// wants them open wherever they look.
+const advancedOpen = useSharedPersistedUiState(
+  "layers.advancedOpen",
+  () => false,
+  asStoredBoolean,
+);
+const advancedModel = computed({
+  get: () => (advancedOpen.value ? EXPANDED : undefined),
+  set: (value: string | undefined) => {
+    advancedOpen.value = value === EXPANDED;
+  },
+});
 
 const alternativeZSlice = ref<IDisplaySlice>({ type: "current", value: null });
 

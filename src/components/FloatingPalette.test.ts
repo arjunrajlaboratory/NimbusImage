@@ -196,6 +196,95 @@ describe("FloatingPalette", () => {
     });
   });
 
+  describe("from the keyboard", () => {
+    function key(
+      wrapper: ReturnType<typeof mountPalette>,
+      selector: string,
+      init: KeyboardEventInit,
+    ) {
+      const event = new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      });
+      let reached = false;
+      const listener = () => {
+        reached = true;
+      };
+      document.body.addEventListener("keydown", listener);
+      wrapper.find(selector).element.dispatchEvent(event);
+      document.body.removeEventListener("keydown", listener);
+      return { reached, prevented: event.defaultPrevented };
+    }
+
+    function mountResizable(resizeEdge: "left" | "right") {
+      const wrapper = mountPalette({ resizeEdge });
+      Object.defineProperty(palette(wrapper), "offsetWidth", { value: 400 });
+      return wrapper;
+    }
+
+    it("the handle can be focused and says how wide the palette is", () => {
+      const handle = mountResizable("right").find(HANDLE);
+      expect(handle.attributes("tabindex")).toBe("0");
+      expect(handle.attributes("aria-valuenow")).toBe("400");
+    });
+
+    it("arrows resize toward and away from the canvas, more with Shift", () => {
+      const left = mountResizable("right"); // a left palette: canvas is right
+      key(left, HANDLE, { key: "ArrowRight" });
+      key(left, HANDLE, { key: "ArrowLeft" });
+      key(left, HANDLE, { key: "ArrowRight", shiftKey: true });
+      expect(left.emitted("resize-end")).toEqual([[416], [384], [464]]);
+
+      const right = mountResizable("left"); // a right palette: canvas is left
+      key(right, HANDLE, { key: "ArrowLeft" });
+      key(right, HANDLE, { key: "ArrowRight" });
+      expect(right.emitted("resize-end")).toEqual([[416], [384]]);
+    });
+
+    it("Enter on the handle asks for the default width", () => {
+      const wrapper = mountResizable("right");
+      key(wrapper, HANDLE, { key: "Enter" });
+      expect(wrapper.emitted("resize-reset")).toHaveLength(1);
+    });
+
+    it("keeps the keys it uses from the viewer's hotkeys, and passes on the rest", () => {
+      const wrapper = mountPalette({ resizeEdge: "right", reorderable: true });
+      expect(key(wrapper, HANDLE, { key: "ArrowLeft" })).toEqual({
+        reached: false,
+        prevented: true,
+      });
+      expect(key(wrapper, GRIP, { key: "ArrowDown" })).toEqual({
+        reached: false,
+        prevented: true,
+      });
+      expect(key(wrapper, HANDLE, { key: "ArrowUp" }).reached).toBe(true);
+      expect(key(wrapper, GRIP, { key: "ArrowLeft" }).reached).toBe(true);
+      expect(key(wrapper, GRIP, { key: "Tab" }).prevented).toBe(false);
+    });
+
+    it("up and down on the grip move the palette one place", () => {
+      const wrapper = mountPalette({ reorderable: true });
+      const grip = wrapper.find(GRIP);
+      expect(grip.attributes("tabindex")).toBe("0");
+      expect(grip.attributes("role")).toBe("button");
+      expect(grip.attributes("aria-hidden")).toBeUndefined();
+      expect(grip.attributes("aria-label")).toContain("Move Layers");
+      key(wrapper, GRIP, { key: "ArrowUp" });
+      key(wrapper, GRIP, { key: "ArrowDown" });
+      expect(wrapper.emitted("reorder-step")).toEqual([[-1], [1]]);
+    });
+
+    it("a grip that cannot reorder stays decoration", () => {
+      const wrapper = mountPalette();
+      const grip = wrapper.find(GRIP);
+      expect(grip.attributes("aria-hidden")).toBe("true");
+      expect(grip.attributes("tabindex")).toBeUndefined();
+      key(wrapper, GRIP, { key: "ArrowDown" });
+      expect(wrapper.emitted("reorder-step")).toBeUndefined();
+    });
+  });
+
   describe("reordering", () => {
     it("carries the palette with the drag and reports where it was dropped", async () => {
       const wrapper = mountPalette({ reorderable: true });

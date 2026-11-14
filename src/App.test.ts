@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { nextTick } from "vue";
 import { routeLocationKey } from "vue-router";
-import { shallowMount, flushPromises } from "@vue/test-utils";
+import { shallowMount, flushPromises, config } from "@vue/test-utils";
 
 vi.mock("@/utils/log", () => ({
   logError: vi.fn(),
@@ -175,6 +175,8 @@ describe("App", () => {
     (store as any).setPaletteOpenRequests = vi.fn();
     (store as any).configuration = null;
     (store as any).datasetView = null;
+    (store as any).annotationPanelBadge = false;
+    (store as any).setAnnotationPanelBadge = vi.fn();
     (propertyStore as any).uncomputedCountByProperty = {};
     (filterStore as any).activeFilterCount = 0;
     (filterStore as any).activeAnalysisGateCount = 0;
@@ -759,6 +761,114 @@ describe("App", () => {
       hideAll.handler(document.body, new KeyboardEvent("keydown"));
       await nextTick();
       expect(toggle().classes()).not.toContain("active");
+    });
+
+    it("the arrow keys on a left palette's grip move it one place", async () => {
+      const wrapper = mountViewer();
+      paletteStub(wrapper, "Navigator").vm.$emit("reorder-step", 1);
+      await nextTick();
+      expect(storedArrangement().leftOrder).toEqual([
+        "layersPanel",
+        "navigatorPanel",
+        "toolsPanel",
+      ]);
+      // Layers is closed: Tools steps past it to above Navigator.
+      (wrapper.vm as any).togglePalette("layersPanel");
+      paletteStub(wrapper, "Tools").vm.$emit("reorder-step", -1);
+      await nextTick();
+      expect(storedArrangement().leftOrder).toEqual([
+        "layersPanel",
+        "toolsPanel",
+        "navigatorPanel",
+      ]);
+    });
+
+    it("a closed panel with unseen job results is accented until it is shown", async () => {
+      (store as any).annotationPanelBadge = true;
+      (store as any).setAnnotationPanelBadge = vi.fn((value: boolean) => {
+        (store as any).annotationPanelBadge = value;
+      });
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      await nextTick();
+      const toggle = wrapper.get(
+        '[data-command-id="panel.toggle.annotationPanel"]',
+      );
+      expect(toggle.classes()).toContain("relevant");
+      expect(toggle.attributes("aria-label")).toBe("Object list (new results)");
+      // No other toggle is accented.
+      expect(wrapper.findAll(".palette-ibtn.relevant")).toHaveLength(1);
+
+      vm.togglePalette("annotationPanel");
+      await nextTick();
+      expect(store.setAnnotationPanelBadge).toHaveBeenCalledWith(false);
+      expect(toggle.classes()).not.toContain("relevant");
+      expect(toggle.attributes("aria-label")).toBe("Object list");
+    });
+
+    it("a minimized panel's chip carries the accent, and another dataset clears it", async () => {
+      (store as any).setAnnotationPanelBadge = vi.fn((value: boolean) => {
+        (store as any).annotationPanelBadge = value;
+      });
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      vm.togglePalette("annotationPanel");
+      paletteStub(wrapper, "Object Browser").vm.$emit("minimize");
+      (store as any).annotationPanelBadge = true;
+      await nextTick();
+      const chip = wrapper.get(
+        '[aria-label="Restore Object Browser (new results)"]',
+      );
+      expect(chip.classes()).toContain("relevant");
+
+      (store as any).dataset = { id: "ds2", name: "Another" };
+      await nextTick();
+      expect((store as any).annotationPanelBadge).toBe(false);
+      expect(
+        wrapper.get('[aria-label="Restore Object Browser"]').classes(),
+      ).not.toContain("relevant");
+    });
+
+    it("gives the AI agent's tools the layout's owner while mounted", async () => {
+      const { panelLayoutController } = await import(
+        "@/utils/panelLayoutController"
+      );
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      const controller = panelLayoutController()!;
+      expect(controller.inViewer()).toBe(true);
+      controller.applyOpenSet(["layersPanel", "filtersPanel", "analysisPanel"]);
+      expect(vm.analysisPanel).toBe(true);
+      expect(vm.navigatorPanel).toBe(false);
+      controller.close("layersPanel");
+      controller.open("toolsPanel");
+      expect(controller.openPanels()).toEqual([
+        "filtersPanel",
+        "analysisPanel",
+        "toolsPanel",
+      ]);
+      paletteStub(wrapper, "Tools").vm.$emit("minimize");
+      expect(controller.minimizedPanels()).toEqual(["toolsPanel"]);
+      expect(controller.isAvailable("transcriptsPanel")).toBe(false);
+
+      wrapper.unmount();
+      expect(panelLayoutController()).toBeNull();
+    });
+
+    it("tells the Layers panel whether it is on screen", async () => {
+      // The panel is the palette stub's slot content, which a shallow mount
+      // renders only when asked.
+      config.global.renderStubDefaultSlot = true;
+      try {
+        const wrapper = mountViewer();
+        const layers = () => wrapper.findComponent({ name: "LayersPanel" });
+        expect(layers().props("visible")).toBe(true);
+        paletteStub(wrapper, "Layers").vm.$emit("minimize");
+        await nextTick();
+        expect(layers().props("visible")).toBe(false);
+      } finally {
+        config.global.renderStubDefaultSlot = false;
+      }
     });
 
     it("the palettes of a zone start below its chip row, the other zone does not move", async () => {

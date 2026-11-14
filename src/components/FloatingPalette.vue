@@ -21,7 +21,16 @@
         <span
           class="palette-grip"
           :class="{ 'is-handle': reorderable }"
-          aria-hidden="true"
+          v-bind="
+            reorderable
+              ? {
+                  role: 'button',
+                  tabindex: 0,
+                  'aria-label': `Move ${title}: drag, or press the up and down arrow keys`,
+                }
+              : { 'aria-hidden': 'true' }
+          "
+          @keydown="onGripKey"
           @pointerdown="startReorder"
           @pointermove="moveGesture"
           @pointerup="endGesture"
@@ -78,8 +87,11 @@
         :class="`edge-${resizeEdge}`"
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize panel column"
+        aria-label="Resize panel column: drag, or press the left and right arrow keys; Enter resets"
         title="Drag to resize. Double-click to reset."
+        tabindex="0"
+        :aria-valuenow="typeof width === 'number' ? width : undefined"
+        @keydown="onHandleKey"
         @pointerdown="startResize"
         @pointermove="moveGesture"
         @pointerup="endGesture"
@@ -138,6 +150,8 @@ const emit = defineEmits<{
   (e: "resize-reset"): void;
   /** Dropped `offsetY` px from where the drag started. */
   (e: "reorder-end", offsetY: number): void;
+  /** From the keyboard: one place up (-1) or down (1) the stack. */
+  (e: "reorder-step", direction: -1 | 1): void;
 }>();
 
 // Exposed so a parent can measure the rendered palette height (e.g. to stack
@@ -276,6 +290,49 @@ function cancelOnEscape(event: KeyboardEvent) {
   }
 }
 
+// --- The same two changes from the keyboard ----------------------------------
+//
+// Each key press is one complete change (there is no drag to cancel), sent
+// through the events a finished drag sends, so the parent clamps and stores
+// it the same way. The keys are stopped here: the arrows are also viewer
+// hotkeys.
+
+/** Width change (px) per arrow press, and with Shift held. */
+const KEY_RESIZE_STEP = 16;
+const KEY_RESIZE_STEP_LARGE = 64;
+
+function onHandleKey(event: KeyboardEvent) {
+  if (event.key === "Enter") {
+    emit("resize-reset");
+  } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+    const step = event.shiftKey ? KEY_RESIZE_STEP_LARGE : KEY_RESIZE_STEP;
+    // Toward the canvas widens, as with the drag.
+    const towardCanvas =
+      props.resizeEdge === "right" ? "ArrowRight" : "ArrowLeft";
+    emit(
+      "resize-end",
+      (rootEl.value?.offsetWidth ?? 0) +
+        (event.key === towardCanvas ? step : -step),
+    );
+  } else {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function onGripKey(event: KeyboardEvent) {
+  if (
+    !props.reorderable ||
+    (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+  ) {
+    return;
+  }
+  emit("reorder-step", event.key === "ArrowUp" ? -1 : 1);
+  event.preventDefault();
+  event.stopPropagation();
+}
+
 onBeforeUnmount(() => cancelGesture());
 
 const paletteStyle = computed(() => ({
@@ -341,6 +398,17 @@ const paletteStyle = computed(() => ({
   padding: 6px 6px 6px 4px;
   margin: -6px -4px -6px -4px;
   touch-action: none;
+}
+
+.palette-grip.is-handle:focus-visible,
+.palette-resize-handle:focus-visible {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: -1px;
+  border-radius: 3px;
+}
+
+.palette-resize-handle:focus-visible {
+  background: rgba(var(--v-theme-primary), 0.55);
 }
 
 .floating-palette.is-reordering {

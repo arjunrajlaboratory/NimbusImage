@@ -124,7 +124,10 @@
                 v-bind="activatorProps"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: panelToggleOn.navigatorPanel }"
+                :class="{
+                  active: panelToggleOn.navigatorPanel,
+                  relevant: panelAccents.navigatorPanel,
+                }"
                 aria-label="Navigator"
                 data-command-id="panel.toggle.navigatorPanel"
                 @click.stop="togglePalette('navigatorPanel')"
@@ -139,7 +142,10 @@
                 v-bind="activatorProps"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: panelToggleOn.layersPanel }"
+                :class="{
+                  active: panelToggleOn.layersPanel,
+                  relevant: panelAccents.layersPanel,
+                }"
                 aria-label="Layers"
                 data-command-id="panel.toggle.layersPanel"
                 @click.stop="togglePalette('layersPanel')"
@@ -154,7 +160,10 @@
                 v-bind="activatorProps"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: panelToggleOn.toolsPanel }"
+                :class="{
+                  active: panelToggleOn.toolsPanel,
+                  relevant: panelAccents.toolsPanel,
+                }"
                 aria-label="Tools"
                 data-command-id="panel.toggle.toolsPanel"
                 @click.stop="togglePalette('toolsPanel')"
@@ -228,8 +237,15 @@
                 v-tour-trigger="TOUR_TRIGGERS.objectListButton"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: panelToggleOn.annotationPanel }"
-                aria-label="Object list"
+                :class="{
+                  active: panelToggleOn.annotationPanel,
+                  relevant: panelAccents.annotationPanel,
+                }"
+                :aria-label="
+                  panelAccents.annotationPanel
+                    ? 'Object list (new results)'
+                    : 'Object list'
+                "
                 data-command-id="panel.toggle.annotationPanel"
                 @click.stop="togglePalette('annotationPanel')"
               >
@@ -247,7 +263,10 @@
                 v-tour-trigger="TOUR_TRIGGERS.filtersButton"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: panelToggleOn.filtersPanel }"
+                :class="{
+                  active: panelToggleOn.filtersPanel,
+                  relevant: panelAccents.filtersPanel,
+                }"
                 :aria-label="filtersAriaLabel"
                 data-command-id="panel.toggle.filtersPanel"
                 @click.stop="togglePalette('filtersPanel')"
@@ -270,7 +289,10 @@
                 v-bind="activatorProps"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: panelToggleOn.analysisPanel }"
+                :class="{
+                  active: panelToggleOn.analysisPanel,
+                  relevant: panelAccents.analysisPanel,
+                }"
                 :aria-label="analysisAriaLabel"
                 data-command-id="panel.toggle.analysisPanel"
                 @click.stop="togglePalette('analysisPanel')"
@@ -300,7 +322,10 @@
                 v-bind="activatorProps"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: panelToggleOn.transcriptsPanel }"
+                :class="{
+                  active: panelToggleOn.transcriptsPanel,
+                  relevant: panelAccents.transcriptsPanel,
+                }"
                 aria-label="Transcripts"
                 data-command-id="panel.toggle.transcriptsPanel"
                 @click.stop="togglePalette('transcriptsPanel')"
@@ -321,7 +346,10 @@
                 v-tour-trigger="TOUR_TRIGGERS.snapshotsButton"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: panelToggleOn.snapshotPanel }"
+                :class="{
+                  active: panelToggleOn.snapshotPanel,
+                  relevant: panelAccents.snapshotPanel,
+                }"
                 aria-label="Snapshots"
                 data-command-id="panel.toggle.snapshotPanel"
                 @click.stop="togglePalette('snapshotPanel')"
@@ -338,7 +366,10 @@
                 v-tour-trigger="TOUR_TRIGGERS.settingsButton"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: panelToggleOn.settingsPanel }"
+                :class="{
+                  active: panelToggleOn.settingsPanel,
+                  relevant: panelAccents.settingsPanel,
+                }"
                 aria-label="Settings"
                 data-command-id="panel.toggle.settingsPanel"
                 @click.stop="togglePalette('settingsPanel')"
@@ -549,6 +580,7 @@
         :key="chip.key"
         type="button"
         class="palette-chip"
+        :class="{ relevant: chip.relevant }"
         :aria-label="chip.label"
         @click.stop="chip.restore()"
       >
@@ -669,7 +701,7 @@
         :top="leftStack.layersPanel.top"
         :max-height="leftStack.layersPanel.maxHeight"
       >
-        <layers-panel />
+        <layers-panel :visible="layersPanel" />
       </floating-palette>
 
       <floating-palette
@@ -769,6 +801,7 @@ import AiPanel from "@/components/AiPanel.vue";
 import FloatingPalette from "@/components/FloatingPalette.vue";
 import { TOUR_REVEAL_PANEL_EVENT, tourBus } from "@/plugins/tourBus";
 import { usePanelLayout } from "@/utils/usePanelLayout";
+import { registerPanelLayoutController } from "@/utils/panelLayoutController";
 import { setUiStateScope } from "@/utils/uiState";
 import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
@@ -781,9 +814,14 @@ import {
   PANEL_IDS,
   PanelId,
   isPanelAvailable as panelIsAvailable,
+  isPanelRelevant,
   panelBadge,
 } from "@/utils/panelRegistry";
-import { layoutWithOpenSet, leftOrderAfterDrop } from "@/utils/panelLayout";
+import {
+  layoutWithOpenSet,
+  leftOrderAfterDrop,
+  leftOrderAfterStep,
+} from "@/utils/panelLayout";
 import { useCommand, useCommandProvider } from "@/commands/registry";
 import {
   layoutCommands,
@@ -860,6 +898,7 @@ const panelContext = computed<IPanelContext>(() => ({
     transcriptsStore.hasTranscripts ||
     !!transcriptsStore.error ||
     transcriptsStore.loading,
+  hasUnseenJobResults: store.annotationPanelBadge,
 }));
 
 function isPanelAvailable(id: PanelId): boolean {
@@ -875,6 +914,20 @@ const panelToggleOn = computed(
       PANEL_IDS.map((id) => [
         id,
         panelLayout.isOpen(id) && !panelsHidden.value && isPanelAvailable(id),
+      ]),
+    ) as Record<PanelId, boolean>,
+);
+
+// The panels that hold something new and are not on screen: their toggle and
+// chip carry an accent (the registry's `relevant` rules).
+const panelAccents = computed(
+  () =>
+    Object.fromEntries(
+      PANEL_IDS.map((id) => [
+        id,
+        isPanelRelevant(id, panelContext.value) &&
+          !panelLayout.isVisible(id) &&
+          isPanelAvailable(id),
       ]),
     ) as Record<PanelId, boolean>,
 );
@@ -929,6 +982,33 @@ const {
 } = panelLayout.visible;
 const openPalette = panelLayout.open;
 const togglePalette = panelLayout.toggle;
+
+// "Unseen job results" ends when the Object Browser is shown, and does not
+// follow the user to another dataset. (jobs.ts raises it.)
+watch(
+  [() => panelLayout.isVisible("annotationPanel"), () => store.dataset?.id],
+  ([browserShown, datasetId], [, previousDatasetId]) => {
+    if (
+      store.annotationPanelBadge &&
+      (browserShown || datasetId !== previousDatasetId)
+    ) {
+      store.setAnnotationPanelBadge(false);
+    }
+  },
+);
+
+// The AI agent's tools reach the layout through this (they run outside any
+// component). Same functions as the buttons, so the same rules and saving.
+const unregisterPanelLayoutController = registerPanelLayoutController({
+  inViewer: () => isDatasetView.value && !embedMode.value,
+  openPanels: () => [...panelLayout.layout.value.open],
+  minimizedPanels: () => [...panelLayout.layout.value.minimized],
+  allHidden: () => panelLayout.chromeHidden.value,
+  isAvailable: isPanelAvailable,
+  open: panelLayout.open,
+  close: panelLayout.close,
+  applyOpenSet: panelLayout.applyOpenSet,
+});
 // "Hide all panels" is on. It covers every panel that floats over or beside
 // the canvas, not only the registry's: the Timelapse palette, the AI panel
 // and the Analyze drawer are masked by it too (below), each keeping its own
@@ -1351,6 +1431,7 @@ interface IPaletteChip {
   icon: string;
   label: string;
   badge: string | null;
+  relevant: boolean;
   restore: () => void;
 }
 
@@ -1363,6 +1444,7 @@ const paletteChips = computed<Record<TPaletteZone, IPaletteChip[]>>(() => {
       icon: "mdi-eye-outline",
       label: "Show all panels",
       badge: null,
+      relevant: false,
       restore: panelLayout.toggleChromeHidden,
     });
   }
@@ -1373,10 +1455,14 @@ const paletteChips = computed<Record<TPaletteZone, IPaletteChip[]>>(() => {
       icon: panel.icon,
       // The label replaces the chip's text for assistive tech, so the badge
       // has to be in it or the count is only there for people who can see it.
-      label: panelBadges.value[panel.id]
-        ? `Restore ${panel.title} (${panelBadges.value[panel.id]})`
-        : `Restore ${panel.title}`,
+      label:
+        `Restore ${panel.title}` +
+        (panelBadges.value[panel.id]
+          ? ` (${panelBadges.value[panel.id]})`
+          : "") +
+        (panelAccents.value[panel.id] ? " (new results)" : ""),
       badge: panelBadges.value[panel.id],
+      relevant: panelAccents.value[panel.id],
       restore: () => openPalette(panel.id),
     });
   }
@@ -1532,6 +1618,15 @@ function paletteChromeFor(id: PanelId) {
     onResizeCancel: () => endZoneDrag(zone),
     onResizeReset: () => panelLayout.setZoneWidth(zone, null),
     onReorderEnd: (offsetY: number) => onLeftPaletteDrop(id, offsetY),
+    onReorderStep: (direction: -1 | 1) =>
+      panelLayout.setLeftOrder(
+        leftOrderAfterStep(
+          panelLayout.arrangement.value.leftOrder,
+          id,
+          direction,
+          LEFT_PANEL_IDS.filter((other) => panelLayout.isVisible(other)),
+        ),
+      ),
   };
 }
 const paletteChrome = {} as Record<
@@ -2047,6 +2142,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener("resize", updateWindowWidth);
   tourBus.off(TOUR_REVEAL_PANEL_EVENT, revealPanelForTour);
+  unregisterPanelLayoutController();
   chipRowObserver?.disconnect();
   filtersResizeObserver?.disconnect();
   teardownLeftPaletteObservers();
@@ -2262,6 +2358,26 @@ $palette-cluster-tone: #0f1217;
     background: rgba(var(--v-theme-primary), 0.18);
     color: rgb(var(--v-theme-primary));
   }
+}
+
+// The accent for a panel that holds something new: a dot, not motion, so it
+// can sit there until the user looks without pulling at the eye.
+.palette-ibtn.relevant::before,
+.palette-chip.relevant::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgb(var(--v-theme-warning));
+  box-shadow: 0 0 0 2px rgba(var(--v-theme-warning), 0.25);
+}
+.palette-ibtn.relevant::before {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+}
+.palette-chip.relevant::before {
+  flex: 0 0 auto;
 }
 
 .palette-chip-badge {

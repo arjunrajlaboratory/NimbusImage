@@ -195,3 +195,27 @@ export function leftOrderAfterDrop(
   const at = index === -1 ? others.length : index;
   return [...others.slice(0, at), draggedId, ...others.slice(at)];
 }
+
+/**
+ * The left order after `id` moves one place up (-1) or down (1) among the
+ * palettes that are showing: it swaps with the showing palette next to it,
+ * so one key press is always one visible step. At the end of the stack:
+ * unchanged.
+ */
+export function leftOrderAfterStep(
+  order: readonly PanelId[],
+  id: PanelId,
+  direction: -1 | 1,
+  showing: readonly PanelId[],
+): PanelId[] {
+  const next = completeLeftOrder(order);
+  const stack = next.filter((other) => other === id || showing.includes(other));
+  const neighbor = stack[stack.indexOf(id) + direction];
+  if (neighbor === undefined) {
+    return next;
+  }
+  const from = next.indexOf(id);
+  const to = next.indexOf(neighbor);
+  [next[from], next[to]] = [next[to], next[from]];
+  return next;
+}

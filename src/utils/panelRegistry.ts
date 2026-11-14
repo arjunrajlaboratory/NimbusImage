@@ -40,6 +40,10 @@ export interface IPanelContext {
   // The dataset has a transcript store, or the lookup is running or failed
   // (so the failure can be read and retried from the panel).
   transcriptsReachable: boolean;
+  // A job finished successfully while the Object Browser was not showing,
+  // so it holds objects or measurements the user has not seen. Cleared when
+  // the browser is shown and when the dataset changes.
+  hasUnseenJobResults: boolean;
 }
 
 export interface IPanelDefinition {
@@ -65,6 +69,12 @@ export interface IPanelDefinition {
   // unavailable panel is hidden, with its toggle, command and chip; the
   // layout that says it is open is left alone.
   available?: (context: IPanelContext) => boolean;
+  // Whether the panel holds something new that the user has not looked at.
+  // While true and the panel is not on screen, its toggle and chip carry an
+  // accent. This only points; nothing opens by itself. Keep the rules few
+  // and causal (the user did something, and its result is in this panel):
+  // an accent that is often on is an accent nobody reads.
+  relevant?: (context: IPanelContext) => boolean;
 }
 
 /** A count as badge text: nothing for zero, capped so it fits the toggle. */
@@ -120,6 +130,9 @@ export const PANELS: readonly IPanelDefinition[] = [
       "list",
       "table",
     ],
+    // The one accent so far: a worker or measurement the user started has
+    // finished, and its results are listed here.
+    relevant: (context) => context.hasUnseenJobResults,
   },
   // Filters hosts alongside both the Object Browser and the Analysis panel:
   // the Analysis panel's own guidance above the cap is "narrow the filters",
@@ -244,6 +257,10 @@ export const PANEL_IDS: readonly PanelId[] = PANELS.map((panel) => panel.id);
 
 export function panelBadge(id: PanelId, context: IPanelContext): string | null {
   return PANELS_BY_ID.get(id)?.badge?.(context) ?? null;
+}
+
+export function isPanelRelevant(id: PanelId, context: IPanelContext): boolean {
+  return PANELS_BY_ID.get(id)?.relevant?.(context) ?? false;
 }
 
 export function isPanelAvailable(id: PanelId, context: IPanelContext): boolean {

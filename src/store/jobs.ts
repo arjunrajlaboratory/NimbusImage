@@ -488,8 +488,10 @@ export class Jobs extends VuexModule {
     }
     jobInfo.successResolve(success);
     this.removeJobInfo(jobId);
-    // A job is done, add badge to annotation panel if it is closed
-    if (!main.isAnnotationPanelOpen) {
+    // A job that worked has left results in the Object Browser. If it is not
+    // showing, App.vue marks its toggle until the user looks (the panel
+    // registry's `relevant` rule). A failed job has its own notification.
+    if (success && !main.isAnnotationPanelOpen) {
       main.setAnnotationPanelBadge(true);
     }
   }

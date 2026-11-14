@@ -4,7 +4,11 @@ import {
   readUiState,
   removeUiState,
   setUiStateScope,
+  asStoredBoolean,
+  asStoredStrings,
+  forgetSharedUiState,
   usePersistedUiState,
+  useSharedPersistedUiState,
   writeUiState,
 } from "./uiState";
 
@@ -98,6 +102,34 @@ describe("uiState", () => {
     writeUiState("width", 450);
     removeUiState("width");
     expect(readUiState("width", asNumber)).toBeNull();
+  });
+
+  it("a shared ref is one ref for everyone using the key, until the page reloads", () => {
+    const first = useSharedPersistedUiState("rows", () => [], asStoredStrings);
+    const second = useSharedPersistedUiState("rows", () => [], asStoredStrings);
+    first.value = [...first.value, "a"];
+    second.value = [...second.value, "b"];
+    // With a ref each, the second write would have dropped "a".
+    expect(first.value).toEqual(["a", "b"]);
+    expect(readUiState("rows", asStoredStrings)).toEqual(["a", "b"]);
+
+    forgetSharedUiState();
+    const reloaded = useSharedPersistedUiState(
+      "rows",
+      () => [],
+      asStoredStrings,
+    );
+    expect(reloaded).not.toBe(first);
+    expect(reloaded.value).toEqual(["a", "b"]);
+    forgetSharedUiState();
+    removeUiState("rows");
+  });
+
+  it("the stored-value validators keep only what they are for", () => {
+    expect(asStoredBoolean(true)).toBe(true);
+    expect(asStoredBoolean("true")).toBeNull();
+    expect(asStoredStrings(["a", 3, null, "b"])).toEqual(["a", "b"]);
+    expect(asStoredStrings("a")).toBeNull();
   });
 
   it("removes only the named key", () => {
