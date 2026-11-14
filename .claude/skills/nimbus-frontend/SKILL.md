@@ -310,6 +310,19 @@ When a value can be "unknown", give it one representation (`unknownPixelSize()` 
 
 Switching dataset views loads the dataset and configuration **concurrently**, so this watcher sees a mismatched pair (new configuration, old dataset) first. Gate per-dataset fetches on both matching `store.datasetView`, and guard the store action with a sequence token so a superseded fetch can't commit (`fetchAnnotations`, `src/store/__tests__/fetchAnnotationsStale.test.ts`).
 
+### `store.configuration` is the PREVIOUS collection while the next one loads
+
+`setSelectedConfiguration` goes straight from collection A to B, and A stays
+in the store while B is fetched and while the user is on Home. Anything keyed
+on `store.configuration?.id` during that time acts on A: the panel layout was
+restored from, and a toggle saved under, the collection the user had just
+left. The collection on screen is known only when three things agree: the
+route names the dataset view, `store.datasetView` is that view, and the
+view's `configurationId` is `store.configuration.id` (`viewedConfiguration`
+in `App.vue`). Routes with no view id in them (a share link) have only the
+last two. Treat "not yet known" as its own state: keep what is on screen,
+and let a change the user makes in that window win over what arrives.
+
 ### `this.dataset` is the OUTGOING dataset while a view loads
 
 `setDatasetViewId` sets the location (from `?xy=&z=&time=` or the view's
@@ -824,6 +837,42 @@ function toggle() {
 
 Persister wraps `localStorage` with JSON serialization. It's already used for theme, tour status, and browse mode preferences.
 
+### Remembered presentation state: `usePersistedUiState`, per user
+
+For state a panel should come back with (the viewer's panel layout, column
+widths, an active tab), use `@/utils/uiState` rather than `Persister`:
+`usePersistedUiState(key, () => default, validate)` in a component, or
+`readUiState` / `writeUiState` in a composable. It differs from `Persister`
+in ways that were each a finding or would have been:
+
+- **Keys are scoped by user** (`nimbus.ui.<userId>.<key>`). Logout reloads the
+  page, which discards the stores but not `localStorage`; an unscoped key
+  hands one account's state to the next person at the browser.
+- **It never throws, and a failed write still reads back for the session.**
+  `Persister.get` runs `JSON.parse` on whatever is stored.
+- **`validate` is required.** What is stored was written by another client
+  version.
+
+Three traps that come with remembering anything:
+
+- **Remembered state is active from page load, in a palette nobody opened.**
+  On master the Object Browser always started on its Objects tab, the one
+  tab gated on the palette's `visible`. Once the tab was remembered, a
+  remembered Connections tab rebuilt its rows on every pan with the palette
+  closed. Whenever state becomes remembered, re-read every consumer for
+  "this used to be the default at load".
+- **Remembering what is open removes a guarantee other code leaned on.** The
+  viewer used to reopen Navigator, Layers and Tools on every entry, so tours
+  could assume their anchors were showing. A mounted-but-hidden anchor is
+  still found by `querySelector`. Tours now ask for the palette
+  (`data-panel-id` → `TOUR_REVEAL_PANEL_EVENT`).
+- **Derive visibility; do not mutate the remembered state to hide things.**
+  The layout used to be closed when the route left the viewer, which is one
+  watcher away from saving "all closed". A palette is now on screen when it
+  is open AND in the viewer AND not minimized AND not hidden, and leaving
+  changes nothing (`src/utils/usePanelLayout.ts`). See
+  `codebaseDocumentation/PANEL_LAYOUT_PERSISTENCE.md`.
+
 ## Dialogs
 
 ```vue
@@ -1069,7 +1118,11 @@ regression checklist.
    cannot clear only part of it.
 
 Also: a gesture needs a **cancel** exit as well as a commit (a mouseup that
-never arrives, a blur, the target going away), and state holds reactive
+never arrives, a blur, the target going away) and a **no-op** exit: a press
+that never moves is a click, and must change nothing. A resize handle that
+committed on every pointer-up stored the width it already had on a plain
+click, which silently fixed the whole column at one palette's default
+(`DRAG_THRESHOLD` in `FloatingPalette.vue`). And state holds reactive
 proxies, so compare a stored socket, map or layer with an event target through
 `toRaw`, never `===`.
 
@@ -1306,6 +1359,19 @@ mock.addAnalysisPlot.mockImplementation((id) => { appendAnalysisPlot(id); ...ext
 Also reset such state in **every** `describe`'s `beforeEach`, not just the
 first — a test that flips a cap flag or swaps an API stub mid-await leaks it
 into every later block.
+
+### A component left mounted answers the next test
+
+`App.test.ts` mounted an App per test and never unmounted it. That was
+harmless while its palettes only opened on the viewer route and the tests ran
+on another one. Once the tests ran in the viewer, every leftover App watched
+the one mocked store and wrote the one `localStorage`, so an earlier test's
+App reacted to a later test's `store.isAnnotationPanelOpen = true` and
+overwrote its remembered layout: a test that passed alone failed in the
+file. Unmount what you mount (`mountedWrappers` + `afterEach`), and clear
+`localStorage` in `beforeEach` for anything that remembers state. A module
+that keeps state outside `localStorage` needs its own reset (`uiState.ts`
+keeps failed writes in memory; its test removes them in `afterEach`).
 
 ### A mock that returns a fixed value can fail your test for the wrong reason
 
