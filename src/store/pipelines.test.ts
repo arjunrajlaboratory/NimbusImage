@@ -28,7 +28,7 @@ const h = vi.hoisted(() => ({
       batchResources: vi.fn().mockResolvedValue({ folder: {} }),
       updateConfigurationKey: vi.fn().mockResolvedValue({}),
     },
-    loadLargeImages: vi.fn().mockResolvedValue(false),
+    loadLargeImages: vi.fn().mockResolvedValue(null),
     scheduleTileFramesComputation: vi.fn(),
     scheduleMaxMergeCache: vi.fn(),
     scheduleHistogramCache: vi.fn(),
