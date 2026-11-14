@@ -8,11 +8,46 @@
       v-show="modelValue"
       ref="rootEl"
       class="floating-palette"
+      :class="{
+        'is-resizing': gesture?.kind === 'resize',
+        'is-reordering': gesture?.kind === 'reorder',
+        [`resizes-${resizeEdge}`]: !!resizeEdge,
+      }"
+      :data-panel-id="panelId"
+      :data-tour-done="tourDoneAnchor"
       :style="paletteStyle"
       @click.stop
     >
       <header class="palette-header">
-        <span class="palette-grip" aria-hidden="true">
+        <span
+          class="palette-grip"
+          :class="{ 'is-handle': reorderable }"
+          v-bind="
+            reorderable
+              ? {
+                  // Its value is the palette's place in the stack, which is
+                  // what the arrow keys change. (A button would promise that
+                  // Enter does something.)
+                  role: 'slider',
+                  tabindex: 0,
+                  'aria-orientation': 'vertical',
+                  'aria-label': `Position of ${title} in the stack: drag, or press the up and down arrow keys`,
+                  'aria-valuemin': 1,
+                  'aria-valuemax': stackPosition?.count,
+                  'aria-valuenow': stackPosition?.position,
+                  'aria-valuetext': stackPosition
+                    ? `${stackPosition.position} of ${stackPosition.count}`
+                    : undefined,
+                }
+              : { 'aria-hidden': 'true' }
+          "
+          @keydown="onGripKey"
+          @pointerdown="startReorder"
+          @pointermove="moveGesture"
+          @pointerup="endGesture"
+          @pointercancel="cancelGesture"
+          @lostpointercapture="cancelGesture"
+        >
           <i></i><i></i><i></i>
         </span>
         <h4 class="palette-title">{{ title }}</h4>
@@ -38,12 +73,34 @@
       <div class="palette-body">
         <slot />
       </div>
+      <!-- The zone's inner edge. Drag to resize the whole zone; double-click
+           to go back to the default widths. -->
+      <div
+        v-if="resizeEdge"
+        class="palette-resize-handle"
+        :class="`edge-${resizeEdge}`"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize panel column: drag, or press the left and right arrow keys; Enter resets"
+        title="Drag to resize. Double-click to reset."
+        tabindex="0"
+        :aria-valuenow="typeof width === 'number' ? width : undefined"
+        :aria-valuemin="resizeRange?.min"
+        :aria-valuemax="resizeRange?.max"
+        @keydown="onHandleKey"
+        @pointerdown="startResize"
+        @pointermove="moveGesture"
+        @pointerup="endGesture"
+        @pointercancel="cancelGesture"
+        @lostpointercapture="cancelGesture"
+        @dblclick="$emit('resize-reset')"
+      ></div>
     </aside>
   </transition>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 
 const props = withDefaults(
   defineProps<{
@@ -58,6 +115,31 @@ const props = withDefaults(
     top?: number;
     /** Optional max-height; defaults to fitting in the viewport. */
     maxHeight?: string;
+    /** Which edge resizes the palette's zone: the one facing the canvas. */
+    resizeEdge?: "left" | "right";
+    /**
+     * The widths the zone can take, and the width a resize starts from: the
+     * zone's current width (its widest palette while it is unresized). Not
+     * this palette's own: starting from a narrower palette, "wider" would
+     * first make the wider ones narrower.
+     */
+    resizeRange?: { base: number; min: number; max: number };
+    /** The grip drags the palette up and down within its stack. */
+    reorderable?: boolean;
+    /** Where the palette is among those showing in its stack, from 1. */
+    stackPosition?: { position: number; count: number };
+    /**
+     * The palette's id in the panel registry, written to the DOM so code
+     * holding only an element inside it (a tour's anchor) can ask for the
+     * palette that contains it to be shown.
+     */
+    panelId?: string;
+    /**
+     * A tour anchor whose step this palette being open completes: the chip
+     * that opens it, which is gone while it is open. Written to the DOM as
+     * `data-tour-done` so the tour can move on (plugins/tour.ts).
+     */
+    tourDoneAnchor?: string;
   }>(),
   {
     width: 360,
@@ -67,14 +149,202 @@ const props = withDefaults(
   },
 );
 
-defineEmits<{
+const emit = defineEmits<{
   (e: "update:modelValue", value: boolean): void;
+  /** The width the drag has reached. Unclamped: the parent owns the limits. */
+  (e: "resize", width: number): void;
+  (e: "resize-end", width: number): void;
+  (e: "resize-cancel"): void;
+  (e: "resize-reset"): void;
+  /** Dropped `offsetY` px from where the drag started. */
+  (e: "reorder-end", offsetY: number): void;
+  /** From the keyboard: one place up (-1) or down (1) the stack. */
+  (e: "reorder-step", direction: -1 | 1): void;
 }>();
 
 // Exposed so a parent can measure the rendered palette height (e.g. to stack
 // another palette beneath it). Always in the DOM thanks to v-show.
 const rootEl = ref<HTMLElement>();
 defineExpose({ rootEl });
+
+// The one drag in progress, if any. A single object so that ending or
+// cancelling cannot leave half of it behind, and so the two drags cannot
+// overlap.
+type TGesture = (
+  | { kind: "resize"; startWidth: number }
+  | { kind: "reorder"; offsetY: number }
+) & {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  // False until the pointer has travelled DRAG_THRESHOLD. A press that never
+  // does is a click, and a click changes nothing: without this, clicking a
+  // handle committed the width it already had (fixing the zone at one
+  // palette's default) and clicking a grip re-sorted the stack.
+  moved: boolean;
+};
+const gesture = ref<TGesture | null>(null);
+
+/** How far (px) a press must travel before it is a drag rather than a click. */
+const DRAG_THRESHOLD = 3;
+
+function beginGesture(event: PointerEvent, next: TGesture) {
+  if (gesture.value || event.button !== 0) {
+    return;
+  }
+  event.preventDefault();
+  // Capture, so the drag keeps arriving here when the pointer leaves the
+  // handle. (Optional call: not every DOM implements it.)
+  (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+  window.addEventListener("keydown", cancelOnEscape, true);
+  gesture.value = next;
+}
+
+function startResize(event: PointerEvent) {
+  beginGesture(event, {
+    kind: "resize",
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    moved: false,
+    startWidth: resizeStartWidth(),
+  });
+}
+
+function resizeStartWidth(): number {
+  return props.resizeRange?.base ?? rootEl.value?.offsetWidth ?? 0;
+}
+
+function startReorder(event: PointerEvent) {
+  if (!props.reorderable) {
+    return;
+  }
+  beginGesture(event, {
+    kind: "reorder",
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    moved: false,
+    offsetY: 0,
+  });
+}
+
+function resizedWidth(drag: TGesture & { kind: "resize" }, clientX: number) {
+  const moved = clientX - drag.startX;
+  // The handle is on the edge facing the canvas, so dragging toward the
+  // canvas widens: rightward for a left palette, leftward for a right one.
+  return drag.startWidth + (props.resizeEdge === "right" ? moved : -moved);
+}
+
+function moveGesture(event: PointerEvent) {
+  const drag = gesture.value;
+  if (!drag || event.pointerId !== drag.pointerId) {
+    return;
+  }
+  const travelled = Math.abs(
+    drag.kind === "resize"
+      ? event.clientX - drag.startX
+      : event.clientY - drag.startY,
+  );
+  if (!drag.moved && travelled < DRAG_THRESHOLD) {
+    return;
+  }
+  if (drag.kind === "resize") {
+    gesture.value = { ...drag, moved: true };
+    emit("resize", resizedWidth(drag, event.clientX));
+  } else {
+    gesture.value = {
+      ...drag,
+      moved: true,
+      offsetY: event.clientY - drag.startY,
+    };
+  }
+}
+
+// Clears the gesture and returns it, so each exit acts on it exactly once:
+// pointerup is followed by lostpointercapture, which then finds nothing.
+function takeGesture(event?: PointerEvent): TGesture | null {
+  const drag = gesture.value;
+  if (!drag || (event && event.pointerId !== drag.pointerId)) {
+    return null;
+  }
+  gesture.value = null;
+  window.removeEventListener("keydown", cancelOnEscape, true);
+  return drag;
+}
+
+function endGesture(event: PointerEvent) {
+  const drag = takeGesture(event);
+  if (!drag?.moved) {
+    return;
+  }
+  if (drag.kind === "resize") {
+    emit("resize-end", resizedWidth(drag, event.clientX));
+  } else {
+    emit("reorder-end", event.clientY - drag.startY);
+  }
+}
+
+// Every way a drag ends without a drop: the pointer is cancelled or its
+// capture lost, Escape, or the palette going away mid-drag.
+function cancelGesture(event?: PointerEvent) {
+  const drag = takeGesture(event);
+  // Only a drag that reported a width has one to take back.
+  if (drag?.kind === "resize" && drag.moved) {
+    emit("resize-cancel");
+  }
+}
+
+function cancelOnEscape(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    event.stopPropagation();
+    cancelGesture();
+  }
+}
+
+// --- The same two changes from the keyboard ----------------------------------
+//
+// Each key press is one complete change (there is no drag to cancel), sent
+// through the events a finished drag sends, so the parent clamps and stores
+// it the same way. The keys are stopped here: the arrows are also viewer
+// hotkeys.
+
+/** Width change (px) per arrow press, and with Shift held. */
+const KEY_RESIZE_STEP = 16;
+const KEY_RESIZE_STEP_LARGE = 64;
+
+function onHandleKey(event: KeyboardEvent) {
+  if (event.key === "Enter") {
+    emit("resize-reset");
+  } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+    const step = event.shiftKey ? KEY_RESIZE_STEP_LARGE : KEY_RESIZE_STEP;
+    // Toward the canvas widens, as with the drag.
+    const towardCanvas =
+      props.resizeEdge === "right" ? "ArrowRight" : "ArrowLeft";
+    emit(
+      "resize-end",
+      resizeStartWidth() + (event.key === towardCanvas ? step : -step),
+    );
+  } else {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function onGripKey(event: KeyboardEvent) {
+  if (
+    !props.reorderable ||
+    (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+  ) {
+    return;
+  }
+  emit("reorder-step", event.key === "ArrowUp" ? -1 : 1);
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+onBeforeUnmount(() => cancelGesture());
 
 const paletteStyle = computed(() => ({
   width: typeof props.width === "number" ? `${props.width}px` : props.width,
@@ -83,6 +353,9 @@ const paletteStyle = computed(() => ({
     : { right: `${props.right}px` }),
   top: `${props.top}px`,
   maxHeight: props.maxHeight,
+  ...(gesture.value?.kind === "reorder"
+    ? { transform: `translateY(${gesture.value.offsetY}px)` }
+    : {}),
 }));
 </script>
 
@@ -127,6 +400,56 @@ const paletteStyle = computed(() => ({
     background: var(--nimbus-text-faint, #62666d);
     border-radius: 2px;
     display: block;
+  }
+}
+
+.palette-grip.is-handle {
+  cursor: grab;
+  // A larger target than the three hairlines, without moving them.
+  padding: 6px 6px 6px 4px;
+  margin: -6px -4px -6px -4px;
+  touch-action: none;
+}
+
+.palette-grip.is-handle:focus-visible,
+.palette-resize-handle:focus-visible {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: -1px;
+  border-radius: 3px;
+}
+
+.palette-resize-handle:focus-visible {
+  background: rgba(var(--v-theme-primary), 0.55);
+}
+
+.floating-palette.is-reordering {
+  z-index: 1007; // above its neighbors while it is carried past them
+  opacity: 0.92;
+  transition: none;
+
+  .palette-grip.is-handle {
+    cursor: grabbing;
+  }
+}
+
+.palette-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+  transition: background 0.15s ease;
+
+  &.edge-left {
+    left: 0;
+  }
+  &.edge-right {
+    right: 0;
+  }
+  &:hover,
+  .is-resizing > & {
+    background: rgba(var(--v-theme-primary), 0.55);
   }
 }
 
@@ -176,6 +499,16 @@ const paletteStyle = computed(() => ({
   flex: 1 1 auto;
   overflow: auto;
   min-height: 0;
+}
+
+// The resize handle lies over the palette's edge. Keep the body, and so its
+// scrollbar, out from under it: otherwise grabbing the scrollbar's outer
+// edge resizes the zone instead of scrolling.
+.resizes-right > .palette-body {
+  margin-right: 6px;
+}
+.resizes-left > .palette-body {
+  margin-left: 6px;
 }
 
 .palette-fade-enter-active,

@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
       };
     }),
     purge: vi.fn(),
+    resize: vi.fn(),
     setAnalysisPlotGate: vi.fn(),
     toggleAnalysisPlotGateEnabled: vi.fn(),
     removeAnalysisPlot: vi.fn(),
@@ -27,7 +28,11 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("plotly.js-dist-min", () => ({
-  default: { react: mocks.react, purge: mocks.purge },
+  default: {
+    react: mocks.react,
+    purge: mocks.purge,
+    Plots: { resize: mocks.resize },
+  },
 }));
 
 vi.mock("@/store/filters", () => ({
@@ -246,6 +251,52 @@ describe("AnalysisScatterPlot", () => {
     expect(mocks.react).toHaveBeenCalledTimes(1);
     const [, traces] = mocks.react.mock.calls[0] as unknown as any[];
     expect(traces[0].x).toEqual(SERIES.x);
+  });
+
+  it("redraws at the new width when its palette's column is resized", async () => {
+    // jsdom has no ResizeObserver: stand one in and drive it by hand.
+    const observers: { callback: () => void; disconnect: () => void }[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        disconnect = vi.fn();
+        observe = vi.fn();
+        constructor(public callback: () => void) {
+          observers.push(this);
+        }
+      },
+    );
+    try {
+      wrapper = mountPlot();
+      await flushPromises();
+      const element = wrapper.find(".ap-plot").element as HTMLElement;
+      let width = 500;
+      Object.defineProperty(element, "clientWidth", { get: () => width });
+      const observer = observers[observers.length - 1];
+      mocks.resize.mockClear();
+
+      // Not drawn yet (the mocked react adds no class): nothing to resize.
+      observer.callback();
+      expect(mocks.resize).not.toHaveBeenCalled();
+
+      element.classList.add("js-plotly-plot");
+      width = 620;
+      observer.callback();
+      expect(mocks.resize).toHaveBeenCalledTimes(1);
+      expect(mocks.resize).toHaveBeenCalledWith(element);
+
+      // Same width again, and the palette being hidden, redraw nothing.
+      observer.callback();
+      width = 0;
+      observer.callback();
+      expect(mocks.resize).toHaveBeenCalledTimes(1);
+
+      wrapper.unmount();
+      wrapper = null;
+      expect(observer.disconnect).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("purges the plot on unmount", async () => {

@@ -13,9 +13,10 @@ steps:
   - id: object-list-button-tourstep
     route: datasetview
     element: '[data-tour="object-list-button"]'
-    title: "Object List"
-    text: "Click here to open the object list."
-    position: "right"
+    title: "Object Browser"
+    text: "Click here to open the Object Browser, the list of your objects."
+    # The anchor is the Object Browser's chip at the top right of the viewer.
+    position: "bottom"
     waitForElement: 1000
     modalOverlay: true
     showNextButton: false

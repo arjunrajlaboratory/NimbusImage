@@ -55,6 +55,14 @@ import {
 import { collectLeafPaths } from "@/utils/propertyValues";
 import { registerPlot, type IAgentPlot } from "./plotRegistry";
 import {
+  PANELS,
+  PANEL_BY_ID,
+  PanelId,
+  WORKSPACES,
+  isPanelId,
+} from "@/utils/panelRegistry";
+import { panelLayoutController } from "@/utils/panelLayoutController";
+import {
   MAX_BOX_POINTS,
   MAX_HISTOGRAM_BUCKETS,
   MAX_PLOT_POINTS,
@@ -718,10 +726,37 @@ export function annotationsBoundingBox(
 
 // Also injected into the first user message of each agent turn (cheap
 // textual grounding, see AI_PANEL_SPEC.md §4)
+// The viewer's panels as the model sees them: by title, with the ids the
+// set_panels tool takes. Null outside the dataset viewer.
+function describePanels() {
+  const controller = panelLayoutController();
+  if (!controller?.inViewer()) {
+    return null;
+  }
+  const describe = (id: PanelId) => ({ id, title: PANEL_BY_ID[id].title });
+  return {
+    // On screen as a panel.
+    open: controller.openPanels().filter(controller.isAvailable).map(describe),
+    // "Hide all panels" is on: nothing above is visible until it is ended
+    // (opening any panel ends it).
+    allHidden: controller.allHidden(),
+    available: PANELS.filter((panel) => controller.isAvailable(panel.id)).map(
+      (panel) => ({ id: panel.id, title: panel.title, zone: panel.zone }),
+    ),
+    workspaces: WORKSPACES.map((workspace) => ({
+      id: workspace.id,
+      title: workspace.title,
+      description: workspace.description,
+      panels: workspace.open,
+    })),
+  };
+}
+
 export function buildInterfaceState() {
   const dataset = main.dataset;
   const configuration = main.configuration;
   return {
+    panels: describePanels(),
     dataset: dataset
       ? {
           id: dataset.id,
@@ -1913,6 +1948,100 @@ const registry: { [name: string]: IAgentToolEntry } = {
     },
   },
 
+  // The viewer's panels. Goes through the layout's owner in App.vue, so the
+  // placement rules decide what ends up open; the result says what did.
+  set_panels: {
+    execute: async (input: {
+      workspace?: string;
+      open?: string[];
+      close?: string[];
+    }) => {
+      const controller = panelLayoutController();
+      if (!controller?.inViewer()) {
+        throw new ToolExecutionError(
+          "Panels can only be arranged in the dataset viewer. Open a dataset first.",
+        );
+      }
+      // null as well as absent: models send null for an optional field they
+      // are not using.
+      const workspace =
+        input.workspace == null
+          ? null
+          : WORKSPACES.find((candidate) => candidate.id === input.workspace);
+      if (workspace === undefined) {
+        throw new ToolExecutionError(
+          `Unknown workspace "${input.workspace}". Workspaces: ${WORKSPACES.map(
+            (candidate) => candidate.id,
+          ).join(", ")}.`,
+        );
+      }
+      const panelIds = (value: unknown, field: string): PanelId[] => {
+        if (value == null) {
+          return [];
+        }
+        if (!Array.isArray(value)) {
+          throw new ToolExecutionError(`${field} must be a list of panel ids`);
+        }
+        for (const id of value) {
+          if (!isPanelId(id)) {
+            throw new ToolExecutionError(
+              `Unknown panel "${id}" in ${field}. Panels: ${PANELS.map(
+                (panel) => panel.id,
+              ).join(", ")}.`,
+            );
+          }
+          if (!controller.isAvailable(id as PanelId)) {
+            throw new ToolExecutionError(
+              `The ${PANEL_BY_ID[id as PanelId].title} panel is not available for this dataset.`,
+            );
+          }
+        }
+        return value as PanelId[];
+      };
+      const toOpen = panelIds(input.open, "open");
+      const toClose = panelIds(input.close, "close");
+      if (!workspace && toOpen.length === 0 && toClose.length === 0) {
+        throw new ToolExecutionError(
+          "Give a workspace, or panels to open or close.",
+        );
+      }
+      if (workspace) {
+        controller.applyOpenSet(workspace.open);
+      }
+      for (const id of toOpen) {
+        controller.open(id);
+      }
+      for (const id of toClose) {
+        controller.close(id);
+      }
+      // Opening one panel can close another (one main panel on the right at
+      // a time; Filters only beside the Object Browser or Analysis). Say so,
+      // or the model reports panels open that are not.
+      const nowOpen = controller.openPanels();
+      const displaced = toOpen.filter(
+        // Not one this same call was asked to close: that is not the rules.
+        (id) => !nowOpen.includes(id) && !toClose.includes(id),
+      );
+      return {
+        result: {
+          panels: describePanels(),
+          ...(displaced.length > 0
+            ? {
+                notOpen: displaced.map((id) => PANEL_BY_ID[id].title),
+                note:
+                  "Some requested panels are not open: only one of the " +
+                  "right-side main panels (Object Browser, Analysis, " +
+                  "Transcripts, Snapshots, Settings) can be open at a time, " +
+                  "and Filters shares the right side only with the Object " +
+                  "Browser or Analysis (opening Filters closes any of the " +
+                  "other three, and opening one of them closes Filters). " +
+                  "The last one opened wins.",
+              }
+            : {}),
+        },
+      };
+    },
+  },
   set_scale: {
     // Changes the shared collection's physical units for every user and
     // reprojects every physical-unit measurement, and is not captured by the
@@ -2685,6 +2814,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
         .addJob({
           jobId: computeJob.jobId,
           datasetId: main.dataset?.id ?? null,
+          leavesResults: true,
         })
         .then(onCompletion);
       return {
@@ -3544,6 +3674,24 @@ export function describeAgentToolCall(name: string, input: any): string {
       return "Change viewer display options";
     case "set_view_mode":
       return `Switch to ${input?.mode === "3d" ? "3D" : "2D"} view`;
+    case "set_panels": {
+      const titles = (ids: unknown) =>
+        Array.isArray(ids)
+          ? ids.map((id) => PANEL_BY_ID[id as PanelId]?.title ?? id).join(", ")
+          : "";
+      const workspaceTitle = WORKSPACES.find(
+        (workspace) => workspace.id === input?.workspace,
+      )?.title;
+      const parts = [
+        input?.workspace
+          ? `switch to the ${workspaceTitle ?? input.workspace} workspace`
+          : "",
+        titles(input?.open) ? `open ${titles(input?.open)}` : "",
+        titles(input?.close) ? `close ${titles(input?.close)}` : "",
+      ].filter(Boolean);
+      const text = parts.join("; ") || "arrange the panels";
+      return text[0].toUpperCase() + text.slice(1);
+    }
     case "set_scale":
       return "Set the image scale / physical units";
     case "list_properties":
@@ -3642,6 +3790,10 @@ export interface IViewStateSnapshot {
   selectedToolId: string | null;
   displayOptions: ReturnType<typeof currentDisplayOptions>;
   viewMode: string;
+  // Which panels were open (set_panels changes it). Opaque
+  // here: the layout's owner hands it out and takes it back. Null outside
+  // the viewer.
+  panelLayout: unknown;
 }
 
 // The dataset/collection/view currently loaded in the viewer.
@@ -3691,6 +3843,7 @@ export function snapshotViewState(): IViewStateSnapshot {
       selectedToolId: main.selectedTool?.configuration.id ?? null,
       displayOptions: currentDisplayOptions(),
       viewMode: volumeViewStore.viewMode,
+      panelLayout: panelLayoutController()?.layoutSnapshot() ?? null,
     }),
   );
 }
@@ -3797,6 +3950,9 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
   }
   if (snapshot.viewMode === "2d" || snapshot.viewMode === "3d") {
     volumeViewStore.setViewMode(snapshot.viewMode);
+  }
+  if (snapshot.panelLayout) {
+    panelLayoutController()?.restoreLayout(snapshot.panelLayout);
   }
   await main.setCameraInfo(snapshot.cameraInfo);
 }

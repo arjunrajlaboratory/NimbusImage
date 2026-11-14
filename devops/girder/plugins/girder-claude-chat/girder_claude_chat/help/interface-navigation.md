@@ -1,8 +1,9 @@
 ## Navigating the Interface
 After loading your data, navigate the interface:
 - **Home Page**: Tabbed interface with "Recent Datasets", "Recent Projects", and (when sample data is configured) "Sample Datasets"
-- **Top Bar**: Buttons that open floating palettes — Navigator, Layers, Tools, 3D view, Object list, Filters, Analysis, Snapshots, Settings, and Measure objects, plus a magnifier button that opens the command palette (see below). (Connections are managed inside the Object list, not a separate top-bar tab.)
-- **Time Lapse palette**: has no top-bar button. It appears to the right of the Navigator when "Time lapse mode" is checked in the Navigator, and closing it turns the mode back off
+- **Top Bar**: 3D view, montage, undo/redo, Measure objects, color by property and import/export, plus a magnifier button that opens the command palette (see below)
+- **Panel chips**: every closed floating palette is a labeled chip along the top edge of the viewer, on the side where it opens — Navigator, Layers and Tools at the top left; Object Browser, Filters, Analysis, Transcripts (when the dataset has them), Snapshots and Settings at the top right. Click a chip to open its palette; close a palette with its X and it becomes a chip again. Filters and Analysis chips show how many filters or gates are active. (Connections are managed inside the Object Browser, not a separate palette.)
+- **Time Lapse palette**: has no chip. It appears to the right of the Navigator when "Time lapse mode" is checked in the Navigator, and closing it turns the mode back off
 - **Center**: The main image viewing area fills the window; palettes open over it
 - **Floating panels**: These palettes float over the viewport as semi-transparent glass overlays (you can still see the image through them) rather than pushing it aside, and they stay open while you interact with the image
 

@@ -1392,7 +1392,7 @@ export class Filters extends VuexModule {
   }
 
   // How many rows in the FILTERS panel are narrowing the visible set. Drives
-  // the count badge on the app-bar Filters button, so active filters stay
+  // the count badge on the Filters chip, so active filters stay
   // discoverable while the panel is closed. Each enabled filter row counts
   // once; the boolean toggles count once when set away from their permissive
   // default (showAnnotationsFromHiddenLayers defaults to true, so it only

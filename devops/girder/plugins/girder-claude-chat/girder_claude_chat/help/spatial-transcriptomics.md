@@ -20,7 +20,7 @@ Loading a Xenium output bundle is done with the **xenium-ingest** scripts, usual
 **Channels**: a new collection shows at most 6 channels as layers. Use **Add layer** in the Layers panel to show the rest.
 
 ## Looking at Molecules: the Transcripts Palette
-On datasets with registered transcripts, a **Transcripts** button (hexagon-of-dots icon) appears in the palette toolbar.
+On datasets with registered transcripts, a **Transcripts** chip (hexagon-of-dots icon) appears at the top right of the viewer.
 
 1. Open **Transcripts** and turn on **Show transcripts**
 2. Type in **Genes (up to 8)** to search and pick genes; each gets its own color, which you can change next to the gene name
@@ -96,7 +96,7 @@ Region layers from QuPath or 10x (`*_annotation.geojson`) can be imported as pol
 ## Seeing Every Cell at Once
 With hundreds of thousands of cells, the viewer normally draws only a subset at a time. For a full-tissue picture:
 
-1. Open **Settings** (sliders icon) → **Advanced settings for large numbers of annotations**
+1. Open **Settings** (its chip at the top right) → **Advanced settings for large numbers of annotations**
 2. Turn on **Annotation overview raster** (off by default)
 3. Choose the **Overview style** (**Filled footprints** or **Centroid discs**) and the **Raster opacity**
 4. **Vector switch** sets how far you must zoom in before the raster gives way to interactive outlines
@@ -125,6 +125,6 @@ Anyone with the link can view, without signing in, but cannot edit, download fil
 - **Region summary counts look wrong**: cells are counted by their center; make sure every region carries the region tag and no cell does; "No polygon carries that tag" means the tag is misspelled or missing
 - **"unknown feature"**: that gene isn't in this dataset's spatial table (check the spelling, the `(protein)` suffix, or whether you switched datasets)
 - **Gene expression doesn't appear in Filters, plots or Color by Property**: genes are listed only after you add them. Use **Measure objects** → **Gene expression** → **Add genes…** (or Measurements tab → **Add genes**), then look under **Spatial table**
-- **No Transcripts button, Add genes button or Gene expression card**: this dataset has no registered transcripts or spatial table; ask your admin to run the ingest step
+- **No Transcripts chip, Add genes button or Gene expression card**: this dataset has no registered transcripts or spatial table; ask your admin to run the ingest step
 
 For scripted analysis, the `nimbusimage` Python package exposes the same features through `ds.spatial` (expression table, transcripts, neighborhoods, region summaries).

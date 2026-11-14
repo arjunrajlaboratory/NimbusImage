@@ -48,17 +48,18 @@ export type TCommandProvider = () => ICommand[];
 
 ## Where commands come from (the self-updating part)
 
-| Provider           | Source of truth                                                                                                                                                                              | Example                              | Updates on its own?                   |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------- |
-| `toolCommands`     | `store.tools` (current configuration)                                                                                                                                                        | "Use tool: Nuclei" (shows hotkey)    | ✅                                    |
-| `addToolCommands`  | `buildCatalog()` in `src/tools/creation/toolFromCatalog.ts`, which reads worker-image Docker labels (`interfaceName`, `description`) from `properties.workerImageList` plus `MANUAL_CATALOG` | "Add Cellpose-SAM tool…"             | ✅ registering a worker image adds it |
-| `templateCommands` | `store.toolTemplateList` (`public/config/templates.json`)                                                                                                                                    | "Add tool: Snap to circle…"          | ✅                                    |
-| `panelCommands`    | The panel registry from `PANEL_LAYOUT_PERSISTENCE.md` Part 1                                                                                                                                 | "Open Filters", "Close Layers"       | ✅ once the registry exists           |
-| `layerCommands`    | `store.layers`                                                                                                                                                                               | "Hide layer: DAPI"                   | ✅                                    |
-| `snapshotCommands` | `configuration.snapshots`                                                                                                                                                                    | "Go to snapshot: Fig 2"              | ✅                                    |
-| `tourCommands`     | The tour list App.vue's Help menu already builds                                                                                                                                             | "Tour: Calculate blob metrics"       | ✅                                    |
-| `propertyCommands` | Properties store                                                                                                                                                                             | "Color by: Area"                     | ✅                                    |
-| Static actions     | `useCommand()` registrations next to the feature                                                                                                                                             | "Export CSV", "Undo", "Switch to 3D" | ⚠️ one line per feature               |
+| Provider           | Source of truth                                                                                                                                                                              | Example                                                                            | Updates on its own?                   |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------- |
+| `toolCommands`     | `store.tools` (current configuration)                                                                                                                                                        | "Use tool: Nuclei" (shows hotkey)                                                  | ✅                                    |
+| `addToolCommands`  | `buildCatalog()` in `src/tools/creation/toolFromCatalog.ts`, which reads worker-image Docker labels (`interfaceName`, `description`) from `properties.workerImageList` plus `MANUAL_CATALOG` | "Add Cellpose-SAM tool…"                                                           | ✅ registering a worker image adds it |
+| `templateCommands` | `store.toolTemplateList` (`public/config/templates.json`)                                                                                                                                    | "Add tool: Snap to circle…"                                                        | ✅                                    |
+| `panelCommands`    | The panel registry from `PANEL_LAYOUT_PERSISTENCE.md` Part 1                                                                                                                                 | "Open Filters", "Close Layers"                                                     | ✅ once the registry exists           |
+| `layoutCommands`   | `WORKSPACES` in the panel registry, plus the layout owner in App.vue (`PANEL_LAYOUT_PERSISTENCE.md` Part 4)                                                                                  | "Workspace: Plot", "Reset panel layout", "Save panel layout as collection default" | ✅                                    |
+| `layerCommands`    | `store.layers`                                                                                                                                                                               | "Hide layer: DAPI"                                                                 | ✅                                    |
+| `snapshotCommands` | `configuration.snapshots`                                                                                                                                                                    | "Go to snapshot: Fig 2"                                                            | ✅                                    |
+| `tourCommands`     | The tour list App.vue's Help menu already builds                                                                                                                                             | "Tour: Calculate blob metrics"                                                     | ✅                                    |
+| `propertyCommands` | Properties store                                                                                                                                                                             | "Color by: Area"                                                                   | ✅                                    |
+| Static actions     | `useCommand()` registrations next to the feature                                                                                                                                             | "Export CSV", "Undo", "Switch to 3D"                                               | ⚠️ one line per feature               |
 
 **Static actions** (app-bar buttons, menus) register where they live with a
 composable that unregisters itself on unmount:
@@ -78,6 +79,10 @@ Because the registration sits next to the button, adding a feature and its
 command is the same edit. Add a **coverage test** so nothing gets forgotten:
 give each app-bar control a `data-command-id` attribute and assert that every
 id in `App.vue`'s template exists in the registry.
+The panel chips (a closed panel's one control, at the top of its zone; see
+`PANEL_LAYOUT_PERSISTENCE.md`) are made from one template and carry
+`panel.toggle.<id>` through a binding, so the test checks that binding rather
+than a literal per panel.
 
 **Hotkeys.** `boundKeys` in `src/utils/v-mousetrap.ts` records only
 `{ section, description }`, not the handler, so it can't drive commands
@@ -248,7 +253,7 @@ Departures from the spec, and why:
   beside it, take `v-model:open`, and **mount the first time they are
   opened**, so a viewer load still pays for none of them. Mounted eagerly,
   the CSV dialog would read the filtered-annotation list on every render.
-- **Every app-bar and Tools-palette button has a command**, including "Add new
+- **Every app-bar control, panel chip and Tools-palette button has a command**, including "Add new
   tool…" (browse every tool type), alongside the per-card "Add tool: X…".
 - **The worker list is refreshed when the palette opens** in the viewer.
   Before this, only mounting the Add-tool dialog fetched it, so
@@ -288,7 +293,7 @@ every Vuetify transition at 0 rAF, so it can't verify a dialog):
 
 Not exercised live: "Go to snapshot" (the test collection has no snapshots,
 and creating one would write to a shared configuration). It is covered by
-*"loads a snapshot requested from the command palette, then clears it"*.
+_"loads a snapshot requested from the command palette, then clears it"_.
 
 ## Parameterized commands and shared operations
 
@@ -325,18 +330,18 @@ names included).
 Every viewer control with a hotkey or a switch now has a command, registered
 with `useCommand` in the component that owns the control:
 
-| Component | Commands |
-| --- | --- |
-| `ImageViewer.vue` | Show/Hide objects (A), object tooltips (T), Lock/Unlock pan and zoom (L), Copy/Paste/Delete selected objects, Clear selection |
-| `DisplayLayers.vue` | Z max-merge all layers (Z), Show/Hide all layers (0) |
-| `DisplayLayer.vue` | Z max-merge layer: X (⇧N). Here rather than in a provider: turning it off restores the layer's previous slice, which only the component remembers |
-| `LayersPanel.vue` | Layer mode: Single / Multiple / Unroll, Add layer |
-| `NavigatorPanel.vue` | Next/Previous XY, Z, time point (w/r, d/e, s/f), Unroll XY/Z/T, time lapse mode. The Navigator's unroll watch is what refreshes the dataset, so the unroll commands go through it |
-| `LargeImageDropdown.vue` | Switch image: X |
+| Component                                                                 | Commands                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ImageViewer.vue`                                                         | Show/Hide objects (A), object tooltips (T), Lock/Unlock pan and zoom (L), Copy/Paste/Delete selected objects, Clear selection                                                                                      |
+| `DisplayLayers.vue`                                                       | Z max-merge all layers (Z), Show/Hide all layers (0)                                                                                                                                                               |
+| `DisplayLayer.vue`                                                        | Z max-merge layer: X (⇧N). Here rather than in a provider: turning it off restores the layer's previous slice, which only the component remembers                                                                  |
+| `LayersPanel.vue`                                                         | Layer mode: Single / Multiple / Unroll, Add layer                                                                                                                                                                  |
+| `NavigatorPanel.vue`                                                      | Next/Previous XY, Z, time point (w/r, d/e, s/f), Unroll XY/Z/T, time lapse mode. The Navigator's unroll watch is what refreshes the dataset, so the unroll commands go through it                                  |
+| `LargeImageDropdown.vue`                                                  | Switch image: X                                                                                                                                                                                                    |
 | `ViewerSettings.vue`, `AnnotationToggles.vue`, `PixelScaleBarSetting.vue` | Scale bar, pixel scale bar, minimap, values on hover, point scaling, dimension labels, background color, connections, only show objects passing filters, tooltips only for filtered objects, object selection mode |
-| `AnnotationFilters.vue` | Current frame only, objects from hidden layers |
-| `UISettings.vue` | Dark/light mode (no viewer gate: the theme applies everywhere) |
-| `TimelapsePanel.vue` | Track labels (time lapse mode only) |
+| `AnnotationFilters.vue`                                                   | Current frame only, objects from hidden layers                                                                                                                                                                     |
+| `UISettings.vue`                                                          | Dark/light mode (no viewer gate: the theme applies everywhere)                                                                                                                                                     |
+| `TimelapsePanel.vue`                                                      | Track labels (time lapse mode only)                                                                                                                                                                                |
 
 Boolean settings use `toggleCommands` (`src/commands/toggles.ts`): the title
 names what running the command will do, so it flips with the setting.
@@ -422,7 +427,7 @@ Run `pnpm test src/commands src/actions src/components/CommandPalette.test.ts sr
 - [ ] **A newly registered worker image becomes a command with no reload.** The store _replaces_ `workerImageList`; the provider must re-derive. — _"picks up a newly registered worker image without a reload"_
 - [ ] **A provider's reactive inputs re-derive the list; a registration goes away with its component.** — _"re-derives a getter registration when its reactive input changes"_, _"useCommand registers for the component's lifetime"_
 - [ ] **Commands are hidden while `enabled()` is false**, reactively. — _"hides commands whose enabled() is false, reactively"_, _"is disabled outside the viewer and when logged out"_
-- [ ] **Every app-bar control names a registered command.** — _"registers a command for every data-command-id in the template"_, _"gives every app-bar palette toggle a data-command-id"_, _"name a command registered by the same component"_
+- [ ] **Every app-bar control names a registered command.** — _"registers a command for every data-command-id in the template"_, _"gives every app-bar view toggle a data-command-id"_, _"name a command registered by the same component"_
 
 ### Matching
 
@@ -432,7 +437,7 @@ Run `pnpm test src/commands src/actions src/components/CommandPalette.test.ts sr
 - [ ] **An exact alias outranks another command's title prefix**, so "filter" finds the Filters panel above 50+ "Add filter: …" rows. — _"ranks an exact alias above another command's title prefix"_
 - [ ] **A state verb never matches its opposite.** Show/hide are not synonyms; a whole state verb (show, hide, open, close, lock, unlock, on, off, start, stop, unroll…) must match a whole title word or keyword, never a substring ("lock" in "Unlock") or subsequence ("open" in "Close…"); and a state-flipping command's title, keywords and aliases name only what it will do ("Roll up Z", "Show the current Z slice", "Draw every object"; a turn-off title shares no word with the state it ends, so not "…, ignoring filters"), so "show minimap", "lock pan", "unroll z", "merge z", "filter objects" and "filter area" can't run the opposite. — _"never matches a state verb to its opposite"_, _"matches a whole state verb only to a whole title word or keyword"_, _"lets a query's show/hide find only the command that does it"_, _"names only the background color it will apply"_, _"lets 'add' find only a hidden column and 'remove' only a shown one"_, _"keeps 'filter' queries off the commands that turn filtering off"_, _"keeps 'filter current frame' off the command that turns it off"_
 - [ ] **No array literal in `src/` holds both words of an opposite pair.** The pairs live in one list, `src/commands/stateWords.ts`, which also drives the scorer's strict state words, so a new pair (roll/unroll, filtered/unfiltered) guards both at once. Three review rounds each found one such keyword list; this scan finds them all. A `cond ? "a" : "b"` choice is the fix and is not flagged. — _"never hold both words of an opposite pair"_
-- [ ] **No state-flipping command carries a word asserting the current state**, in its keywords *or* its description: settings toggles take `turnOnKeywords`/`turnOffKeywords`, and layer commands are titled "Hide/Show layer: X" with no "Visible"/"Hidden" description ("visible dapi" used to hide a visible layer). — _"offers 'filtered' only while the command turns filtering on"_, _"toggles each layer, annotated with its bound hotkey and channel"_
+- [ ] **No state-flipping command carries a word asserting the current state**, in its keywords _or_ its description: settings toggles take `turnOnKeywords`/`turnOffKeywords`, and layer commands are titled "Hide/Show layer: X" with no "Visible"/"Hidden" description ("visible dapi" used to hide a visible layer). — _"offers 'filtered' only while the command turns filtering on"_, _"toggles each layer, annotated with its bound hotkey and channel"_
 - [ ] **A subsequence matches within one title word only**, never letters scattered across the title ("area" in "dapi blob metrics elongation" made "filter area" add an Elongation filter). — _"matches a subsequence within one title word, not across words"_
 - [ ] **A plural query word matches a singular title word.** — _"matches a plural query word against a singular title word"_
 - [ ] **Every query word must match**, and results are capped. — _"requires every query word to match"_, _"returns nothing for an empty query and caps results"_
@@ -443,15 +448,15 @@ Run `pnpm test src/commands src/actions src/components/CommandPalette.test.ts sr
 - [ ] **Reopening mid-close still runs the chosen command** (after-leave never comes once the leave is canceled). — _"still runs the chosen command if reopened before it finished closing"_
 - [ ] **The highlight follows the command, not the row number**, so a list that re-derives under the user (the worker list landing) can't make Enter run something else, and a vanished command falls back to the first row. — _"keeps the highlighted command when the list re-derives under it"_, _"falls back to the first row when the highlighted command disappears"_
 - [ ] **⌘K / Ctrl+K typed in the search field closes the palette.** v-mousetrap ignores keys in inputs, so the field handles it (and claims Ctrl+K from the browser). — _"closes on its own toggle key typed in the search field"_
-- [ ] **⌘K / Ctrl+K opens the palette from inside any text field**, and only that binding fires there. — *"fires an allowInInputs hotkey from inside a text field, and only that one"*
-- [ ] **The field's own toggle key is stopped**, so the app-wide binding can't immediately reopen it. — *"stops its own toggle key, so the app-wide binding can't reopen it"*
-- [ ] **Focus can't leave the field, by keyboard or pointer**, so viewer hotkeys (⌘⌫ delete included) stay muted behind the palette. — *"keeps focus in the search field on Tab"*, *"keeps focus in the search field when the list is pressed"*
-- [ ] **Enter that confirms an IME composition runs nothing.** — *"ignores Enter that confirms an IME composition"*
-- [ ] **Only real pointer movement moves the highlight**; a list scrolling under a resting pointer doesn't. — *"moves the highlight on real pointer movement only"*
-- [ ] **Hotkey hints render the plus key and sequences** instead of throwing in the row render. — *"keeps the plus key instead of throwing on it"*, *"keeps the steps of a sequence apart"*
-- [ ] **Import from JSON needs a login in the menu and the palette alike**, through one shared rule (Codex P2 on #1365). — *"offers Import only to logged-in users, in the menu and the palette alike"*
+- [ ] **⌘K / Ctrl+K opens the palette from inside any text field**, and only that binding fires there. — _"fires an allowInInputs hotkey from inside a text field, and only that one"_
+- [ ] **The field's own toggle key is stopped**, so the app-wide binding can't immediately reopen it. — _"stops its own toggle key, so the app-wide binding can't reopen it"_
+- [ ] **Focus can't leave the field, by keyboard or pointer**, so viewer hotkeys (⌘⌫ delete included) stay muted behind the palette. — _"keeps focus in the search field on Tab"_, _"keeps focus in the search field when the list is pressed"_
+- [ ] **Enter that confirms an IME composition runs nothing.** — _"ignores Enter that confirms an IME composition"_
+- [ ] **Only real pointer movement moves the highlight**; a list scrolling under a resting pointer doesn't. — _"moves the highlight on real pointer movement only"_
+- [ ] **Hotkey hints render the plus key and sequences** instead of throwing in the row render. — _"keeps the plus key instead of throwing on it"_, _"keeps the steps of a sequence apart"_
+- [ ] **Import from JSON needs a login in the menu and the palette alike**, through one shared rule (Codex P2 on #1365). — _"offers Import only to logged-in users, in the menu and the palette alike"_
 - [ ] **Data dialogs mount closed, then open.** Their on-open work (CSV preview, dimension labels) is a non-immediate watcher, which a dialog created already open never fires. — _"opens each dialog after mounting it, so its on-open watcher fires the first time"_
-- [ ] **The data dialogs render no activator of their own.** An empty `#activator` template rendered each dialog's fallback "Export CSV"-style button into the app bar once it mounted. — *"its dialogs render no activator of their own"*
+- [ ] **The data dialogs render no activator of their own.** An empty `#activator` template rendered each dialog's fallback "Export CSV"-style button into the app bar once it mounted. — _"its dialogs render no activator of their own"_
 - [ ] **Same-named layers show their own hotkey**, read by position, not looked up by name. — _"gives same-named layers their own key, not the first one's"_
 - [ ] **Closing without choosing runs nothing.** — _"closing without choosing runs nothing"_
 - [ ] **Keyboard: arrows wrap, Enter runs the active row and records it as recent.** — _"arrow keys move the active row and Enter runs it after closing"_
@@ -492,7 +497,7 @@ Run `pnpm test src/commands src/actions src/components/CommandPalette.test.ts sr
 
 - [ ] **No per-keystroke list rebuild**: providers are read inside `allCommands` (a `computed`); typing only re-scores. No provider reads per-annotation state. — _"re-scores on each keystroke without re-running the providers"_
 - [ ] **The palette refreshes the worker list each time it opens in the viewer, and a failed refresh is logged, not leaked.** — _"resets the query and refreshes the worker list each time it opens"_, _"logs, rather than leaks, a failed worker-list refresh"_
-- [ ] **A once-opened CSV dialog doesn't keep the Data I/O menu reading the filtered list**, but keeps it until its leave transition ends (no "(0)" flash while closing). — *"hands the CSV dialog the filtered list only while it is open"*
+- [ ] **A once-opened CSV dialog doesn't keep the Data I/O menu reading the filtered list**, but keeps it until its leave transition ends (no "(0)" flash while closing). — _"hands the CSV dialog the filtered list only while it is open"_
 
 ### Process
 

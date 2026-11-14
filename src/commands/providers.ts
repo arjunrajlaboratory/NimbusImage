@@ -7,7 +7,7 @@ import { ITourMetadata } from "@/store/model";
 import { boundHotkey } from "./hotkeys";
 import { createPathStringFromPathArray, findIndexOfPath } from "@/utils/paths";
 import { snapshotKey } from "@/utils/snapshotKey";
-import { PANELS, PanelId } from "@/utils/panelRegistry";
+import { PANELS, PanelId, WORKSPACES } from "@/utils/panelRegistry";
 import {
   buildToolTypeSelection,
   buildToolTypeSubmenus,
@@ -255,7 +255,7 @@ export interface IPanelController {
 /**
  * "Open X" / "Close X" for every registered palette. The controller is the
  * owner of the open/closed state (App.vue); toggling through it applies the
- * same companion rules as the app-bar buttons.
+ * same companion rules as the panel chips.
  */
 export function panelCommands(
   ctx: IProviderContext,
@@ -278,6 +278,91 @@ export function panelCommands(
         run: () => controller.toggle(panel.id),
       };
     });
+}
+
+export interface ILayoutController {
+  /** Show exactly these panels. */
+  applyOpenSet: (ids: readonly PanelId[]) => void;
+  /** Back to the collection's default layout, or the app's. */
+  reset: () => void;
+  /** Default column widths and left-stack order. */
+  resetArrangement: () => void;
+  hasCollectionDefault: () => boolean;
+  /** Whether this user can try to write the collection (logged in). */
+  canSaveCollectionDefault: () => boolean;
+  saveCollectionDefault: () => void | Promise<void>;
+  clearCollectionDefault: () => void | Promise<void>;
+}
+
+/**
+ * "Workspace: …" for each named layout, plus the commands that reset the
+ * layout and set or clear the layout a collection opens with.
+ */
+export function layoutCommands(
+  ctx: IProviderContext,
+  controller: ILayoutController,
+): TCommandProvider {
+  return () => [
+    ...WORKSPACES.map(
+      (workspace): ICommand => ({
+        id: `workspace.apply.${workspace.id}`,
+        title: `Workspace: ${workspace.title}`,
+        group: "Panels",
+        keywords: ["workspace", "layout", "panels", "arrange"],
+        aliases: [workspace.title, ...workspace.aliases],
+        description: workspace.description,
+        icon: "mdi-view-dashboard-outline",
+        enabled: ctx.inViewer,
+        run: () => controller.applyOpenSet(workspace.open),
+      }),
+    ),
+    {
+      id: "layout.reset",
+      title: "Reset panel layout",
+      group: "Panels",
+      keywords: ["workspace", "panels", "default", "restore", "arrange"],
+      description: controller.hasCollectionDefault()
+        ? "Back to this collection's default layout"
+        : "Back to the default layout",
+      icon: "mdi-backup-restore",
+      enabled: ctx.inViewer,
+      run: controller.reset,
+    },
+    // The keyboard route to what double-clicking a column's edge and dragging
+    // a palette back do with the pointer.
+    {
+      id: "layout.resetArrangement",
+      title: "Reset panel widths and order",
+      group: "Panels",
+      keywords: ["workspace", "panels", "resize", "column", "size", "arrange"],
+      icon: "mdi-arrow-expand-horizontal",
+      enabled: ctx.inViewer,
+      run: controller.resetArrangement,
+    },
+    {
+      id: "layout.saveCollectionDefault",
+      title: "Save panel layout as collection default",
+      group: "Panels",
+      keywords: ["workspace", "panels", "share", "everyone", "arrange"],
+      description:
+        "Everyone opening this collection for the first time starts with these panels",
+      icon: "mdi-content-save-outline",
+      enabled: () => ctx.inViewer() && controller.canSaveCollectionDefault(),
+      run: controller.saveCollectionDefault,
+    },
+    {
+      id: "layout.clearCollectionDefault",
+      title: "Clear collection default panel layout",
+      group: "Panels",
+      keywords: ["workspace", "panels", "remove", "arrange"],
+      icon: "mdi-close-circle-outline",
+      enabled: () =>
+        ctx.inViewer() &&
+        controller.canSaveCollectionDefault() &&
+        controller.hasCollectionDefault(),
+      run: controller.clearCollectionDefault,
+    },
+  ];
 }
 
 /** "Tour: …" for every tour that can start from the current route. */

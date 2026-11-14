@@ -114,7 +114,9 @@ async function copyAnnotationIds() {
   // dataset breadcrumbs above it. When any left palette is open the panel
   // would be hidden behind it, so we slide it right past the column via the
   // `.any-left-palette-open` ancestor selector below.
-  top: 72px;
+  // Below the band the panel chips occupy (App.vue sets the variable; in
+  // timelapse mode it also carries the drop below the Timelapse palette).
+  top: var(--nimbus-action-panel-top, 72px);
   left: 16px;
   // Shrink-wrap to the widest child (longest button or the "N objects
   // selected" header), so short labels don't leave empty space on the right
