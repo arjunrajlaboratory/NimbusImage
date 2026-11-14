@@ -97,6 +97,8 @@ import {
   TStorageSeverity,
 } from "@/utils/storage";
 
+import type { IPanelLayout } from "@/utils/panelLayout";
+
 import persister from "./Persister";
 import store from "./root";
 import sync from "./sync";
@@ -1961,6 +1963,13 @@ export class Main extends VuexModule {
   }
 
   @Mutation
+  private setConfigurationDefaultPanelLayout(layout: IPanelLayout | null) {
+    if (this.configuration) {
+      this.configuration.defaultPanelLayout = layout;
+    }
+  }
+
+  @Mutation
   protected setHistory(history: IHistoryEntry[]) {
     this.history = history;
   }
@@ -3441,6 +3450,18 @@ export class Main extends VuexModule {
     }
     this.setConfigurationOverviewConfig(config);
     await this.syncConfiguration("overviewConfig");
+  }
+
+  // The layout a collection opens with for someone who has none of their own
+  // for it. One write per explicit request; null clears it (the server drops
+  // a metadata key set to null).
+  @Action
+  async saveDefaultPanelLayout(layout: IPanelLayout | null) {
+    if (!this.configuration) {
+      return;
+    }
+    this.setConfigurationDefaultPanelLayout(layout);
+    await this.syncConfiguration("defaultPanelLayout");
   }
 
   // Debounced entry point called by the properties/filters stores whenever

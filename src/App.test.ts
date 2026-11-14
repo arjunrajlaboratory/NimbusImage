@@ -173,6 +173,8 @@ describe("App", () => {
     };
     (store as any).paletteOpenRequests = [];
     (store as any).setPaletteOpenRequests = vi.fn();
+    (store as any).configuration = null;
+    (store as any).datasetView = null;
     (propertyStore as any).uncomputedCountByProperty = {};
     (filterStore as any).activeFilterCount = 0;
     (filterStore as any).activeAnalysisGateCount = 0;
@@ -424,6 +426,208 @@ describe("App", () => {
       expect(wrapper.find('[aria-label="Restore Tools"]').exists()).toBe(false);
     });
 
+    it("a minimized panel's chip carries its badge", async () => {
+      (filterStore as any).activeFilterCount = 4;
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      vm.togglePalette("filtersPanel");
+      paletteStub(wrapper, "Filters").vm.$emit("minimize");
+      await nextTick();
+      const chip = wrapper.get('[aria-label="Restore Filters"]');
+      expect(chip.find(".palette-chip-badge").text()).toBe("4");
+      // A chip with nothing to report has no badge.
+      paletteStub(wrapper, "Tools").vm.$emit("minimize");
+      await nextTick();
+      expect(
+        wrapper
+          .get('[aria-label="Restore Tools"]')
+          .find(".palette-chip-badge")
+          .exists(),
+      ).toBe(false);
+    });
+
+    it("saving the collection default takes the panels shown as palettes, even while all are hidden", async () => {
+      (store as any).isLoggedIn = true;
+      (store as any).saveDefaultPanelLayout = vi.fn();
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      vm.togglePalette("annotationPanel");
+      paletteStub(wrapper, "Tools").vm.$emit("minimize");
+      const hideAll = vm.appHotkeys.find(
+        (entry: any) => entry.bind === "mod+.",
+      );
+      hideAll.handler(document.body, new KeyboardEvent("keydown"));
+      await nextTick();
+      expect(store.saveDefaultPanelLayout).not.toHaveBeenCalled();
+
+      const { allCommands } = await import("@/commands/registry");
+      allCommands.value
+        .find((command) => command.id === "layout.saveCollectionDefault")!
+        .run();
+      expect(store.saveDefaultPanelLayout).toHaveBeenCalledTimes(1);
+      expect(
+        (store.saveDefaultPanelLayout as any).mock.calls[0][0].open,
+      ).toEqual(["navigatorPanel", "layersPanel", "annotationPanel"]);
+    });
+
+    it("the collection default is what a first visit opens with, until I change it", async () => {
+      (store as any).configuration = {
+        id: "config-default",
+        defaultPanelLayout: { version: 1, open: ["snapshotPanel"] },
+      };
+      (store as any).datasetView = {
+        id: "view1",
+        configurationId: "config-default",
+      };
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      expect(vm.snapshotPanel).toBe(true);
+      expect(vm.navigatorPanel).toBe(false);
+      vm.togglePalette("toolsPanel");
+      wrapper.unmount();
+
+      const again = mountViewer().vm as any;
+      expect(again.snapshotPanel).toBe(true);
+      expect(again.toolsPanel).toBe(true);
+    });
+
+    it("does not take the previous collection's layout while the next one loads", async () => {
+      // The store keeps the old configuration until the new one arrives.
+      (store as any).configuration = {
+        id: "config-old",
+        defaultPanelLayout: { version: 1, open: ["snapshotPanel"] },
+      };
+      (store as any).datasetView = { id: "view-new", configurationId: "new" };
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      expect(vm.snapshotPanel).toBe(false);
+      expect(vm.navigatorPanel).toBe(true);
+
+      (store as any).configuration = {
+        id: "new",
+        defaultPanelLayout: { version: 1, open: ["settingsPanel"] },
+      };
+      await nextTick();
+      expect(vm.settingsPanel).toBe(true);
+      expect(vm.navigatorPanel).toBe(false);
+    });
+
+    it("waits for the view the route names before reading its collection", async () => {
+      (store as any).configuration = {
+        id: "config-old",
+        defaultPanelLayout: { version: 1, open: ["snapshotPanel"] },
+      };
+      // Still the previous view: the route already names the next one.
+      (store as any).datasetView = {
+        id: "view-old",
+        configurationId: "config-old",
+      };
+      const wrapper = mountComponent(
+        { params: { datasetViewId: "view-new" } },
+        renderAppBarStubs,
+      );
+      expect((wrapper.vm as any).snapshotPanel).toBe(false);
+    });
+
+    it("hide-all also hides the Timelapse palette and the Analyze drawer, and brings them back", async () => {
+      const { default: timelapseStore } = await import("@/store/timelapse");
+      timelapseStore.setShowMode(true);
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      vm.analyzePanel = true;
+      await nextTick();
+      const drawer = () => wrapper.findComponent({ name: "VNavigationDrawer" });
+      expect(vm.timelapsePaletteShown).toBe(true);
+      expect(drawer().props("modelValue")).toBe(true);
+
+      const hideAll = vm.appHotkeys.find(
+        (entry: any) => entry.bind === "mod+.",
+      );
+      hideAll.handler(document.body, new KeyboardEvent("keydown"));
+      await nextTick();
+      expect(vm.timelapsePaletteShown).toBe(false);
+      expect(paletteStub(wrapper, "Time Lapse").props("modelValue")).toBe(
+        false,
+      );
+      expect(drawer().props("modelValue")).toBe(false);
+      // Masked, not turned off.
+      expect(timelapseStore.showMode).toBe(true);
+      expect(vm.analyzePanel).toBe(true);
+
+      hideAll.handler(document.body, new KeyboardEvent("keydown"));
+      await nextTick();
+      expect(vm.timelapsePaletteShown).toBe(true);
+      expect(drawer().props("modelValue")).toBe(true);
+      timelapseStore.setShowMode(false);
+    });
+
+    it("a chip row holds its edge, so canvas surfaces clear it like a palette", async () => {
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      const emptyRight = vm.rightEdgeClearance;
+      for (const title of ["Navigator", "Layers", "Tools"]) {
+        paletteStub(wrapper, title).vm.$emit("minimize");
+      }
+      await nextTick();
+      // No left palette is showing, but the corner is not free.
+      expect(vm.navigatorPanel || vm.layersPanel || vm.toolsPanel).toBe(false);
+      expect(vm.leftEdgeOccupied).toBe(true);
+      expect(vm.leftEdgeClearX).toBeGreaterThan(16);
+
+      vm.togglePalette("annotationPanel");
+      paletteStub(wrapper, "Object Browser").vm.$emit("minimize");
+      await nextTick();
+      expect(vm.rightEdgeClearance).toBeGreaterThan(emptyRight);
+
+      // With nothing on the left edge at all, it is free again.
+      for (const title of ["Navigator", "Layers", "Tools"]) {
+        paletteStub(wrapper, title).vm.$emit("update:modelValue", false);
+      }
+      await nextTick();
+      expect(vm.leftEdgeOccupied).toBe(false);
+    });
+
+    it("the hide-all chip also holds the left edge", async () => {
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      const hideAll = vm.appHotkeys.find(
+        (entry: any) => entry.bind === "mod+.",
+      );
+      hideAll.handler(document.body, new KeyboardEvent("keydown"));
+      await nextTick();
+      expect(vm.leftEdgeOccupied).toBe(true);
+    });
+
+    it("a tour step inside a palette that is not showing gets it opened", async () => {
+      const { tourBus, TOUR_REVEAL_PANEL_EVENT } = await import(
+        "@/plugins/tourBus"
+      );
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      expect(paletteStub(wrapper, "Tools").props("panelId")).toBe("toolsPanel");
+      paletteStub(wrapper, "Tools").vm.$emit("minimize");
+      vm.togglePalette("layersPanel");
+      const hideAll = vm.appHotkeys.find(
+        (entry: any) => entry.bind === "mod+.",
+      );
+      hideAll.handler(document.body, new KeyboardEvent("keydown"));
+      await nextTick();
+
+      tourBus.emit(TOUR_REVEAL_PANEL_EVENT, "toolsPanel");
+      tourBus.emit(TOUR_REVEAL_PANEL_EVENT, "layersPanel");
+      tourBus.emit(TOUR_REVEAL_PANEL_EVENT, "noSuchPanel");
+      tourBus.emit(TOUR_REVEAL_PANEL_EVENT, undefined);
+      await nextTick();
+      expect(vm.toolsPanel).toBe(true);
+      expect(vm.layersPanel).toBe(true);
+
+      // Not after the App is gone.
+      wrapper.unmount();
+      expect(() =>
+        tourBus.emit(TOUR_REVEAL_PANEL_EVENT, "settingsPanel"),
+      ).not.toThrow();
+    });
+
     it("the palettes of a zone start below its chip row, the other zone does not move", async () => {
       const wrapper = mountViewer();
       const vm = wrapper.vm as any;
@@ -499,14 +703,14 @@ describe("App", () => {
       const wrapper = mountViewer();
       const vm = wrapper.vm as any;
       const timelapseLeft = paletteStub(wrapper, "Time Lapse").props("left");
-      paletteStub(wrapper, "Layers").vm.$emit("resize-end", 340);
+      paletteStub(wrapper, "Layers").vm.$emit("resize-end", 450);
       await nextTick();
-      expect(vm.leftColumn).toBe(340);
+      expect(vm.leftColumn).toBe(450);
       for (const title of ["Navigator", "Layers", "Tools"]) {
-        expect(paletteStub(wrapper, title).props("width")).toBe(340);
+        expect(paletteStub(wrapper, title).props("width")).toBe(450);
       }
       expect(paletteStub(wrapper, "Time Lapse").props("left")).toBe(
-        timelapseLeft - 80,
+        timelapseLeft + 30,
       );
     });
 

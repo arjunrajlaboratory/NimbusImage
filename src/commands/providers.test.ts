@@ -70,6 +70,7 @@ vi.mock("@/utils/v-mousetrap", async () => {
 import {
   addToolCommands,
   layerCommands,
+  layoutCommands,
   panelCommands,
   propertyCommands,
   propertyFilterCommands,
@@ -440,6 +441,69 @@ describe("panelCommands", () => {
     expect(layers.title).toBe("Open Layers");
     filters.run();
     expect(toggle).toHaveBeenCalledWith("filtersPanel");
+  });
+});
+
+describe("layoutCommands", () => {
+  function controller(overrides: Record<string, unknown> = {}) {
+    return {
+      applyOpenSet: vi.fn(),
+      reset: vi.fn(),
+      hasCollectionDefault: () => false,
+      canSaveCollectionDefault: () => true,
+      saveCollectionDefault: vi.fn(),
+      clearCollectionDefault: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it("offers each workspace, found by its name, and applies its panels", () => {
+    const owner = controller();
+    const commands = layoutCommands(ctx, owner)();
+    const plot = commands.find((c) => c.id === "workspace.apply.plot")!;
+    expect(plot.title).toBe("Workspace: Plot");
+    expect(plot.aliases).toContain("Plot");
+    plot.run();
+    expect(owner.applyOpenSet).toHaveBeenCalledWith([
+      "layersPanel",
+      "filtersPanel",
+      "analysisPanel",
+    ]);
+  });
+
+  it("resets through the owner and says what it resets to", () => {
+    const owner = controller();
+    const reset = () =>
+      layoutCommands(ctx, owner)().find((c) => c.id === "layout.reset")!;
+    expect(reset().description).toBe("Back to the default layout");
+    owner.hasCollectionDefault = () => true;
+    expect(reset().description).toBe(
+      "Back to this collection's default layout",
+    );
+    reset().run();
+    expect(owner.reset).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers saving the collection default only to someone who can write", () => {
+    const find = (owner: ReturnType<typeof controller>, id: string) =>
+      layoutCommands(ctx, owner)().find((c) => c.id === id)!;
+    const save = "layout.saveCollectionDefault";
+    const clear = "layout.clearCollectionDefault";
+
+    expect(find(controller(), save).enabled!()).toBe(true);
+    expect(
+      find(controller({ canSaveCollectionDefault: () => false }), save)
+        .enabled!(),
+    ).toBe(false);
+
+    // Clearing needs something to clear.
+    expect(find(controller(), clear).enabled!()).toBe(false);
+    const withDefault = controller({ hasCollectionDefault: () => true });
+    expect(find(withDefault, clear).enabled!()).toBe(true);
+    find(withDefault, save).run();
+    find(withDefault, clear).run();
+    expect(withDefault.saveCollectionDefault).toHaveBeenCalledTimes(1);
+    expect(withDefault.clearCollectionDefault).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -1,6 +1,7 @@
 import { IGirderItem, IGirderFolder, IUPennCollection } from "@/girder";
 import type { ITileHistogram } from "./images";
 import type { PanelId } from "@/utils/panelRegistry";
+import type { IPanelLayout } from "@/utils/panelLayout";
 interface IObject<Values = any> {
   [key: string]: Values;
 }
@@ -677,6 +678,12 @@ export interface IDatasetConfigurationBase {
   // dataset absent from the map has no property coloring. Optional for
   // compatibility with configurations created before this was persisted.
   colorByProperty?: TColorByPropertyByDataset;
+  // The panels someone opening this collection for the first time starts
+  // with. Set only by the explicit "Save panel layout as collection default"
+  // command, never as a side effect of opening or closing panels: each
+  // person's own layout is kept in their browser (utils/usePanelLayout).
+  // Null or absent: the app's defaults.
+  defaultPanelLayout?: IPanelLayout | null;
 }
 
 export interface IDatasetConfiguration extends IDatasetConfigurationBase {
@@ -3029,6 +3036,7 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
       propertyFilters: [],
     },
     colorByProperty: {},
+    defaultPanelLayout: null,
   };
 }
 

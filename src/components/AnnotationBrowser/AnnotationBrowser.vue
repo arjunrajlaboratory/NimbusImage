@@ -30,8 +30,13 @@
       <v-window-item value="measurements" class="browser-window-item">
         <!-- is-active gates rendering: once opened the item stays mounted
              (hidden, not unmounted), and a hidden tab must not re-render on
-             every annotation/property change. -->
-        <measurements-tab :is-active="activeTab === 'measurements'" />
+             every annotation/property change. Hidden includes the palette
+             being closed: the tab is remembered between visits, so without
+             `visible` a remembered tab would do its work from page load in a
+             palette nobody has opened. -->
+        <measurements-tab
+          :is-active="visible && activeTab === 'measurements'"
+        />
       </v-window-item>
       <v-window-item value="connections" class="browser-window-item">
         <!-- is-active drives the reveal-on-show retry: this component mounts
@@ -39,7 +44,7 @@
              a viewer click made while the tab was never opened — or while it
              was hidden and unlaid-out — must be re-revealed when it shows. -->
         <connection-list
-          :is-active="activeTab === 'connections'"
+          :is-active="visible && activeTab === 'connections'"
           @clickedTag="clickedTag"
         />
       </v-window-item>

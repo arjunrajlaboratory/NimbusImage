@@ -153,9 +153,15 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
     );
   }
 
-  // Restore once per (user, collection). The collection can arrive after the
-  // route does, so a visit may restore twice: first the user's last layout,
-  // then the collection's own once it is known.
+  // Restore once per (user, collection): the user's own layout for the
+  // collection, then the collection's default, then their last layout
+  // anywhere, then the app's defaults.
+  //
+  // The collection is not known for the whole visit. It arrives after the
+  // route does, and on a switch between collections it is unknown again until
+  // the new one loads. While it is unknown nothing is restored: a fresh visit
+  // shows the user's last layout, a switch keeps what is on screen, and a
+  // change the user makes in that time wins over the layout that arrives.
   watch(
     () =>
       options.inViewer()
@@ -168,24 +174,24 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
         return;
       }
       const configurationId = options.configurationId();
-      const forConfiguration = configurationId
-        ? layoutForConfiguration(configurationId)
-        : null;
-      if (!stay || stay.scope !== uiStateScope.value) {
+      const isNewStay = !stay || stay.scope !== uiStateScope.value;
+      if (isNewStay) {
         stay = { scope: uiStateScope.value, changedBeforeConfiguration: false };
+      } else if (!configurationId) {
+        return;
+      }
+      if (stay!.changedBeforeConfiguration && configurationId) {
+        // Their change stands, and is now this collection's layout too.
+        save();
+      } else {
         show(
-          forConfiguration ??
+          (configurationId ? layoutForConfiguration(configurationId) : null) ??
             readUiState(LAST_LAYOUT_KEY, validateLayout) ??
             defaultLayout(),
         );
-      } else if (stay.changedBeforeConfiguration) {
-        // Their change stands, and is now this collection's layout too.
-        save();
-      } else if (forConfiguration) {
-        show(forConfiguration);
       }
       if (configurationId) {
-        stay.changedBeforeConfiguration = false;
+        stay!.changedBeforeConfiguration = false;
       }
     },
     { immediate: true, flush: "sync" },

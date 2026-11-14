@@ -152,10 +152,60 @@ describe("usePanelLayout", () => {
     it("does not restore again when the same collection is re-read", () => {
       env.collectionDefault = { version: 1, open: ["annotationPanel"] };
       const panels = mount();
-      panels.close("annotationPanel");
+      // Nothing of mine is stored for the collection, so a second restore
+      // would show its default again and undo the hide.
+      panels.toggleChromeHidden();
       // A sync replaces the configuration object: same id, new default.
-      env.collectionDefault = { version: 1, open: ["annotationPanel"] };
+      env.collectionDefault = { version: 1, open: ["snapshotPanel"] };
+      expect(panels.chromeHidden.value).toBe(true);
+      panels.toggleChromeHidden();
+      expect(panels.visible.annotationPanel.value).toBe(true);
+      expect(panels.visible.snapshotPanel.value).toBe(false);
+      expect(window.localStorage.length).toBe(0);
+    });
+
+    it("keeps what is on screen while the next collection loads", () => {
+      const panels = mount();
+      panels.open("annotationPanel"); // config-a's layout, and my last
+      env.configurationId = "config-b";
+      panels.open("settingsPanel"); // config-b's layout, and now my last
+
+      env.configurationId = null;
+      expect(panels.visible.settingsPanel.value).toBe(true);
+      env.configurationId = "config-a";
+      expect(panels.visible.annotationPanel.value).toBe(true);
+    });
+
+    it("a switch to an unvisited collection uses my last layout, as a reload there would", () => {
+      const panels = mount();
+      panels.open("annotationPanel"); // config-a
+      env.configurationId = "config-b";
+      panels.open("settingsPanel"); // config-b, and my last
+      env.configurationId = "config-a"; // shows config-a's own again
+      expect(panels.visible.annotationPanel.value).toBe(true);
+
+      env.configurationId = "config-c";
+      expect(panels.visible.settingsPanel.value).toBe(true);
       expect(panels.visible.annotationPanel.value).toBe(false);
+      env.configurationId = "config-c";
+      expect(shown(reload())).toEqual(shown(panels));
+    });
+
+    it("a change made while the next collection loads goes to it, not the previous one", () => {
+      const panels = mount();
+      panels.open("annotationPanel"); // config-a
+      const forA = JSON.stringify(stored("layout.byConfiguration"));
+
+      env.configurationId = null;
+      panels.open("settingsPanel");
+      expect(JSON.stringify(stored("layout.byConfiguration"))).toBe(forA);
+      env.configurationId = "config-b";
+      expect(panels.visible.settingsPanel.value).toBe(true);
+      expect(
+        (stored("layout.byConfiguration") as [string, unknown][]).map(
+          ([id]) => id,
+        ),
+      ).toEqual(["config-a", "config-b"]);
     });
   });
 

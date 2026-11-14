@@ -11,7 +11,9 @@
       :class="{
         'is-resizing': gesture?.kind === 'resize',
         'is-reordering': gesture?.kind === 'reorder',
+        [`resizes-${resizeEdge}`]: !!resizeEdge,
       }"
+      :data-panel-id="panelId"
       :style="paletteStyle"
       @click.stop
     >
@@ -111,6 +113,12 @@ const props = withDefaults(
     resizeEdge?: "left" | "right";
     /** The grip drags the palette up and down within its stack. */
     reorderable?: boolean;
+    /**
+     * The palette's id in the panel registry, written to the DOM so code
+     * holding only an element inside it (a tour's anchor) can ask for the
+     * palette that contains it to be shown.
+     */
+    panelId?: string;
   }>(),
   {
     width: 360,
@@ -140,10 +148,23 @@ defineExpose({ rootEl });
 // The one drag in progress, if any. A single object so that ending or
 // cancelling cannot leave half of it behind, and so the two drags cannot
 // overlap.
-type TGesture =
-  | { kind: "resize"; pointerId: number; startX: number; startWidth: number }
-  | { kind: "reorder"; pointerId: number; startY: number; offsetY: number };
+type TGesture = (
+  | { kind: "resize"; startWidth: number }
+  | { kind: "reorder"; offsetY: number }
+) & {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  // False until the pointer has travelled DRAG_THRESHOLD. A press that never
+  // does is a click, and a click changes nothing: without this, clicking a
+  // handle committed the width it already had (fixing the zone at one
+  // palette's default) and clicking a grip re-sorted the stack.
+  moved: boolean;
+};
 const gesture = ref<TGesture | null>(null);
+
+/** How far (px) a press must travel before it is a drag rather than a click. */
+const DRAG_THRESHOLD = 3;
 
 function beginGesture(event: PointerEvent, next: TGesture) {
   if (gesture.value || event.button !== 0) {
@@ -162,6 +183,8 @@ function startResize(event: PointerEvent) {
     kind: "resize",
     pointerId: event.pointerId,
     startX: event.clientX,
+    startY: event.clientY,
+    moved: false,
     startWidth: rootEl.value?.offsetWidth ?? 0,
   });
 }
@@ -173,7 +196,9 @@ function startReorder(event: PointerEvent) {
   beginGesture(event, {
     kind: "reorder",
     pointerId: event.pointerId,
+    startX: event.clientX,
     startY: event.clientY,
+    moved: false,
     offsetY: 0,
   });
 }
@@ -190,10 +215,23 @@ function moveGesture(event: PointerEvent) {
   if (!drag || event.pointerId !== drag.pointerId) {
     return;
   }
+  const travelled = Math.abs(
+    drag.kind === "resize"
+      ? event.clientX - drag.startX
+      : event.clientY - drag.startY,
+  );
+  if (!drag.moved && travelled < DRAG_THRESHOLD) {
+    return;
+  }
   if (drag.kind === "resize") {
+    gesture.value = { ...drag, moved: true };
     emit("resize", resizedWidth(drag, event.clientX));
   } else {
-    gesture.value = { ...drag, offsetY: event.clientY - drag.startY };
+    gesture.value = {
+      ...drag,
+      moved: true,
+      offsetY: event.clientY - drag.startY,
+    };
   }
 }
 
@@ -211,9 +249,12 @@ function takeGesture(event?: PointerEvent): TGesture | null {
 
 function endGesture(event: PointerEvent) {
   const drag = takeGesture(event);
-  if (drag?.kind === "resize") {
+  if (!drag?.moved) {
+    return;
+  }
+  if (drag.kind === "resize") {
     emit("resize-end", resizedWidth(drag, event.clientX));
-  } else if (drag?.kind === "reorder") {
+  } else {
     emit("reorder-end", event.clientY - drag.startY);
   }
 }
@@ -221,7 +262,9 @@ function endGesture(event: PointerEvent) {
 // Every way a drag ends without a drop: the pointer is cancelled or its
 // capture lost, Escape, or the palette going away mid-drag.
 function cancelGesture(event?: PointerEvent) {
-  if (takeGesture(event)?.kind === "resize") {
+  const drag = takeGesture(event);
+  // Only a drag that reported a width has one to take back.
+  if (drag?.kind === "resize" && drag.moved) {
     emit("resize-cancel");
   }
 }
@@ -377,6 +420,16 @@ const paletteStyle = computed(() => ({
   flex: 1 1 auto;
   overflow: auto;
   min-height: 0;
+}
+
+// The resize handle lies over the palette's edge. Keep the body, and so its
+// scrollbar, out from under it: otherwise grabbing the scrollbar's outer
+// edge resizes the zone instead of scrolling.
+.resizes-right > .palette-body {
+  margin-right: 6px;
+}
+.resizes-left > .palette-body {
+  margin-left: 6px;
 }
 
 .palette-fade-enter-active,

@@ -86,6 +86,7 @@ describe("FloatingPalette", () => {
     it("ends once: the lost capture that follows pointerup does nothing", () => {
       const wrapper = mountResizable("right");
       fire(wrapper, HANDLE, "pointerdown", { clientX: 500 });
+      fire(wrapper, HANDLE, "pointermove", { clientX: 510 });
       fire(wrapper, HANDLE, "pointerup", { clientX: 520 });
       fire(wrapper, HANDLE, "lostpointercapture");
       expect(wrapper.emitted("resize-end")).toHaveLength(1);
@@ -97,11 +98,12 @@ describe("FloatingPalette", () => {
       (type) => {
         const wrapper = mountResizable("right");
         fire(wrapper, HANDLE, "pointerdown", { clientX: 500 });
+        fire(wrapper, HANDLE, "pointermove", { clientX: 520 });
         fire(wrapper, HANDLE, type);
         fire(wrapper, HANDLE, "pointermove", { clientX: 700 });
         fire(wrapper, HANDLE, "pointerup", { clientX: 700 });
         expect(wrapper.emitted("resize-cancel")).toHaveLength(1);
-        expect(wrapper.emitted("resize")).toBeUndefined();
+        expect(wrapper.emitted("resize")).toEqual([[420]]);
         expect(wrapper.emitted("resize-end")).toBeUndefined();
       },
     );
@@ -109,6 +111,7 @@ describe("FloatingPalette", () => {
     it("Escape cancels the drag and is not passed on", () => {
       const wrapper = mountResizable("right");
       fire(wrapper, HANDLE, "pointerdown", { clientX: 500 });
+      fire(wrapper, HANDLE, "pointermove", { clientX: 520 });
       const escape = new KeyboardEvent("keydown", {
         key: "Escape",
         bubbles: true,
@@ -143,8 +146,30 @@ describe("FloatingPalette", () => {
     it("unmounting mid-drag cancels it", () => {
       const wrapper = mountResizable("right");
       fire(wrapper, HANDLE, "pointerdown", { clientX: 500 });
+      fire(wrapper, HANDLE, "pointermove", { clientX: 520 });
       wrapper.unmount();
       expect(wrapper.emitted("resize-cancel")).toHaveLength(1);
+    });
+
+    it("a click on the handle, or a press that barely moves, changes nothing", () => {
+      const wrapper = mountResizable("right");
+      fire(wrapper, HANDLE, "pointerdown", { clientX: 500 });
+      fire(wrapper, HANDLE, "pointerup", { clientX: 500 });
+      fire(wrapper, HANDLE, "pointerdown", { clientX: 500 });
+      fire(wrapper, HANDLE, "pointermove", { clientX: 502 });
+      fire(wrapper, HANDLE, "pointerup", { clientX: 502 });
+      fire(wrapper, HANDLE, "pointerdown", { clientX: 500 });
+      fire(wrapper, HANDLE, "pointercancel");
+      expect(wrapper.emitted("resize")).toBeUndefined();
+      expect(wrapper.emitted("resize-end")).toBeUndefined();
+      expect(wrapper.emitted("resize-cancel")).toBeUndefined();
+    });
+
+    it("keeps the body, and its scrollbar, out from under the handle", () => {
+      expect(mountResizable("right").find(".resizes-right").exists()).toBe(
+        true,
+      );
+      expect(mountPalette().find('[class*="resizes-"]').exists()).toBe(false);
     });
 
     it("ignores another pointer and a non-primary button", () => {
@@ -192,6 +217,20 @@ describe("FloatingPalette", () => {
       await wrapper.vm.$nextTick();
       expect(wrapper.emitted("reorder-end")).toBeUndefined();
       expect(palette(wrapper).style.transform).toBe("");
+    });
+
+    it("a click on the grip does not reorder", () => {
+      const wrapper = mountPalette({ reorderable: true });
+      fire(wrapper, GRIP, "pointerdown", { clientY: 100 });
+      fire(wrapper, GRIP, "pointerup", { clientY: 101 });
+      expect(wrapper.emitted("reorder-end")).toBeUndefined();
+    });
+
+    it("names its panel in the DOM when given an id", () => {
+      expect(
+        palette(mountPalette({ panelId: "toolsPanel" })).dataset.panelId,
+      ).toBe("toolsPanel");
+      expect(palette(mountPalette()).dataset.panelId).toBeUndefined();
     });
 
     it("the grip does nothing on a palette that cannot be reordered", () => {

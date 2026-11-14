@@ -196,6 +196,15 @@ describe("resizable zones", () => {
     expect(paletteWidth("right", 400, 600, 1440)).toBe(600);
   });
 
+  it("never lets a zone go narrower than its palettes were laid out for", () => {
+    expect(ZONE_MIN_WIDTH.left).toBe(
+      Math.min(...Object.values(LEFT_COLUMN_PALETTE_WIDTHS)),
+    );
+    expect(ZONE_MIN_WIDTH.right).toBe(
+      Math.min(...Object.values(RIGHT_PALETTE_WIDTHS)),
+    );
+  });
+
   it("clamps a zone to its minimum and to a share of the viewport", () => {
     expect(clampZoneWidth("left", 10, 1440)).toBe(ZONE_MIN_WIDTH.left);
     expect(clampZoneWidth("right", 5000, 1440)).toBe(648);

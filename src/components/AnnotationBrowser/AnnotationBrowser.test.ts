@@ -61,6 +61,30 @@ describe("AnnotationBrowser", () => {
     expect(store.annotationBrowserTab).toBe("objects");
   });
 
+  it("a remembered tab does no work while the palette is closed", async () => {
+    window.localStorage.setItem(
+      "nimbus.ui.anonymous.objectBrowser.tab",
+      '"connections"',
+    );
+    const wrapper = shallowMount(AnnotationBrowser, {
+      props: { visible: false },
+      global: { renderStubDefaultSlot: true },
+    });
+    expect(store.annotationBrowserTab).toBe("connections");
+    const connections = wrapper.findComponent({ name: "ConnectionList" });
+    expect(connections.props("isActive")).toBe(false);
+
+    await wrapper.setProps({ visible: true });
+    expect(connections.props("isActive")).toBe(true);
+    store.setAnnotationBrowserTab("measurements");
+    await nextTick();
+    expect(connections.props("isActive")).toBe(false);
+    const measurements = wrapper.findComponent({ name: "MeasurementsTab" });
+    expect(measurements.props("isActive")).toBe(true);
+    await wrapper.setProps({ visible: false });
+    expect(measurements.props("isActive")).toBe(false);
+  });
+
   it("switches to the tab of a user who logs in", async () => {
     setUiStateScope("user-1");
     window.localStorage.setItem(

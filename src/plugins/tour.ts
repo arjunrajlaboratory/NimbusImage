@@ -3,7 +3,7 @@ import type { Router } from "vue-router";
 import { driver, type Driver, type PopoverDOM } from "driver.js";
 import "driver.js/dist/driver.css";
 import "./tour.scss";
-import { tourBus } from "./tourBus";
+import { TOUR_REVEAL_PANEL_EVENT, tourBus } from "./tourBus";
 import { logWarning } from "@/utils/log";
 import { ITourConfig, ITourMetadata, ITourStepRuntime } from "@/store/model";
 
@@ -124,6 +124,7 @@ export class TourManager {
       } catch {
         return this.showMissingTargetPopover(step);
       }
+      await this.revealContainingPanel(target);
     }
 
     this.renderStep(step, target);
@@ -219,6 +220,19 @@ export class TourManager {
       tourBus.off(this.activeTriggerEvent, this.advance);
       this.activeTriggerEvent = null;
     }
+  }
+
+  // Palette content stays mounted while its palette is closed, minimized or
+  // hidden, so a step's anchor can exist and still be invisible, and the
+  // popover would point at nothing. Ask for the palette that holds it, then
+  // give the app a turn to show it before the step is drawn.
+  private async revealContainingPanel(target: Element) {
+    const palette = target.closest<HTMLElement>("[data-panel-id]");
+    if (!palette || getComputedStyle(palette).display !== "none") {
+      return;
+    }
+    tourBus.emit(TOUR_REVEAL_PANEL_EVENT, palette.dataset.panelId);
+    await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
   // Resolve a selector to the best target. Some anchors exist in more than one

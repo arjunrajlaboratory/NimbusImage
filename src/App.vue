@@ -5,12 +5,13 @@
     :class="{
       'datasetview-mode': isDatasetView,
       'left-palettes-open': isDatasetView && allLeftPalettesOpen,
-      'any-left-palette-open': isDatasetView && anyLeftPaletteOpen,
+      'any-left-palette-open': isDatasetView && leftEdgeOccupied,
       // The Timelapse palette sits exactly where the selection action panels
       // slide to when a left palette is open, so they move to the top-right
       // while it is up. How far in they sit is `--nimbus-right-edge-clear-x`
       // below, not a second class.
-      'timelapse-palette-open': isDatasetView && !embedMode && timelapsePanel,
+      'timelapse-palette-open':
+        isDatasetView && !embedMode && timelapsePaletteShown,
       // The montage covers the canvas; the selection action panel lifts
       // above it (see AnnotationActionPanel).
       'montage-open': isDatasetView && isMontageOpen,
@@ -254,8 +255,11 @@
                 <v-icon size="18">{{ PANEL_BY_ID.filtersPanel.icon }}</v-icon>
                 <!-- Count of active filters, so the user can tell filters are
                      narrowing the object set even with the panel closed. -->
-                <span v-if="activeFilterCount > 0" class="palette-ibtn-badge">
-                  {{ activeFilterCount > 9 ? "9+" : activeFilterCount }}
+                <span
+                  v-if="panelBadges.filtersPanel"
+                  class="palette-ibtn-badge"
+                >
+                  {{ panelBadges.filtersPanel }}
                 </span>
               </button>
             </template>
@@ -279,12 +283,10 @@
                      Filters badge cannot cover it: each badge counts only what
                      its own panel can show. -->
                 <span
-                  v-if="activeAnalysisGateCount > 0"
+                  v-if="panelBadges.analysisPanel"
                   class="palette-ibtn-badge"
                 >
-                  {{
-                    activeAnalysisGateCount > 9 ? "9+" : activeAnalysisGateCount
-                  }}
+                  {{ panelBadges.analysisPanel }}
                 </span>
               </button>
             </template>
@@ -507,8 +509,11 @@
       </div>
     </v-app-bar>
 
+    <!-- v-show, not v-if, for "hide all panels": the panel keeps its state
+         and comes back as it was. -->
     <ai-panel
       v-if="aiPanelOpen && canUseAiPanel"
+      v-show="!panelsHidden"
       @close="aiPanelOpen = false"
     />
 
@@ -517,13 +522,14 @@
     </v-main>
 
     <v-navigation-drawer
-      v-model="analyzePanel"
+      :model-value="analyzePanel && !panelsHidden"
+      @update:model-value="analyzePanel = $event"
       location="right"
       :scrim="false"
       :width="RIGHT_PALETTE_WIDTHS.analyze"
       :mobile="false"
     >
-      <analyze-annotations :visible="analyzePanel" />
+      <analyze-annotations :visible="analyzePanel && !panelsHidden" />
     </v-navigation-drawer>
 
     <!-- Minimized palettes, as a row of chips at the top of their zone. The
@@ -532,6 +538,8 @@
       v-for="zone in PANEL_ZONES"
       v-show="paletteChips[zone].length > 0"
       :key="zone"
+      :ref="observeChipRow"
+      :data-zone="zone"
       class="palette-chips"
       :class="`zone-${zone}`"
       :style="[paletteChipRowStyle, { [zone]: `${PALETTE_INSET}px` }]"
@@ -546,6 +554,9 @@
       >
         <v-icon size="14">{{ chip.icon }}</v-icon>
         <span>{{ chip.title }}</span>
+        <span v-if="chip.badge" class="palette-chip-badge">
+          {{ chip.badge }}
+        </span>
       </button>
     </div>
 
@@ -640,7 +651,7 @@
            only the chrome-less embed hides the panel while retaining mode. -->
       <floating-palette
         ref="timelapsePaletteRef"
-        v-model="timelapsePanel"
+        v-model="timelapsePaletteShown"
         title="Time Lapse"
         :left="rightOfLeftColumn(leftColumn)"
         :width="TIMELAPSE_PALETTE_WIDTH"
@@ -756,16 +767,29 @@ import {
 } from "@/utils/paletteGeometry";
 import AiPanel from "@/components/AiPanel.vue";
 import FloatingPalette from "@/components/FloatingPalette.vue";
+import { TOUR_REVEAL_PANEL_EVENT, tourBus } from "@/plugins/tourBus";
 import { usePanelLayout } from "@/utils/usePanelLayout";
 import { setUiStateScope } from "@/utils/uiState";
 import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
 import { useTour } from "@/utils/useTour";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
-import { PANELS, PANEL_BY_ID, PANEL_IDS, PanelId } from "@/utils/panelRegistry";
-import { leftOrderAfterDrop } from "@/utils/panelLayout";
+import {
+  IPanelContext,
+  PANELS,
+  PANEL_BY_ID,
+  PANEL_IDS,
+  PanelId,
+  isPanelAvailable as panelIsAvailable,
+  panelBadge,
+} from "@/utils/panelRegistry";
+import { layoutWithOpenSet, leftOrderAfterDrop } from "@/utils/panelLayout";
 import { useCommand, useCommandProvider } from "@/commands/registry";
-import { panelCommands, tourCommands } from "@/commands/providers";
+import {
+  layoutCommands,
+  panelCommands,
+  tourCommands,
+} from "@/commands/providers";
 import { aiPromptRequest } from "@/commands/requests";
 import { isTourAvailableOnRoute, useViewerContext } from "@/commands/context";
 import { boundHotkey, formatHotkey } from "@/commands/hotkeys";
@@ -826,23 +850,56 @@ watch(
   { immediate: true, flush: "sync" },
 );
 
-// The Transcripts button and palette only exist for a dataset with a
-// registered transcript store (or while that is being looked up or failed,
-// so the failure can be read and retried).
-function isPanelAvailable(id: PanelId): boolean {
-  return (
-    id !== "transcriptsPanel" ||
+// What the registry's per-panel `badge` and `available` rules are asked
+// about. One place gathers it, so a toggle, its command, its palette and its
+// minimized chip cannot disagree.
+const panelContext = computed<IPanelContext>(() => ({
+  activeFilterCount: filterStore.activeFilterCount,
+  activeAnalysisGateCount: filterStore.activeAnalysisGateCount,
+  transcriptsReachable:
     transcriptsStore.hasTranscripts ||
     !!transcriptsStore.error ||
-    transcriptsStore.loading
-  );
+    transcriptsStore.loading,
+}));
+
+function isPanelAvailable(id: PanelId): boolean {
+  return panelIsAvailable(id, panelContext.value);
 }
+
+const panelBadges = computed(
+  () =>
+    Object.fromEntries(
+      PANEL_IDS.map((id) => [id, panelBadge(id, panelContext.value)]),
+    ) as Record<PanelId, string | null>,
+);
+
+// The collection of the dataset view on screen, or null until it has loaded.
+// Not simply `store.configuration`: that keeps the previous collection while
+// the next one loads (and while the user is on another page), so reading it
+// alone would restore and save the layout of a collection that is no longer
+// the one being opened. The route names the view first, the store then loads
+// the view, and the view names its collection.
+const viewedConfiguration = computed(() => {
+  const view = store.datasetView;
+  const configuration = store.configuration;
+  const routeViewId = route.params?.datasetViewId;
+  if (
+    !view ||
+    !configuration ||
+    view.configurationId !== configuration.id ||
+    // Routes that carry no view id (a share link) have only the store's.
+    (typeof routeViewId === "string" && routeViewId !== view.id)
+  ) {
+    return null;
+  }
+  return configuration;
+});
 
 const panelLayout = usePanelLayout({
   // The embed route (a share link in an iframe) shows only the canvas.
   inViewer: () => isDatasetView.value && !embedMode.value,
-  configurationId: () => store.configuration?.id ?? null,
-  collectionDefault: () => null,
+  configurationId: () => viewedConfiguration.value?.id ?? null,
+  collectionDefault: () => viewedConfiguration.value?.defaultPanelLayout,
   isAvailable: isPanelAvailable,
 });
 // True while the palette is on screen; see `usePanelLayout`'s `visible`.
@@ -859,6 +916,11 @@ const {
 } = panelLayout.visible;
 const openPalette = panelLayout.open;
 const togglePalette = panelLayout.toggle;
+// "Hide all panels" is on. It covers every panel that floats over or beside
+// the canvas, not only the registry's: the Timelapse palette, the AI panel
+// and the Analyze drawer are masked by it too (below), each keeping its own
+// open state for when the panels come back.
+const panelsHidden = panelLayout.chromeHidden;
 
 const snapshotPanelFull = ref(false);
 const analyzePanel = ref(false);
@@ -871,6 +933,14 @@ const aiPanelOpen = ref(false);
 const timelapsePanel = computed({
   get: () => timelapseStore.showMode,
   set: (value: boolean) => timelapseStore.setShowMode(value),
+});
+// What the palette's v-model and the geometry read: the mode, unless "hide all
+// panels" is masking it. Closing the palette still turns the mode off.
+const timelapsePaletteShown = computed({
+  get: () => timelapsePanel.value && !panelsHidden.value,
+  set: (value: boolean) => {
+    timelapsePanel.value = value;
+  },
 });
 
 /**
@@ -934,9 +1004,15 @@ const rightEdgeClearance = computed(() =>
       width: rightPaletteWidth(RIGHT_PALETTE_WIDTHS.snapshots),
     },
     {
-      open: aiPanelOpen.value && canUseAiPanel.value,
+      open: aiPanelOpen.value && canUseAiPanel.value && !panelsHidden.value,
       width: AI_PANEL_WIDTH,
       inset: RIGHT_EDGE_OVERLAY_INSETS.aiPanel,
+    },
+    // The row of minimized-palette chips holds the top of the right edge at
+    // the palettes' z-index, exactly where these surfaces go in timelapse mode.
+    {
+      open: paletteChips.value.right.length > 0,
+      width: chipRowWidths.value.right,
     },
   ]),
 );
@@ -953,7 +1029,7 @@ const rightEdgeClearance = computed(() =>
  * palette, using its measured height so the offset tracks its real content.
  */
 const actionPanelTop = computed(() => {
-  if (!timelapsePanel.value || !isDatasetView.value || embedMode.value) {
+  if (!timelapsePaletteShown.value || !isDatasetView.value || embedMode.value) {
     return ACTION_PANEL_TOP;
   }
   if (
@@ -974,7 +1050,7 @@ const actionPanelTop = computed(() => {
 });
 
 const paletteGeometryVars = computed(() => ({
-  "--nimbus-left-palette-clear-x": `${leftPaletteClearX(leftColumn.value)}px`,
+  "--nimbus-left-palette-clear-x": `${leftEdgeClearX.value}px`,
   "--nimbus-right-edge-clear-x": `${rightEdgeClearance.value}px`,
   "--nimbus-action-panel-top": `${actionPanelTop.value}px`,
   // The connection panel stacks a fixed distance below the object panel, so it
@@ -1036,6 +1112,24 @@ const allLeftPalettesOpen = computed(
 // (not just the whole stack) read `.any-left-palette-open`.
 const anyLeftPaletteOpen = computed(
   () => navigatorPanel.value || layersPanel.value || toolsPanel.value,
+);
+
+// The left edge is also held by the row of chips (minimized palettes, or the
+// one that undoes "hide all panels"). It sits at the top-left corner at the
+// palettes' z-index, which is where the selection panels and the montage
+// start, so they clear it the same way they clear a palette: by its width.
+const leftEdgeOccupied = computed(
+  () => anyLeftPaletteOpen.value || paletteChips.value.left.length > 0,
+);
+const leftEdgeClearX = computed(() =>
+  Math.max(
+    anyLeftPaletteOpen.value ? leftPaletteClearX(leftColumn.value) : 0,
+    paletteChips.value.left.length > 0
+      ? leftPaletteClearX(chipRowWidths.value.left)
+      : 0,
+    // Nothing on the edge: the value is unused, keep the column's.
+    leftEdgeOccupied.value ? 0 : leftPaletteClearX(leftColumn.value),
+  ),
 );
 
 // The Measure dialog is mounted once here but can be opened from several
@@ -1214,6 +1308,7 @@ interface IPaletteChip {
   title: string;
   icon: string;
   label: string;
+  badge: string | null;
   restore: () => void;
 }
 
@@ -1225,6 +1320,7 @@ const paletteChips = computed<Record<TPaletteZone, IPaletteChip[]>>(() => {
       title: "Show panels",
       icon: "mdi-eye-outline",
       label: "Show all panels",
+      badge: null,
       restore: panelLayout.toggleChromeHidden,
     });
   }
@@ -1234,11 +1330,34 @@ const paletteChips = computed<Record<TPaletteZone, IPaletteChip[]>>(() => {
       title: panel.title,
       icon: panel.icon,
       label: `Restore ${panel.title}`,
+      badge: panelBadges.value[panel.id],
       restore: () => openPalette(panel.id),
     });
   }
   return chips;
 });
+
+// Rendered width of each chip row, for the clearances above. The rows' text
+// is not known ahead of time, so they are measured.
+const chipRowWidths = ref<Record<TPaletteZone, number>>({ left: 0, right: 0 });
+const chipRowObserver =
+  typeof ResizeObserver === "undefined"
+    ? null
+    : new ResizeObserver((entries) => {
+        const widths = { ...chipRowWidths.value };
+        for (const entry of entries) {
+          const row = entry.target as HTMLElement;
+          widths[row.dataset.zone as TPaletteZone] = row.offsetWidth;
+        }
+        chipRowWidths.value = widths;
+      });
+// A template ref function: called with each row's element (observing one
+// twice is a no-op) and with null when it goes away.
+function observeChipRow(row: unknown) {
+  if (row instanceof HTMLElement) {
+    chipRowObserver?.observe(row);
+  }
+}
 
 const paletteChipRowStyle = {
   top: `${PALETTE_TOP}px`,
@@ -1346,6 +1465,7 @@ function paletteChromeFor(id: PanelId) {
   // The edge facing the canvas.
   const resizeEdge: "left" | "right" = zone === "left" ? "right" : "left";
   return {
+    panelId: id,
     minimizable: true,
     resizeEdge,
     reorderable: zone === "left",
@@ -1627,6 +1747,29 @@ useCommandProvider(
 );
 
 useCommandProvider(
+  layoutCommands(viewerContext, {
+    applyOpenSet: panelLayout.applyOpenSet,
+    reset: panelLayout.reset,
+    hasCollectionDefault: () => !!viewedConfiguration.value?.defaultPanelLayout,
+    // The store action writes to `store.configuration`, so only once that is
+    // the collection on screen.
+    canSaveCollectionDefault: () =>
+      store.isLoggedIn && !!viewedConfiguration.value,
+    // Only the panels that are open as palettes: the ones minimized to a
+    // chip, the widths and the order are each person's own. Read from the
+    // layout, not from what is on screen, so "hide all panels" does not save
+    // an empty default.
+    saveCollectionDefault: () => {
+      const { open, minimized } = panelLayout.layout.value;
+      return store.saveDefaultPanelLayout(
+        layoutWithOpenSet(open.filter((id) => !minimized.includes(id))),
+      );
+    },
+    clearCollectionDefault: () => store.saveDefaultPanelLayout(null),
+  }),
+);
+
+useCommandProvider(
   tourCommands(
     () => availableTours.value,
     (tour) => isTourAvailableOnRoute(tour, routeName.value),
@@ -1828,7 +1971,17 @@ watch(
   },
 );
 
+// A tour step anchored inside a palette that is closed, minimized or hidden
+// asks for it (plugins/tour.ts). Before layouts were remembered every visit
+// opened the left stack, so tours could assume their anchors were showing.
+function revealPanelForTour(panelId: unknown) {
+  if (typeof panelId === "string" && panelId in PANEL_BY_ID) {
+    openPalette(panelId as PanelId);
+  }
+}
+
 onMounted(() => {
+  tourBus.on(TOUR_REVEAL_PANEL_EVENT, revealPanelForTour);
   fetchConfig();
   loadAllTours();
   window.addEventListener("resize", updateWindowWidth);
@@ -1842,6 +1995,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", updateWindowWidth);
+  tourBus.off(TOUR_REVEAL_PANEL_EVENT, revealPanelForTour);
+  chipRowObserver?.disconnect();
   filtersResizeObserver?.disconnect();
   teardownLeftPaletteObservers();
 });
@@ -1881,6 +2036,10 @@ defineExpose({
   togglePalette,
   openPalette,
   paletteChips,
+  leftEdgeOccupied,
+  leftEdgeClearX,
+  rightEdgeClearance,
+  timelapsePaletteShown,
   leftStack,
   rightColumnTop,
   leftColumn,
@@ -2052,6 +2211,22 @@ $palette-cluster-tone: #0f1217;
     background: rgba(var(--v-theme-primary), 0.18);
     color: rgb(var(--v-theme-primary));
   }
+}
+
+.palette-chip-badge {
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
 }
 
 .palette-ibtn-badge {

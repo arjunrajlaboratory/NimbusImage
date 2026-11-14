@@ -22,6 +22,11 @@ describe("uiState", () => {
   afterEach(() => {
     scope.stop();
     vi.restoreAllMocks();
+    // Also forgets any value a test left in memory by failing its write.
+    for (const user of [null, "user-1", "user-2", "user-3"]) {
+      setUiStateScope(user);
+      removeUiState("width");
+    }
   });
 
   it("round-trips a value under its own prefix, scoped to the user", () => {
@@ -60,6 +65,39 @@ describe("uiState", () => {
     expect(readUiState("width", asNumber)).toBeNull();
     expect(() => writeUiState("width", 1)).not.toThrow();
     expect(() => removeUiState("width")).not.toThrow();
+  });
+
+  it("a value whose write failed still reads back for the session", () => {
+    writeUiState("width", 300);
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("full");
+      });
+    writeUiState("width", 450);
+    // Not the older value storage still holds.
+    expect(readUiState("width", asNumber)).toBe(450);
+    // Per user, like everything else here.
+    setUiStateScope("user-1");
+    expect(readUiState("width", asNumber)).toBeNull();
+    setUiStateScope(null);
+
+    // Once a write succeeds, storage is the source again.
+    setItem.mockRestore();
+    writeUiState("width", 500);
+    expect(readUiState("width", asNumber)).toBe(500);
+    expect(window.localStorage.getItem("nimbus.ui.anonymous.width")).toBe(
+      "500",
+    );
+  });
+
+  it("removing a value also forgets a write that failed", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("full");
+    });
+    writeUiState("width", 450);
+    removeUiState("width");
+    expect(readUiState("width", asNumber)).toBeNull();
   });
 
   it("removes only the named key", () => {

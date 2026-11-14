@@ -204,10 +204,14 @@ export function rightEdgeClearX(overlays: IRightEdgeOverlay[]): number {
 
 export type TPaletteZone = "left" | "right";
 
-/** Narrowest a zone can be dragged; below this the panels' controls wrap. */
+/**
+ * Narrowest a zone can be dragged: the narrowest default width among its
+ * palettes, which is the narrowest any of them has been laid out for. Below
+ * it controls collide (at 320 the Layers mode radios ran under "Add layer").
+ */
 export const ZONE_MIN_WIDTH: Readonly<Record<TPaletteZone, number>> = {
-  left: 320,
-  right: 360,
+  left: Math.min(...Object.values(LEFT_COLUMN_PALETTE_WIDTHS)),
+  right: Math.min(...Object.values(RIGHT_PALETTE_WIDTHS)),
 };
 
 /** Share of the viewport one zone may take, so the canvas keeps the middle. */

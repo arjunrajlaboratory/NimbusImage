@@ -29,6 +29,19 @@ export type PanelId =
 
 export type PanelZone = "left" | "right";
 
+// The facts a panel's status depends on. Small and cheap on purpose: these
+// are read reactively on every change, so they are counts and flags the
+// stores already keep, never something computed over the annotations.
+export interface IPanelContext {
+  // Filters narrowing the object set, as the Filters panel shows them.
+  activeFilterCount: number;
+  // Gates narrowing the object set, as the Analysis panel shows them.
+  activeAnalysisGateCount: number;
+  // The dataset has a transcript store, or the lookup is running or failed
+  // (so the failure can be read and retried from the panel).
+  transcriptsReachable: boolean;
+}
+
 export interface IPanelDefinition {
   id: PanelId;
   // Same string the FloatingPalette header shows.
@@ -44,6 +57,22 @@ export interface IPanelDefinition {
   defaultOpen: boolean;
   // What users call the panel; the "Open X" command's aliases.
   aliases: string[];
+  // A short status shown on the panel's app-bar toggle and on its chip while
+  // it is minimized, so what a closed panel is doing stays visible. Null:
+  // nothing to show.
+  badge?: (context: IPanelContext) => string | null;
+  // Whether the panel exists for the open dataset. Omitted: always. An
+  // unavailable panel is hidden, with its toggle, command and chip; the
+  // layout that says it is open is left alone.
+  available?: (context: IPanelContext) => boolean;
+}
+
+/** A count as badge text: nothing for zero, capped so it fits the toggle. */
+export function countBadge(count: number): string | null {
+  if (count <= 0) {
+    return null;
+  }
+  return count > 9 ? "9+" : `${count}`;
 }
 
 export const PANELS: readonly IPanelDefinition[] = [
@@ -104,6 +133,9 @@ export const PANELS: readonly IPanelDefinition[] = [
     hosts: ["annotationPanel", "analysisPanel"],
     defaultOpen: false,
     aliases: ["filter"],
+    // Filters apply with the panel closed, so the count is how the user can
+    // tell the object set is narrowed.
+    badge: (context) => countBadge(context.activeFilterCount),
   },
   {
     id: "analysisPanel",
@@ -113,9 +145,12 @@ export const PANELS: readonly IPanelDefinition[] = [
     role: "primary",
     defaultOpen: false,
     aliases: ["measurements", "properties", "plots", "charts"],
+    // Gates also apply with the panel closed and are restored from the saved
+    // configuration. The Filters badge cannot cover them: each badge counts
+    // only what its own panel can show.
+    badge: (context) => countBadge(context.activeAnalysisGateCount),
   },
-  // Only offered for a dataset with a registered transcript store (App.vue
-  // gates the button and the command).
+  // Only offered for a dataset with a registered transcript store.
   {
     id: "transcriptsPanel",
     title: "Transcripts",
@@ -124,6 +159,7 @@ export const PANELS: readonly IPanelDefinition[] = [
     role: "primary",
     defaultOpen: false,
     aliases: ["genes", "spatial"],
+    available: (context) => context.transcriptsReachable,
   },
   {
     id: "snapshotPanel",
@@ -145,6 +181,52 @@ export const PANELS: readonly IPanelDefinition[] = [
   },
 ];
 
+// A workspace is a named set of open panels for one kind of work, applied in
+// one step from the command palette. It names only what is open: widths and
+// the left stack's order stay the user's own. Each set must already satisfy
+// the placement rules below (at most one right-zone primary, Filters only
+// with a host); panelRegistry.test.ts checks that.
+export interface IWorkspace {
+  id: string;
+  title: string;
+  // What it is for, shown under the command.
+  description: string;
+  open: PanelId[];
+  aliases: string[];
+}
+
+export const WORKSPACES: readonly IWorkspace[] = [
+  {
+    id: "annotate",
+    title: "Annotate",
+    description: "Navigator, Layers and Tools, for drawing and segmenting",
+    open: ["navigatorPanel", "layersPanel", "toolsPanel"],
+    aliases: ["draw", "segment", "default layout"],
+  },
+  {
+    id: "analyze",
+    title: "Analyze",
+    description:
+      "Layers, Filters and the Object Browser, for working through objects",
+    open: ["layersPanel", "filtersPanel", "annotationPanel"],
+    aliases: ["objects", "table", "browse objects"],
+  },
+  {
+    id: "plot",
+    title: "Plot",
+    description: "Layers, Filters and Analysis, for plots and gates",
+    open: ["layersPanel", "filtersPanel", "analysisPanel"],
+    aliases: ["scatter", "histogram", "gate"],
+  },
+  {
+    id: "review",
+    title: "Review",
+    description: "Navigator and Snapshots, for stepping through saved views",
+    open: ["navigatorPanel", "snapshotPanel"],
+    aliases: ["present", "bookmarks"],
+  },
+];
+
 const PANELS_BY_ID = new Map<PanelId, IPanelDefinition>(
   PANELS.map((panel) => [panel.id, panel]),
 );
@@ -159,6 +241,14 @@ export const PANEL_BY_ID = Object.fromEntries(PANELS_BY_ID) as Readonly<
 >;
 
 export const PANEL_IDS: readonly PanelId[] = PANELS.map((panel) => panel.id);
+
+export function panelBadge(id: PanelId, context: IPanelContext): string | null {
+  return PANELS_BY_ID.get(id)?.badge?.(context) ?? null;
+}
+
+export function isPanelAvailable(id: PanelId, context: IPanelContext): boolean {
+  return PANELS_BY_ID.get(id)?.available?.(context) ?? true;
+}
 
 /**
  * Pure: the open set that results from opening `id` in `open`, with the
