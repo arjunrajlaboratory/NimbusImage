@@ -1,6 +1,6 @@
 ---
 name: nimbus-frontend
-description: "Use when writing or modifying Vue 3 components, Vuex store modules, TypeScript interfaces, or Vuetify 4 UI in the src/ directory. Covers: <script setup> composition API, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 4 theming (CSS Cascade Layers, light/dark mode), select slot patterns (no .raw wrapper), dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button conventions (5-role taxonomy — primary/secondary/tertiary/destructive/icon-only — with required variant and size), button loading states, @girder/components compatibility, and style guidelines."
+description: "Use when writing or modifying Vue 3 components, Vuex store modules, TypeScript interfaces, or Vuetify 4 UI in the src/ directory. Covers: <script setup> composition API, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 4 theming (CSS Cascade Layers, light/dark mode), select slot patterns (no .raw wrapper), dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button conventions (5-role taxonomy — primary/secondary/tertiary/destructive/icon-only — with required variant and size), button loading states, state flags and in-flight tracking (loading/running/saving/dragging flags are state machines: design them before adding one), @girder/components compatibility, and style guidelines."
 ---
 
 # Nimbus Frontend Development
@@ -1042,13 +1042,101 @@ cut 708,983 to 72,925.
   read that one list; a new narrowing filter that skips it is invisible on
   all three. See `codebaseDocumentation/ACTIVE_CONSTRAINT_CUES.md`.
 
-## State flags: four shapes that leave the UI stuck
+## State flags are state machines: design them before adding one
 
 A flag that tracks "what is this doing right now" (`running`, `loading`,
-`configuring`, `isDragging`) is an implicit state machine. An audit of the
-whole UI found about 25 of them; nearly every bug was one of four shapes. See
-`codebaseDocumentation/IMPLICIT_STATE_MACHINES.md` for the list and its
-regression checklist.
+`configuring`, `isDragging`, a "pending" id, a phase string) is an implicit
+state machine. An audit of the whole UI found about 25 of them, and the
+review that followed took seven passes because each fix was written against
+one path. See `codebaseDocumentation/IMPLICIT_STATE_MACHINES.md` for the list
+and its regression checklist.
+
+The rest of this section records what went wrong. This part is what to do
+first, whenever a change adds or touches a ref, store field or module-level
+variable of that kind.
+
+### Seven questions before the first line
+
+Answer each one. Where the answer is not obvious from the type, write it in
+a comment above the state: the next change will be made by someone who reads
+only that file.
+
+1. **Is the answer already held somewhere?** A second record of the same
+   fact will disagree with the first. Read the owners table below and derive
+   from the owner (a computed over the store) instead of adding a flag.
+2. **What are the states?** Name them. Two flags that cannot both be true,
+   or one that implies another, are one state: use a single
+   `null | { phase: "dragging" | "saving", ... }` so an impossible
+   combination cannot be written and one assignment resets everything
+   (`dragState` in `AnnotationViewer.vue`, `phase` in `NewDataset.vue`).
+3. **Who writes each transition?** List every writer, including the ones you
+   did not write: a child component's own buttons and exposed methods, a
+   `v-if` or `:key` that remounts the owner, a route change, a dataset
+   switch, a logout, a watcher, a response that arrives late.
+4. **How does each state end?** Four exits, every time: success, failure (a
+   rejection, so the reset is in `finally`), cancel, and abandonment
+   (unmount, window blur, navigation, the target going away, a release that
+   never arrives). A state with no failure or abandonment exit is the
+   spinner that never stops.
+5. **How long does it live, and who clears it?** Pick the shortest lifetime
+   that works and put the state where that lifetime is enforced:
+
+   | It must survive | Put it | It is cleared by |
+   |---|---|---|
+   | nothing beyond this component | a local ref | unmount |
+   | a remount (`:key`, `v-if`, a dialog closing, another tool selected) | a store module | you, on every exit |
+   | only the open dataset | the per-dataset store state | `setSelectedDataset` |
+   | navigation between datasets | a store map keyed by every id that scopes it (configuration, dataset, tool or property) | you, plus the session check below |
+
+   Tool and property ids are shared by every dataset of a collection, so a
+   key of the tool id alone is the wrong scope. Anything kept across
+   navigation is also reached after a logout: the Logout button reloads the
+   page, but work in flight still resumes in the window before the reload.
+6. **Can two overlap?** A double-click, a second request before the first
+   answers, two components asking at once. Choose one policy and write it
+   down: **refuse** (take the lock synchronously, before the first `await`),
+   **count** (`sync.setSaving`), or **latest wins** (claim a sequence token
+   before any early return). A plain boolean is right only when overlap is
+   impossible by construction.
+7. **What does each `await` assume?** Everything read before an `await` may
+   be false after it: the dataset, the configuration, the view, the session,
+   whether the component is still mounted. Re-check it, or better, confirm
+   the effect landed. Adding an `await` to an existing function puts this
+   question to every caller: read them.
+
+### Owners that already exist
+
+Derive from these. Do not add a flag beside them.
+
+| Question | Owner |
+|---|---|
+| Is a save or load in flight? What was the last error? | `sync.setSaving` / `sync.setLoading` (`store/sync.ts`); they are counts, so every `true` needs its `false` in a `finally` |
+| Is a dataset or view loading? Which dataset is on screen? | `sync.datasetLoading`; `shownDatasetId()` (`store/index.ts`), not `store.dataset`, which is the outgoing one until the load lands |
+| Is this worker tool running here? Which job? How did it end? | `jobs.isToolRunInFlight`, `jobIdForToolInDataset`, `toolJobOutcome` (`store/jobs.ts`); submit through the store actions so the run is recorded before the job exists |
+| Is this property computing? How did the last run end? | `propertyStore.propertyStatuses[id]`; `jobs.jobIdForPropertyInDataset` |
+| Is a pipeline running? | `pipelinesStore.runningPipelineId`, and the controller from `usePipelineRun.ts` |
+| Is an "apply to all" batch running? Was it cancelled? | `runBatch` and `batchRuns.shownRun` / `anyInFlight` (`store/batchRuns.ts`); `runBatch` returns `cancelRequested` |
+| Has the login session ended since this started? | `sessionEndedSignal()` (`store/batchRuns.ts`), captured before the first `await`; `trackJob` for a submission answered late |
+| Is a route-driven change of mine still in flight? | `pendingSets` in `utils/useRouteMapper.ts` |
+| Where is the upload flow? | `store.uploadWorkflow`, and `phase` / `failedPhase` in `NewDataset.vue` |
+
+### Tests that go with it
+
+- One test per transition in question 3, including the failure and the
+  abandonment exits. Hold the request with a promise the test resolves, so
+  the state in the middle can be asserted.
+- Call the entry point twice before the first call settles and assert one
+  request (or the policy from question 6).
+- Settle things in the wrong order: the older response last, the unmount
+  before the response, the logout before the answer.
+- Assert on the rendered component as well as the store. A write to a raw
+  object leaves the store correct and the spinner on.
+- Confirm each test fails without its code (mutate, run, restore), then add
+  one line per invariant to the feature's regression checklist.
+
+### The four shapes that leave the UI stuck
+
+Nearly every bug the audit found was one of these.
 
 1. **Reset after an `await` with no `try/finally`.** Set the flag, await, reset
    on the next line: a rejection skips the reset and the spinner never stops.

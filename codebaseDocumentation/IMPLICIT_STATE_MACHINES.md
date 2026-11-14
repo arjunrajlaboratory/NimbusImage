@@ -9,6 +9,16 @@ Line numbers refer to the tree at the time of the audit (master at `70f82cbb`).
 Every finding comes from reading the code. "Verified" means the path was traced
 end to end; "suspicion" means the code allows it but the trigger was not traced.
 
+## Adding or changing a state flag
+
+This document is the record of what was found. The rules that came out of it
+live where they are read before code is written: the seven questions, the
+table of existing owners and the tests to write are in the `nimbus-frontend`
+skill ("State flags are state machines"), reviews apply them through
+`branch-review` (frontend check 15), and the three causes behind the review
+rounds are rows in the pattern table of `fixing-review-findings`. When a new
+finding does not fit those rules, change the skill as well as this file.
+
 ## The four recurring shapes
 
 Almost every finding below is one of these. Check for them when adding any

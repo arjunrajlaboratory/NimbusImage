@@ -197,6 +197,9 @@ async updateSomething(value: any) {
 }
 ```
 
+**A flag is a state machine:**
+A ref, store field or module-level variable that answers "what is this doing right now" (`loading`, `running`, `saving`, `isDragging`, a pending id) is a state machine whether or not it is written as one. Before adding or changing one, answer the seven questions in the `nimbus-frontend` skill ("State flags are state machines"): is the fact already held in a store, what are the states, who writes each transition (including a child's own buttons, a remount, navigation and logout), how does each state end (success, failure, cancel, abandonment), how long does it live and who clears it, can two overlap, and what does each `await` assume. Reviews check the same list (`branch-review`, frontend check 15). The audit that produced these rules, and its regression checklist, is `codebaseDocumentation/IMPLICIT_STATE_MACHINES.md`.
+
 **DatasetView vs Configuration:**
 - `Configuration` - Shared settings (layers, tools, scales)
 - `DatasetView` - User-specific settings (contrast overrides, last location)
