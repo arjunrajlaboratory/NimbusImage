@@ -767,6 +767,19 @@ async function followJobToEnd(
   }
 }
 
+// Warn that an action was refused because nobody is logged in. This is a
+// module-level function, not a method of Main: inside an @Action `this` is the
+// module accessor, which carries only state, getters, mutations and actions,
+// so a plain method called as `this.method()` is not a function there.
+function createNotLoggedInNotification() {
+  progress.createNotification({
+    type: NotificationType.WARNING,
+    title: "Authentication Required",
+    message: "You must be logged in to perform this action.",
+    timeout: 5,
+  });
+}
+
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
   girderRest = createGirderRestClient({
@@ -1552,18 +1565,6 @@ export class Main extends VuexModule {
     this.syncConfiguration("tools");
   }
 
-  /**
-   * Helper function to create a notification when user is not logged in
-   */
-  private createNotLoggedInNotification() {
-    progress.createNotification({
-      type: NotificationType.WARNING,
-      title: "Authentication Required",
-      message: "You must be logged in to perform this action.",
-      timeout: 5,
-    });
-  }
-
   @Action
   removeToolFromConfiguration(toolId: string) {
     if (this.selectedTool?.configuration.id === toolId) {
@@ -1812,7 +1813,7 @@ export class Main extends VuexModule {
   @Action
   async deleteLargeImage(largeImage: IGirderLargeImage) {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return;
     }
     if (!this.dataset?.id || !largeImage._id) {
@@ -2176,7 +2177,7 @@ export class Main extends VuexModule {
     configurationId: string;
   }) {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return null;
     }
     return this.api.createDatasetView({
@@ -2828,7 +2829,7 @@ export class Main extends VuexModule {
   @Action
   deleteDatasetView(datasetView: IDatasetView) {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return;
     }
     return this.api.deleteDatasetView(datasetView.id);
@@ -2845,7 +2846,7 @@ export class Main extends VuexModule {
     path: IGirderSelectAble;
   }) {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return null;
     }
     try {
@@ -2970,7 +2971,7 @@ export class Main extends VuexModule {
     folderId: string;
   }) {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return null;
     }
     if (!this.dataset) {
@@ -3096,7 +3097,7 @@ export class Main extends VuexModule {
   @Action
   async deleteConfiguration(configuration: IDatasetConfiguration) {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return;
     }
     try {
@@ -3133,7 +3134,7 @@ export class Main extends VuexModule {
   @Action
   async deleteDataset(dataset: IDataset) {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return;
     }
     try {
@@ -3393,7 +3394,7 @@ export class Main extends VuexModule {
     const throwOnError =
       typeof payload === "string" ? false : payload.throwOnError ?? false;
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       if (throwOnError) {
         throw new Error("Authentication is required to save configuration");
       }
@@ -3711,7 +3712,7 @@ export class Main extends VuexModule {
   @Action
   async renameConfiguration(newName: string) {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return;
     }
     if (!this.configuration) {
@@ -3730,7 +3731,7 @@ export class Main extends VuexModule {
   @Action
   async addLayer() {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return;
     }
     if (!this.configuration || !this.dataset) {

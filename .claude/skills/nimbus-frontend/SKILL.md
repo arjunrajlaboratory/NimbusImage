@@ -188,6 +188,14 @@ Note the *array* convention differs: `annotations` is a plain reactive array of
 
 Editing any `src/store/*.ts` while `pnpm run dev` runs corrupts the store: vuex-module-decorators registers getters at import time with no HMR accept handler, so a hot re-import double-registers → `[vuex] duplicate getter key` cascade and broken state (e.g. annotations stuck at 0). **Hard-reload the page after every store-module edit** before trusting any in-browser behavior. Component `.vue` edits HMR fine — prefer putting temporary instrumentation in `.vue` files.
 
+### Plain Methods Do Not Exist Inside an `@Action`
+
+Inside an `@Action`, `this` is the module accessor built by `getModule`: it carries state, getters, mutations and actions only. An undecorated class method (`private helper() {...}`) is not on it, so `this.helper()` throws `TypeError: this.helper is not a function`, which a bare `@Action` then reports as `ERR_ACTION_ACCESS_UNDEFINED`. `tsc` and lint stay green because the class type does have the method. `createNotLoggedInNotification` shipped this way: ten logged-out guards rejected instead of showing their warning.
+
+- Put a helper that needs no module state in a **module-level function** above the class and call it without `this`. Make it an `@Action` only if it needs `this`.
+- A test that mocks `@/store` cannot see this. Dispatch the real action (`src/store/notLoggedIn.test.ts`, `src/store/colorByProperty.test.ts`).
+- Guard branches are the usual hiding place: the logged-out or no-dataset path is the one nobody runs by hand.
+
 ### Actions That Throw Need `@Action({ rawError: true })`
 
 `vuex-module-decorators` wraps **any** error thrown from a bare `@Action` in a generic `Error("ERR_ACTION_ACCESS_UNDEFINED: Are you trying to access this.someMutation()...")`, discarding the original message — unless the action is declared `@Action({ rawError: true })`. This is a library-wide behavior, not specific to one module.
