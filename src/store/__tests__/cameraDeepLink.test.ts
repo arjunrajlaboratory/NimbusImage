@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import main from "../index";
 import sync from "../sync";
+import jobs from "../jobs";
 import rootStore from "../root";
 import "../filters";
 import "../properties";
@@ -36,6 +37,19 @@ function stubAction(name: string, handler: (payload: any) => any) {
     savedActions[name] = actions[name];
   }
   actions[name] = [async (payload: any) => handler(payload)];
+}
+
+// Answers held fetches, in order, until every call has settled.
+async function answerUntilSettled(
+  pending: Array<() => void>,
+  calls: Promise<unknown>[],
+) {
+  let settled = false;
+  Promise.all(calls).then(() => (settled = true));
+  await vi.waitFor(() => {
+    pending.splice(0).forEach((answer) => answer());
+    expect(settled).toBe(true);
+  });
 }
 
 beforeEach(() => {
@@ -181,20 +195,45 @@ describe("camera deep link", () => {
     // At page load, loggedIn() re-requests selectedDatasetId (still null)
     // while the route's view is loading its dataset.
     views.v = makeView("v", "dsX");
-    let release: () => void = () => {};
+    const pending: Array<() => void> = [];
     stubAction(
       "getDataset",
       ({ id }) =>
         new Promise((resolve) => {
-          release = () =>
-            resolve({ id, xy: [0], z: [0], time: [0] } as IDataset);
+          pending.push(() =>
+            resolve({ id, xy: [0], z: [0], time: [0] } as IDataset),
+          );
+        }),
+    );
+    vi.spyOn(main.api, "getRecentDatasetViews").mockResolvedValue([]);
+    vi.spyOn(jobs, "initializeNotificationSubscription").mockResolvedValue();
+    const navigation = main.setDatasetViewId({ id: "v" });
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    // The real caller. It reloads what is being switched to, not the
+    // outgoing selectedDatasetId, which would supersede the view's load.
+    const login = (main as any).loggedIn(main.girderRest);
+    await answerUntilSettled(pending, [navigation, login]);
+
+    expect(main.dataset?.id).toBe("dsX");
+    expect(sync.datasetLoading).toBe(false);
+  });
+
+  it("an unroll toggle during a view's dataset load reloads the incoming dataset", async () => {
+    views.v = makeView("v", "dsX");
+    const pending: Array<() => void> = [];
+    stubAction(
+      "getDataset",
+      ({ id }) =>
+        new Promise((resolve) => {
+          pending.push(() =>
+            resolve({ id, xy: [0], z: [0], time: [0] } as IDataset),
+          );
         }),
     );
     const navigation = main.setDatasetViewId({ id: "v" });
-    await vi.waitFor(() => expect(main.datasetView?.id).toBe("v"));
-    await main.setSelectedDataset(main.selectedDatasetId);
-    release();
-    await navigation;
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    const refresh = main.refreshDataset();
+    await answerUntilSettled(pending, [navigation, refresh]);
 
     expect(main.dataset?.id).toBe("dsX");
   });

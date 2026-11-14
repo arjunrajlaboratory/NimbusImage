@@ -1144,7 +1144,49 @@ function mouseLeave() {
   }
 }
 
+// The only way a shift-capture ends. "commit" hands the path to the
+// AnnotationViewer (lasso, SAM prompt, segmentation example); "cancel" only
+// clears its preview. No-op unless a capture (not a preview) is active.
+function endMouseCapture(outcome: "commit" | "cancel") {
+  const state = mouseState.value;
+  if (!state || state.isMouseMovePreviewState) {
+    return;
+  }
+  state.outcome = outcome;
+  mouseState.value = null;
+}
+
+// A release outside the maps ends the capture too. Registered in the capture
+// phase so nothing on the way (GeoJS's document handlers) can swallow it;
+// releases over a map are left to mouseUp, which also stops propagation. The
+// layout element itself is not a map: unrolled grids leave empty cells.
+function windowMouseUp(evt: MouseEvent) {
+  const layout = mapLayout.value;
+  if (
+    layout &&
+    evt.target instanceof Node &&
+    evt.target !== layout &&
+    layout.contains(evt.target)
+  ) {
+    return;
+  }
+  endMouseCapture("commit");
+}
+
+// Losing focus mid-gesture (alt-tab, a dialog) never delivers the mouseup
+function windowBlur() {
+  endMouseCapture("cancel");
+}
+
 function mouseMove(evt: MouseEvent, mapIdx: number) {
+  // Back over the map with no button down: the release was missed
+  if (
+    mouseState.value &&
+    !mouseState.value.isMouseMovePreviewState &&
+    evt.buttons === 0
+  ) {
+    endMouseCapture("cancel");
+  }
   if (!mouseState.value || mouseState.value.isMouseMovePreviewState) {
     // Create a preview mouse state
     const mapEntry = maps.value?.[mapIdx];
@@ -1178,7 +1220,7 @@ function mouseUp(evt: MouseEvent) {
     return;
   }
   evt.stopPropagation();
-  mouseState.value = null;
+  endMouseCapture("commit");
 }
 
 function synchroniseCameraFromMap(map: IGeoJSMap) {
@@ -1568,6 +1610,11 @@ function _setupMap(
       keyboardOpts.actions = newActions;
     }
     map.interactor().options(interactorOpts);
+    // A map created while the view is locked (dataset change, map reset)
+    // must start locked too, or the lock icon lies
+    if (isViewLocked.value) {
+      applyViewLock(map);
+    }
     const annotationLayer = markRaw(
       map.createLayer("annotation", {
         annotations: geojs.listAnnotations(),
@@ -2189,6 +2236,13 @@ function draw() {
   readyLayers.value = localReadyLayers;
   for (const { fullLayer, adjLayer, capturedIdx } of layerPairs) {
     const setReady = () => {
+      // GeoJS keeps a busy layer's onIdle handlers until it goes idle, past
+      // later draws. Only this draw's array may be marked: after a map reset
+      // or a layer remap, capturedIdx names another (maybe still loading)
+      // layer pair, and a removed layer going idle must not count for it.
+      if (toRaw(readyLayers.value) !== localReadyLayers) {
+        return;
+      }
       if (fullLayer.idle && adjLayer.idle) {
         readyLayers.value.splice(capturedIdx, 1, true);
       }
@@ -2198,28 +2252,29 @@ function draw() {
   }
 }
 
+function applyViewLock(map: IGeoJSMap) {
+  const interactor = map.interactor();
+
+  if (isViewLocked.value) {
+    // Store the current actions before clearing them
+    if (!defaultActions.value) {
+      defaultActions.value = interactor.options().actions;
+    }
+    // Clear all actions to disable all navigation interactions
+    interactor.options({
+      actions: [],
+    });
+  } else {
+    // Restore the default actions to reenable all navigation interactions
+    interactor.options({
+      actions: defaultActions.value,
+    });
+  }
+}
+
 function toggleViewLock() {
   isViewLocked.value = !isViewLocked.value;
-
-  maps.value.forEach((mapentry) => {
-    const interactor = mapentry.map.interactor();
-
-    if (isViewLocked.value) {
-      // Store the current actions before clearing them
-      if (!defaultActions.value) {
-        defaultActions.value = interactor.options().actions;
-      }
-      // Clear all actions to disable all navigation interactions
-      interactor.options({
-        actions: [],
-      });
-    } else {
-      // Restore the default actions to reenable all navigation interactions
-      interactor.options({
-        actions: defaultActions.value,
-      });
-    }
-  });
+  maps.value.forEach((mapentry) => applyViewLock(mapentry.map));
 }
 
 // The SAM annotation tool and the unified object-segmentation tool are both
@@ -2281,6 +2336,23 @@ watch(mouseMap, () => {
 watch(maps, () => {
   samMapEntry.value = maps.value[0] ?? null;
 });
+
+// A capture whose map entry was replaced or removed (map reset, layer mode
+// change) can never receive its mouseup through that map: cancel it
+watch(
+  () => {
+    const capturedMapEntry = mouseState.value?.mapEntry;
+    return (
+      !!capturedMapEntry &&
+      !maps.value.some((entry) => toRaw(entry) === toRaw(capturedMapEntry))
+    );
+  },
+  (mapEntryGone) => {
+    if (mapEntryGone) {
+      endMouseCapture("cancel");
+    }
+  },
+);
 
 watch([samMapEntry, layersReady, cameraInfo, selectedTool], () => {
   const toolState = selectedTool.value?.state;
@@ -2482,6 +2554,8 @@ onMounted(() => {
   draw();
   // Trigger mapsChanged logic
   samMapEntry.value = maps.value[0] ?? null;
+  window.addEventListener("mouseup", windowMouseUp, true);
+  window.addEventListener("blur", windowBlur);
 
   // Watch for container resizes (e.g. navigation drawer open/close)
   // and update GeoJS map sizes accordingly
@@ -2506,6 +2580,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("mouseup", windowMouseUp, true);
+  window.removeEventListener("blur", windowBlur);
   annotationStore.setVisibilitySuppressed(false);
   for (const layer of trackedAnnotationOverviewLayers) {
     cancelAnnotationOverviewLoad(layer);

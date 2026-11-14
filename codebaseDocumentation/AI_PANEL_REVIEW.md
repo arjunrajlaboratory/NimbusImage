@@ -239,7 +239,7 @@ panel `onBeforeUnmount` already resolved it; this was the last gap.
 
 Discarded `computeProperty`'s nullable return and always reported `started:
 true`, and lacked run_worker's existing-job guard (allowing duplicate expensive
-jobs). Now guards on `jobsStore.jobIdForPropertyId` and throws when the job
+jobs). Now guards on `jobsStore.jobIdForPropertyInDataset` and throws when the job
 didn't start. Tests: "does not double-submit a running property job",
 "reports failure when no job starts". Sweep: run_worker was the only other
 job-starter and already correct.

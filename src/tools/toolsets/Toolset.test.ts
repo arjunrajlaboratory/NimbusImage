@@ -350,6 +350,21 @@ describe("Toolset", () => {
       (store as any).selectedTool = { configuration: workerTool };
     });
 
+    it("gives each worker tool its own worker menu instance", async () => {
+      const wrapper = mountComponent();
+      await nextTick();
+      const first = wrapper.findComponent({ name: "AnnotationWorkerMenu" });
+      expect(first.exists()).toBe(true);
+      (store as any).selectedTool = {
+        configuration: { id: "worker-b", type: "segmentation" },
+      };
+      await nextTick();
+      const second = wrapper.findComponent({ name: "AnnotationWorkerMenu" });
+      expect(second.props("tool").id).toBe("worker-b");
+      // A new instance, so tool A's run state does not show under tool B
+      expect(second.vm).not.toBe(first.vm);
+    });
+
     it("renders the worker dialog as non-persistent", () => {
       const wrapper = mountComponent();
       // The worker dialog is the only scrim-less one in Toolset

@@ -18,6 +18,8 @@ import jobs from "./jobs";
 import progress from "./progress";
 import { jobStates } from "./jobConstants";
 import rootStore from "./root";
+import sync from "./sync";
+import girderResources from "./girderResources";
 import "./filters";
 import "./properties";
 // Registers hydrateTrackLabelPath, which hydrateAnnotationBrowserState
@@ -25,6 +27,7 @@ import "./properties";
 import "./connectionList";
 import { RestClient } from "@/girder";
 import ShareLinkAPI from "./ShareLinkAPI";
+import batchRuns, { runBatch } from "./batchRuns";
 
 describe("share-link bootstrap identity", () => {
   let originalClient: typeof main.girderRest;
@@ -1090,6 +1093,24 @@ describe("tool job outcome scoping", () => {
   });
 });
 
+describe("logout clears batch runs", () => {
+  it("does not show the previous session's batch after logging out", async () => {
+    vi.spyOn(main.girderRest, "logout").mockResolvedValue(undefined as any);
+    void runBatch(
+      "workerTool",
+      "config-1",
+      "tool-1",
+      2,
+      () => new Promise(() => {}),
+    );
+    expect(batchRuns.shownRun("workerTool", "config-1")).not.toBeNull();
+
+    await main.logout();
+
+    expect(batchRuns.shownRun("workerTool", "config-1")).toBeNull();
+  });
+});
+
 describe("scales getters normalize an unknown pixel size", () => {
   afterEach(() => {
     (rootStore.state as any).main.configuration = null;
@@ -1168,5 +1189,54 @@ describe("initialize: authRestored", () => {
       Object.assign(client, { token });
       vi.restoreAllMocks();
     }
+  });
+});
+
+describe("sync indicator: balanced saves", () => {
+  // The indicator counts saves in flight, so each action must end exactly
+  // the saves it starts: a missing end leaves "Saving" on forever, an extra
+  // one hides another request that is still running.
+  beforeEach(() => {
+    Object.assign((rootStore.state as any).sync, {
+      saving: false,
+      savesInFlight: 0,
+      lastError: null,
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    jobs.clearStoredMessages("job1");
+  });
+
+  it("addMultiSourceMetadata ends its save when the upload succeeds", async () => {
+    mockSuccessfulUploadAndTiles();
+
+    await main.addMultiSourceMetadata({
+      parentId: "folder1",
+      metadata: "{}",
+      transcode: false,
+    });
+
+    expect(sync.saving).toBe(false);
+  });
+
+  it("a failed colorByProperty write does not end another save in flight", async () => {
+    const original = (girderResources as any).getConfiguration;
+    (girderResources as any).getConfiguration = vi
+      .fn()
+      .mockRejectedValue(new Error("offline"));
+    sync.setSaving(true); // another request, still running
+    try {
+      await main.saveColorByPropertyFor({
+        datasetId: "ds1",
+        configurationId: "not-the-loaded-one",
+        state: null,
+      });
+    } finally {
+      (girderResources as any).getConfiguration = original;
+    }
+
+    expect(sync.lastError?.message).toBe("offline");
+    expect(sync.saving).toBe(true);
   });
 });

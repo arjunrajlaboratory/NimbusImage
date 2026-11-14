@@ -1,29 +1,41 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { shallowMount } from "@vue/test-utils";
+import { flushPromises, shallowMount } from "@vue/test-utils";
 
 const mockGetDatasetView = vi.fn();
 const mockFindDatasetViews = vi.fn();
+// Stands in for the store's REST client token, which the real
+// fetchDatasetView reads synchronously (reactively) to key its request.
+const restSession = vi.hoisted(() => ({ state: null as any }));
 
-vi.mock("@/store", () => ({
-  default: {
-    isAdmin: false,
-    girderRest: {
-      apiRoot: "http://localhost:8080/api/v1",
+vi.mock("@/store", async () => {
+  const { reactive } = await import("vue");
+  restSession.state = reactive({ token: "token-1" });
+  return {
+    default: {
+      isAdmin: false,
+      girderRest: {
+        apiRoot: "http://localhost:8080/api/v1",
+      },
+      api: {
+        getDatasetView: (...args: any[]) => mockGetDatasetView(...args),
+        findDatasetViews: (...args: any[]) => mockFindDatasetViews(...args),
+      },
+      setDatasetViewId: vi.fn(),
+      // The store's shared view read (one GET with the viewer's own load)
+      fetchDatasetView: (...args: any[]) => {
+        void restSession.state.token;
+        return mockGetDatasetView(...args);
+      },
     },
-    api: {
-      getDatasetView: (...args: any[]) => mockGetDatasetView(...args),
-      findDatasetViews: (...args: any[]) => mockFindDatasetViews(...args),
+    girderUrlFromApiRoot: (apiRoot: string) => {
+      const suffix = "/api/v1";
+      if (apiRoot.endsWith(suffix)) {
+        return apiRoot.slice(0, apiRoot.length - suffix.length);
+      }
+      return apiRoot;
     },
-    setDatasetViewId: vi.fn(),
-  },
-  girderUrlFromApiRoot: (apiRoot: string) => {
-    const suffix = "/api/v1";
-    if (apiRoot.endsWith(suffix)) {
-      return apiRoot.slice(0, apiRoot.length - suffix.length);
-    }
-    return apiRoot;
-  },
-}));
+  };
+});
 
 const mockWatchCollection = vi.fn();
 const mockWatchFolder = vi.fn();
@@ -382,6 +394,156 @@ describe("BreadCrumbs", () => {
     await vm.refreshItems(true);
     // Should have called getFolder again since force=true
     expect(mockGetFolder.mock.calls.length).toBeGreaterThan(initialCallCount);
+  });
+
+  it("does not refetch the view when the session token changes", async () => {
+    mockGetDatasetView.mockClear();
+    mountComponent({ datasetViewId: "v1" }, {}, "datasetview");
+    await flushPromises();
+    expect(mockGetDatasetView).toHaveBeenCalledTimes(1);
+    // A logout (or login) changes the token while the route stays put.
+    restSession.state.token = "token-2";
+    await flushPromises();
+    expect(mockGetDatasetView).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetches the next view when the route moves to it", async () => {
+    mockGetDatasetView.mockClear();
+    const route = routeProvider({
+      params: { datasetViewId: "v1" },
+      name: "datasetview",
+    });
+    shallowMount(BreadCrumbs, {
+      global: {
+        stubs: { AlertDialog: true, AddDatasetToCollection: true },
+        provide: { ...route, ...routerProvider(mockRouter) },
+      },
+    });
+    await flushPromises();
+    const reactiveRoute = Object.getOwnPropertySymbols(route).map(
+      (key) => (route as any)[key],
+    )[0];
+    reactiveRoute.params = { datasetViewId: "v2" };
+    await flushPromises();
+    expect(mockGetDatasetView.mock.calls.map(([id]) => id)).toEqual([
+      "v1",
+      "v2",
+    ]);
+  });
+
+  describe("moving between views", () => {
+    function mountAtView(datasetViewId: string) {
+      const route = routeProvider({
+        params: { datasetViewId },
+        name: "datasetview",
+      });
+      const wrapper = shallowMount(BreadCrumbs, {
+        global: {
+          stubs: { AlertDialog: true, AddDatasetToCollection: true },
+          provide: { ...route, ...routerProvider(mockRouter) },
+        },
+      });
+      const reactiveRoute = Object.getOwnPropertySymbols(route).map(
+        (key) => (route as any)[key],
+      )[0];
+      return {
+        vm: wrapper.vm as any,
+        goTo: (id: string) => {
+          reactiveRoute.params = { datasetViewId: id };
+        },
+      };
+    }
+
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    }
+
+    const views: Record<string, any> = {
+      v1: { datasetId: "ds1", configurationId: "cfg1" },
+      v2: { datasetId: "ds2", configurationId: "cfg2" },
+    };
+
+    beforeEach(() => {
+      mockWatchFolder.mockImplementation((id: string) => ({
+        name: `Dataset ${id}`,
+      }));
+    });
+
+    it("keeps the newer view's breadcrumbs when the older view's fetch lands last", async () => {
+      const slowV1 = deferred<any>();
+      mockGetDatasetView.mockImplementation((id: string) =>
+        id === "v1" ? slowV1.promise : Promise.resolve(views[id]),
+      );
+      const { vm, goTo } = mountAtView("v1");
+      goTo("v2");
+      await flushPromises();
+      expect(vm.currentDatasetId).toBe("ds2");
+
+      slowV1.resolve(views.v1);
+      await flushPromises();
+
+      expect(vm.currentDatasetId).toBe("ds2");
+      expect(vm.currentConfigurationId).toBe("cfg2");
+      expect(vm.items.map((item: any) => item.text)).toEqual(["Dataset ds2"]);
+    });
+
+    it("clears the previous view's breadcrumbs when the next view cannot be fetched", async () => {
+      mockGetDatasetView.mockImplementation((id: string) =>
+        id === "v1"
+          ? Promise.resolve(views.v1)
+          : Promise.reject(new Error("403")),
+      );
+      const { vm, goTo } = mountAtView("v1");
+      await flushPromises();
+      expect(vm.currentDatasetId).toBe("ds1");
+
+      goTo("v2");
+      await flushPromises();
+
+      expect(vm.currentDatasetId).toBeNull();
+      expect(vm.currentConfigurationId).toBeNull();
+      expect(vm.items).toEqual([]);
+
+      // A return to the first view shows it again
+      goTo("v1");
+      await flushPromises();
+      expect(vm.currentDatasetId).toBe("ds1");
+      expect(vm.items.map((item: any) => item.text)).toEqual(["Dataset ds1"]);
+    });
+
+    it("shows a view again on return when its first refresh gave way", async () => {
+      mockGetDatasetView.mockImplementation((id: string) =>
+        id === "v2" ? new Promise(() => {}) : Promise.resolve(views[id]),
+      );
+      const slowFolder = deferred<any>();
+      mockGetFolder.mockReturnValueOnce(slowFolder.promise);
+      const { vm, goTo } = mountAtView("v1");
+      await flushPromises();
+      // The first refresh of v1 waits on its folder while the user leaves
+      // and comes back
+      goTo("v2");
+      await flushPromises();
+      goTo("v1");
+      slowFolder.resolve(null);
+      await flushPromises();
+
+      expect(vm.currentDatasetId).toBe("ds1");
+      expect(vm.items.map((item: any) => item.text)).toEqual(["Dataset ds1"]);
+    });
+  });
+
+  it("refreshItems resolves when the view cannot be fetched", async () => {
+    mockGetDatasetView.mockRejectedValue(new Error("403"));
+    const wrapper = mountComponent({ datasetViewId: "v1" }, {}, "datasetview");
+    const vm = wrapper.vm as any;
+    await expect(vm.refreshItems(true)).resolves.toBeUndefined();
+    expect(vm.items).toEqual([]);
   });
 
   // --- addedDatasets ---

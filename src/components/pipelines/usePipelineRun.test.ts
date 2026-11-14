@@ -1,20 +1,25 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const h = vi.hoisted(() => ({
-  store: {
-    selectedConfigurationId: "cfg1" as string | null,
-    getCollectionDatasetCount: vi.fn(),
-  },
-  pipelinesStore: {
-    runningPipelineId: null as string | null,
-    runPipeline: vi.fn().mockResolvedValue(undefined),
-    runPipelineBatch: vi.fn().mockResolvedValue(undefined),
-  },
-}));
+const h = await vi.hoisted(async () => {
+  // Reactive, so the controller's watch on the selected configuration fires.
+  const { reactive } = await import("vue");
+  return {
+    store: reactive({
+      selectedConfigurationId: "cfg1" as string | null,
+      getCollectionDatasetCount: vi.fn(),
+    }),
+    pipelinesStore: {
+      runningPipelineId: null as string | null,
+      runPipeline: vi.fn().mockResolvedValue(undefined),
+      runPipelineBatch: vi.fn().mockResolvedValue(undefined),
+    },
+  };
+});
 
 vi.mock("@/store", () => ({ default: h.store }));
 vi.mock("@/store/pipelines", () => ({ default: h.pipelinesStore }));
 
+import { nextTick } from "vue";
 import { createPipelineRunController } from "./usePipelineRun";
 import { AnnotationShape, IPipeline } from "@/store/model";
 
@@ -46,6 +51,10 @@ const twoStepPipeline: IPipeline = {
     },
   ],
 };
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -113,10 +122,10 @@ describe("createPipelineRunController", () => {
     h.pipelinesStore.runPipeline.mockImplementationOnce(async (options) => {
       options.onStepStart?.(0);
       options.onStepJob?.(0, "job-step1");
-      options.onStepComplete?.(0, true);
+      options.onStepComplete?.(0, "success");
       options.onStepStart?.(1);
       options.onStepJob?.(1, "job-step2");
-      options.onStepComplete?.(1, false);
+      options.onStepComplete?.(1, "error");
       options.onComplete?.({
         succeeded: 1,
         failed: 1,
@@ -137,5 +146,141 @@ describe("createPipelineRunController", () => {
     ).toEqual(["error", "success"]);
     expect(controller.jobIdFor(reordered, 0)).toBe("job-step2");
     expect(controller.jobIdFor(reordered, 1)).toBe("job-step1");
+  });
+
+  it("shows the step status the runner reports, cancelled included", async () => {
+    h.pipelinesStore.runPipeline.mockImplementationOnce(async (options) => {
+      options.onStepComplete?.(0, "success");
+      options.onStepComplete?.(1, "cancelled");
+    });
+    const controller = createPipelineRunController();
+
+    await controller.run(twoStepPipeline);
+
+    expect(
+      controller.statusesFor(twoStepPipeline).map(({ status }) => status),
+    ).toEqual(["success", "cancelled"]);
+  });
+
+  it("does not let a finished batch's linger timer hide the next batch's progress", async () => {
+    vi.useFakeTimers();
+    const progress = {
+      total: 2,
+      completed: 1,
+      failed: 0,
+      cancelled: 0,
+      currentDatasetName: "Dataset 2",
+    };
+    h.pipelinesStore.runPipelineBatch.mockImplementationOnce(
+      async (options: any) => {
+        options.onComplete?.({ succeeded: 2, failed: 0, cancelled: 0 });
+      },
+    );
+    let finishSecond!: () => void;
+    h.pipelinesStore.runPipelineBatch.mockImplementationOnce(
+      (options: any) =>
+        new Promise<void>((resolve) => {
+          options.onBatchProgress?.(progress);
+          finishSecond = resolve;
+        }),
+    );
+    const controller = createPipelineRunController();
+    controller.collectionDatasetCount.value = 2;
+    controller.applyToAllDatasets.value = true;
+
+    await controller.run(pipeline);
+    vi.advanceTimersByTime(1000);
+    const second = controller.run(pipeline);
+    vi.advanceTimersByTime(3000);
+
+    expect(controller.batchProgress.value).toEqual(progress);
+    finishSecond();
+    await second;
+  });
+
+  describe("switching configuration", () => {
+    function cancelledRun() {
+      h.pipelinesStore.runPipeline.mockImplementationOnce(async (options) => {
+        options.onStepComplete?.(0, "cancelled");
+        options.onComplete?.({
+          succeeded: 0,
+          failed: 0,
+          cancelled: 1,
+          failedStepIndex: null,
+        });
+      });
+    }
+
+    it("forgets a finished run once its configuration is no longer selected", async () => {
+      cancelledRun();
+      const controller = createPipelineRunController();
+      await controller.run(pipeline);
+      expect(controller.result.value).not.toBeNull();
+
+      h.store.selectedConfigurationId = "cfg2";
+      await nextTick();
+
+      expect(controller.result.value).toBeNull();
+      expect(controller.activePipelineId.value).toBeNull();
+      expect(controller.stepStatuses.value).toEqual([]);
+      expect(controller.runNotice.value).toBeNull();
+      expect(controller.statusesFor(pipeline)[0].status).toBe("pending");
+    });
+
+    it("keeps a finished run while its configuration stays selected", async () => {
+      cancelledRun();
+      const controller = createPipelineRunController();
+      await controller.run(pipeline);
+
+      // Another dataset in the same collection: same configuration.
+      h.store.selectedConfigurationId = "cfg1";
+      await nextTick();
+
+      expect(controller.result.value?.cancelled).toBe(1);
+    });
+
+    it("keeps a run in flight across a switch, then forgets it when it settles", async () => {
+      let finish!: () => void;
+      h.pipelinesStore.runPipeline.mockImplementationOnce(
+        (options: any) =>
+          new Promise<void>((resolve) => {
+            options.onStepStart?.(0);
+            finish = () => {
+              options.onComplete?.({
+                succeeded: 1,
+                failed: 0,
+                cancelled: 0,
+                failedStepIndex: null,
+              });
+              resolve();
+            };
+          }),
+      );
+      const controller = createPipelineRunController();
+      const running = controller.run(pipeline);
+
+      h.store.selectedConfigurationId = "cfg2";
+      await nextTick();
+      expect(controller.activePipelineId.value).toBe("pipe1");
+      expect(controller.statusesFor(pipeline)[0].status).toBe("running");
+
+      finish();
+      await running;
+      expect(controller.result.value).toBeNull();
+      expect(controller.activePipelineId.value).toBeNull();
+    });
+
+    it("drops a refused run's notice when the configuration changes", async () => {
+      const controller = createPipelineRunController();
+      controller.collectionDatasetCount.value = 51;
+      controller.applyToAllDatasets.value = true;
+      await controller.run(pipeline);
+      expect(controller.runNotice.value).not.toBeNull();
+
+      h.store.selectedConfigurationId = "cfg2";
+      await nextTick();
+
+      expect(controller.runNotice.value).toBeNull();
+    });
   });
 });
