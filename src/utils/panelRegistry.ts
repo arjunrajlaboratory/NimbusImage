@@ -42,7 +42,10 @@ export interface IPanelContext {
   transcriptsReachable: boolean;
   // A job finished successfully while the Object Browser was not showing,
   // so it holds objects or measurements the user has not seen. Cleared when
-  // the browser is shown and when the dataset changes.
+  // the browser is shown and when the dataset changes. Only for a job on the
+  // dataset that is open when it finishes: one that finishes while another
+  // dataset is open raises nothing, there or on return (its results are in
+  // the list like any others by then).
   hasUnseenJobResults: boolean;
 }
 
@@ -254,6 +257,16 @@ export const PANEL_BY_ID = Object.fromEntries(PANELS_BY_ID) as Readonly<
 >;
 
 export const PANEL_IDS: readonly PanelId[] = PANELS.map((panel) => panel.id);
+
+/**
+ * Whether `value` names a panel. Use this, not `value in PANEL_BY_ID`, for
+ * anything that did not come from the registry (stored state, a tool's
+ * input, an event payload): `in` is also true for names every object
+ * inherits, such as "constructor".
+ */
+export function isPanelId(value: unknown): value is PanelId {
+  return typeof value === "string" && PANELS_BY_ID.has(value as PanelId);
+}
 
 export function panelBadge(id: PanelId, context: IPanelContext): string | null {
   return PANELS_BY_ID.get(id)?.badge?.(context) ?? null;

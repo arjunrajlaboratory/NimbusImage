@@ -1,11 +1,13 @@
 # Viewer Layout: Memory, Rearrangement and Workspaces (and the Panel Registry)
 
-> **Status: Parts 1–5 implemented.** Part 1 (the panel registry) shipped
-> with the command palette; Parts 2–5 (local memory, rearrangement,
-> workspaces and the collection default, badges and availability) are on
-> branch `claude/viewer-ui-state-management-88f607`. Part 6 (AI) is not
-> started, and two pieces of Part 5 are deliberately deferred (see there).
-> Part of the "adaptive interface" effort alongside `COMMAND_PALETTE.md`.
+> **Status: implemented**, on branch
+> `claude/viewer-ui-state-management-88f607`: the panel registry, local
+> memory, rearrangement (pointer and keyboard), workspaces and the collection
+> default, badges, availability and relevance accents, and the AI agent's
+> `set_panels` tool. Not built: a workspace suggestion at a collection's
+> first open, context-opened panels, and moving a panel between zones (each
+> is described where it would go). Part of the "adaptive interface" effort
+> alongside `COMMAND_PALETTE.md`.
 >
 > **Revised 2026-11.** The earlier version of this spec saved the open panels
 > in the configuration, shared by everyone who opens the collection. That is
@@ -260,22 +262,43 @@ these that exists is shown:
 
 ### State inside panels
 
-Each panel declares its own with `usePersistedUiState`. Done so far: the
-Object Browser's active tab (`objectBrowser.tab`). The store stays the one
-live value; the persisted ref only seeds it and records what it becomes.
+Each panel declares its own with `usePersistedUiState`, or
+`useSharedPersistedUiState` when several instances of a component share one
+value. What is remembered:
 
-A remembered tab is active from page load, in a palette nobody may have
-opened, so **every tab's work must be gated on the palette's `visible` as
-well as on the tab** (Connections and Measurements were not, and were found
-by review).
+| State                                                     | Key                    | Where                   |
+| --------------------------------------------------------- | ---------------------- | ----------------------- |
+| Object Browser's active tab                               | `objectBrowser.tab`    | `AnnotationBrowser.vue` |
+| Expanded Layers rows (by layer id, most recent 200)       | `layers.expandedIds`   | `DisplayLayer.vue`      |
+| "Advanced layer options" open (one setting for every row) | `layers.advancedOpen`  | `DisplayLayer.vue`      |
+| Filters panel's Advanced section                          | `filters.advancedOpen` | `AnnotationFilters.vue` |
 
-Rules for what qualifies:
+Already remembered elsewhere, so not here: an Analysis plot's display type
+(with the plot, in the configuration) and the Settings panel's advanced
+section (`Persister`, not per user).
 
-- Presentation only. If it changes which objects are shown, counted or
+Deliberately not remembered: the Filters panel's Property values section. It
+opens itself whenever filters arrive, so a remembered "closed" would not
+last.
+
+Rules:
+
+- **Presentation only.** If it changes which objects are shown, counted or
   measured, it belongs in the configuration or dataset view.
-- Never ids of annotations, connections or datasets.
-- Not yet done, and worth doing next: collapsed sections in Layers and
-  Settings, the Analysis panel's plot type.
+- **Remembered state is in effect from page load, in a palette nobody may
+  have opened. Gate its work on the palette being on screen.** Found three
+  times: the Connections and Measurements tabs (by review), and an expanded
+  layer row, which requests its layer's histogram on every frame change. A
+  component deep in a palette reads `usePanelVisible()`
+  (`src/utils/panelVisibility.ts`), which the palette's content root
+  provides from the `visible` prop App.vue passes it.
+- **A list shared by many instances needs one ref.** With a ref per row,
+  each row holds its own copy of the list and the last to write drops the
+  others' changes. `useSharedPersistedUiState` returns the same ref for a
+  key.
+- **Ids only as "this one was open".** The expanded-rows list holds layer
+  ids; one that matches no layer here does nothing. Never ids of
+  annotations, connections or datasets.
 
 ## Part 3: structured rearrangement (implemented)
 
@@ -321,6 +344,20 @@ palette in it uses the zone's width.
 pointer and, on release, takes the place its center was carried to among the
 palettes that are showing (`leftOrderAfterDrop`). The stack's positions are
 `leftStack` in App.vue, built from the order and the measured heights.
+
+**From the keyboard.** The resize handle is a focusable separator: Left and
+Right resize by 16px (64 with Shift), Enter resets. A left palette's grip is
+a focusable slider over its place in the stack: Up and Down move it one
+place among the palettes showing (`leftOrderAfterStep`). Each press is one
+complete change sent through the events a finished drag sends. The keys are
+stopped at the element, because the arrows are also viewer hotkeys.
+
+**A resize starts from the zone's width, not the palette's.** While a zone
+is unresized its palettes have different widths; starting from the focused
+one's, a step toward "wider" from Navigator (380) made Layers (420)
+narrower. `zoneResizeRange` in App.vue gives each palette the zone's base
+(its remembered width, or the widest palette showing) and the limits, which
+are also the handle's `aria-valuemin` / `aria-valuemax`.
 
 **Gestures.** Resize and reorder share one state object in
 `FloatingPalette.vue` (`null | {kind, pointerId, start, moved, ...}`):
@@ -380,63 +417,101 @@ the configuration.
 User-defined workspaces ("Save current layout as…") are not built. Do this
 only if the built-ins prove too few.
 
-## Part 5: status and relevance (partly implemented)
+## Part 5: status and relevance (implemented)
 
-**Implemented: one mechanism for a panel's status.** `IPanelDefinition` has
+`IPanelDefinition` has three optional rules over one small `IPanelContext`
+that App.vue builds:
 
 ```ts
 badge?: (context: IPanelContext) => string | null;
 available?: (context: IPanelContext) => boolean;
+relevant?: (context: IPanelContext) => boolean;
 ```
 
-and App.vue builds one `panelContext` (active filter count, active gate
-count, whether transcripts are reachable). The app-bar toggle, the command,
-the palette and the minimized chip all read the same rules, so a minimized
-Filters chip shows the filter count.
+The app-bar toggle, the command, the palette and the minimized chip all read
+the same rules.
 
-- **Context fields must be cheap.** They are read reactively. Use counts and
-  flags the stores already keep; never iterate annotations or property
-  values (datasets reach 700K objects).
-- An unavailable panel is hidden with its toggle, command and chip; the
-  layout that says it is open is left alone.
+- **Badge**: a short status (Filters: active filter count; Analysis: active
+  gate count), on the toggle and on the chip, and in the chip's accessible
+  label.
+- **Available**: whether the panel exists for this dataset (Transcripts). An
+  unavailable panel is hidden with its toggle, command and chip; the layout
+  that says it is open is left alone.
+- **Relevant**: the panel holds something new the user has not looked at.
+  While it is not on screen, its toggle and chip carry a dot and their
+  label says so. It only points; nothing opens by itself.
 
-**Deferred: `relevant` (an accent on a closed panel that matters now).** The
-mechanism is a third optional field on the same context. It is not built
-because the rules are product decisions (which signals are worth an accent)
-that have not been made, and an accent with poorly chosen rules is noise.
+**There is one relevance rule, on purpose.** The Object Browser is accented
+when a job that adds objects or measurements (`leavesResults` on the job,
+set by the annotation and property stores and the agent) succeeds for the
+open dataset while the browser is not showing. It is cleared when the
+browser is shown and when the dataset changes. A job that finishes while
+another dataset is open raises nothing.
 
-**Deferred: context-opened panels.** Automation may open a panel only as the
-direct, visible consequence of a user action that names the task (the
+Before adding a rule, check it against these:
+
+- The user did something and its result is in this panel. Not "this panel
+  might be useful now".
+- It is off most of the time. An accent that is often on is not read.
+- It is cheap. Context fields are read reactively: counts and flags the
+  stores already keep, never something computed over the annotations
+  (datasets reach 700K objects).
+- It has a clear end, and that end does not depend on a second flag being
+  right. (The accent's watcher observes the flag itself as well as the
+  browser's visibility: the store's "is the browser showing" mirror was once
+  stale on a restored layout, which left "new results" on a panel the user
+  was looking at.)
+
+**Not built: context-opened panels.** Automation may open a panel only as
+the direct, visible consequence of a user action that names the task (the
 Timelapse palette is the model). When the first such registry panel exists,
 give `open` a source, keep the context-opened ids in the layout state, close
-them when the context ends and never save them. Until then nothing tracks
-"why is it open".
+them when the context ends and never save them.
 
 **No learned or usage-based reordering.** Anything that changes position
 based on history breaks spatial stability.
 
-## Part 6: AI (not started)
+## Part 6: AI (implemented, except the first-open suggestion)
 
 A model is not in the interaction loop. A per-click layout decision from a
-model is slow, nondeterministic, costs money, and is unavailable to logged-out
-users; the rules in Part 5 are instant and predictable.
+model is slow, nondeterministic, costs money, and is unavailable to
+logged-out users.
 
-Two places it fits, both using machinery that exists:
+**`set_panels`** is an agent tool (`src/agent/executors.ts`; schema in
+`girder-claude-chat/agent_tools.json`; when to use it in
+`agent_system_prompt.txt`):
 
-- **First open of a collection.** `src/store/toolSuggestions.ts` already runs
-  once per collection, on first open with no tools, and proposes tools from
-  the dataset. Extend its response with an optional workspace id from
-  `WORKSPACES`, offered with the tool suggestions and applied only if the
-  user accepts.
-- **Natural language.** "Set me up for counting spots" typed into the command
-  palette goes to Ask Nimbus AI (`src/store/aiPanel.ts`), which answers by
-  choosing from the command registry. The workspace and panel commands are
-  already there, so this is mostly a matter of the agent's command coverage.
+```
+set_panels({ workspace?, open?: PanelId[], close?: PanelId[] })
+```
 
-Constraints: nothing is sent while the user types, both paths are gated like
-the AI panel (env flag and login), and a model never writes a layout
-directly. It names commands; the commands go through the same rules and the
-same save as any other user action.
+- A workspace is applied first, then `open`, then `close`. Everything is
+  validated before anything is applied.
+- It goes through `panelLayoutController` (`src/utils/panelLayoutController.ts`),
+  which App.vue registers while mounted: the same `open` / `close` /
+  `applyOpenSet` as a click, so the placement rules and the saving apply.
+  A model never writes a layout.
+- **The result says what is open, not what was asked for**, plus `notOpen`
+  for anything the placement rules displaced. Without that the model
+  reports panels open that are not.
+- `get_interface_state` has a `panels` section (open, minimized, all
+  hidden, available, workspaces).
+- It is not gated: visible at once and reversible. It is in the AI panel's
+  `VIEW_STATE_TOOLS`, and the per-turn view snapshot carries the layout and
+  whether everything was hidden, so "revert view changes" puts the panels
+  back.
+- The schema's enums and description are checked against `WORKSPACES` and
+  `PANELS` by a test, since nothing else keeps the two repositories of the
+  same names in step.
+- The backend plugin is baked into the Girder image: a schema or prompt
+  change needs a rebuild (or, for a local check, copying the two files into
+  the running container and restarting it).
+
+**Not built: a workspace suggestion at a collection's first open.**
+`src/store/toolSuggestions.ts` already runs once per collection, on first
+open with no tools, and proposes tools from the dataset. Its response could
+carry an optional workspace id from `WORKSPACES`, offered with the tools and
+applied only if the user accepts.
 
 ## Tours
 
@@ -476,6 +551,13 @@ collection:
 6. Drag a zone's edge to its minimum and look at every panel in it.
 7. With Tools minimized, start the "Add first object creation tool" tour.
    Tools opens and the popover points at "Add new tool".
+8. Focus a column's edge (Tab to it) and press the arrow keys; focus a left
+   palette's grip and press Up and Down.
+9. Add an Analysis plot, then drag the right column's edge: the plot's
+   `.main-svg` width follows the palette.
+10. Ask Nimbus AI to "set the interface up for annotating", then to open
+    the Object Browser and Settings together: it should say only one of
+    them is open. Then "revert view changes" puts the panels back.
 
 Things this pass proved about testing it:
 
@@ -487,8 +569,13 @@ Things this pass proved about testing it:
   changes and overwrites its layout.
 - A fixed element has no `offsetParent`; use `getComputedStyle(el).display`
   to ask whether a palette or chip row is showing.
-- The automation's `cmd+.` key press did not reach the page; the binding was
-  checked with a dispatched `keydown` and through the command.
+- The automation's `cmd+.` key press reaches the page as a keydown with no
+  key code (captured: `key: "."`, `code: ""`), which Mousetrap cannot match.
+  The binding was checked with a dispatched `keydown` carrying `keyCode: 190`
+  and through the command; a hardware key press is still worth one look.
+- To make an accent appear without running a worker, commit
+  `setAnnotationPanelBadge` on the store. That tests the display, not the
+  rule that raises it (`jobs.test.ts` holds that).
 
 ## Regression checklist
 
@@ -565,6 +652,35 @@ Run `pnpm test src/utils src/components/FloatingPalette.test.ts src/App.test.ts 
 - [ ] **A plot follows its palette's width.** — _"redraws at the new width when its palette's column is resized"_
 - [ ] **A stored value from a later format reads as nothing.** — _"reads a later format as nothing stored"_
 - [ ] **Widths and order can be reset without the pointer.** — _"resetting the arrangement returns to default widths and order"_
+
+### Memory inside panels
+
+- [ ] **An expanded layer row is remembered, per row, in one shared list.** — _"an expanded row is expanded again on the next page load"_, _"rows share one list, so expanding one keeps the others"_
+- [ ] **A remembered row does nothing while its palette is not on screen.** — _"a remembered row stays collapsed while its palette is not on screen"_, _"tells the rows inside it whether the palette is on screen"_, _"tells the Layers panel whether it is on screen"_
+- [ ] **A shared ref is one ref.** — _"a shared ref is one ref for everyone using the key, until the page reloads"_
+- [ ] **The Filters Advanced section is remembered.** — _"the Advanced section is open again on the next page load"_
+
+### Keyboard
+
+- [ ] **The handle and grip work from the keyboard and keep their keys from the viewer.** — _"arrows resize toward and away from the canvas, more with Shift"_, _"up and down on the grip move the palette one place"_, _"keeps the keys it uses from the viewer's hotkeys, and passes on the rest"_
+- [ ] **A resize starts from the zone's width.** — _"a resize starts from the zone's width, not this palette's"_, _"a resize of an unresized zone starts from its widest palette showing"_
+- [ ] **A step moves a palette one visible place.** — _"steps past a palette that is not showing, so every press moves it on screen"_, _"the arrow keys on a left palette's grip move it one place"_
+- [ ] **The controls say what they are.** — _"the handle can be focused and says how wide the palette is and can be"_, _"tells each left palette its place among those showing"_, _"a grip that cannot reorder stays decoration"_
+
+### Relevance accent
+
+- [ ] **Only a job that left results on this dataset raises it, and only when it worked.** — _"marks unseen results only for a job that worked, with the Object Browser not showing"_
+- [ ] **It shows on the toggle and the chip, and ends when the browser is shown or the dataset changes.** — _"a closed panel with unseen job results is accented until it is shown"_, _"a minimized panel's chip carries the accent, and another dataset clears it"_
+- [ ] **Results that arrive while the browser is showing are not unseen.** — _"results that arrive while the Object Browser is showing are not unseen"_
+- [ ] **There is one rule.** — _"only the Object Browser is accented, and only for unseen job results"_
+
+### AI tool
+
+- [ ] **It applies workspace, open, close, and reports what is open.** — _"applies a workspace, then opens and closes, and reports what is open"_, _"says which requested panels the placement rules displaced"_, _"does not call a panel displaced when the same call closed it"_
+- [ ] **Nothing is applied by a refused request.** — _"refuses outside the viewer, an unknown name, an unavailable panel and an empty request"_, _"rejects a name every object inherits"_
+- [ ] **Null means absent.** — _"takes a null workspace as no workspace"_
+- [ ] **A revert puts the panels back, hidden state included.** — _"the view snapshot carries the panels, and restoring it puts them back"_, _"gives the AI agent's tools the layout's owner while mounted"_
+- [ ] **The schema names what the registry names.** — _"the schema the model is given names every workspace and panel"_
 
 ### The collection default (the only server write)
 

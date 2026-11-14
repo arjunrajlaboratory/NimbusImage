@@ -29,6 +29,13 @@ describe("panelLayout", () => {
       }
     });
 
+    it("drops a name every object inherits", () => {
+      expect(
+        validateLayout({ open: ["constructor", "toolsPanel", "toString"] })
+          ?.open,
+      ).toEqual(["toolsPanel"]);
+    });
+
     it("drops ids it does not know and repeats", () => {
       expect(
         validateLayout({

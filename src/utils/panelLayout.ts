@@ -6,7 +6,7 @@
 
 import {
   PANELS,
-  PANEL_BY_ID,
+  isPanelId,
   PanelId,
   PanelZone,
   applyOpen,
@@ -51,13 +51,7 @@ function knownPanelIds(raw: unknown): PanelId[] | null {
   if (!Array.isArray(raw)) {
     return null;
   }
-  return [
-    ...new Set(
-      raw.filter(
-        (id): id is PanelId => typeof id === "string" && id in PANEL_BY_ID,
-      ),
-    ),
-  ];
+  return [...new Set(raw.filter(isPanelId))];
 }
 
 /** The layout with every `defaultOpen` panel open. */

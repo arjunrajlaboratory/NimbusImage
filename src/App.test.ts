@@ -763,6 +763,44 @@ describe("App", () => {
       expect(toggle().classes()).not.toContain("active");
     });
 
+    it("a resize of an unresized zone starts from its widest palette showing", async () => {
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      // Navigator 380, Layers 420, Tools 380.
+      expect(paletteStub(wrapper, "Navigator").props("resizeRange")).toEqual({
+        base: 420,
+        min: 380,
+        max: 460,
+      });
+      vm.togglePalette("layersPanel"); // closed: the widest showing is 380
+      await nextTick();
+      expect(paletteStub(wrapper, "Navigator").props("resizeRange").base).toBe(
+        380,
+      );
+      // Once resized, the zone's own width.
+      paletteStub(wrapper, "Navigator").vm.$emit("resize-end", 440);
+      await nextTick();
+      expect(paletteStub(wrapper, "Tools").props("resizeRange").base).toBe(440);
+      // The right zone is its own.
+      vm.togglePalette("annotationPanel");
+      vm.togglePalette("filtersPanel");
+      await nextTick();
+      expect(paletteStub(wrapper, "Filters").props("resizeRange").base).toBe(
+        512,
+      );
+    });
+
+    it("tells each left palette its place among those showing", async () => {
+      const wrapper = mountViewer();
+      const place = (title: string) =>
+        paletteStub(wrapper, title).props("stackPosition");
+      expect(place("Layers")).toEqual({ position: 2, count: 3 });
+      (wrapper.vm as any).togglePalette("navigatorPanel");
+      await nextTick();
+      expect(place("Layers")).toEqual({ position: 1, count: 2 });
+      expect(place("Tools")).toEqual({ position: 2, count: 2 });
+    });
+
     it("the arrow keys on a left palette's grip move it one place", async () => {
       const wrapper = mountViewer();
       paletteStub(wrapper, "Navigator").vm.$emit("reorder-step", 1);
@@ -804,6 +842,34 @@ describe("App", () => {
       expect(store.setAnnotationPanelBadge).toHaveBeenCalledWith(false);
       expect(toggle.classes()).not.toContain("relevant");
       expect(toggle.attributes("aria-label")).toBe("Object list");
+    });
+
+    it("results that arrive while the Object Browser is showing are not unseen", async () => {
+      (store as any).setAnnotationPanelBadge = vi.fn((value: boolean) => {
+        (store as any).annotationPanelBadge = value;
+      });
+      // A layout remembered with the browser open: open from the first frame.
+      const first = mountViewer();
+      (first.vm as any).togglePalette("annotationPanel");
+      first.unmount();
+      (store as any).setIsAnnotationPanelOpen = vi.fn();
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      expect(vm.annotationPanel).toBe(true);
+      // The store is told at once, not at the first toggle.
+      expect(store.setIsAnnotationPanelOpen).toHaveBeenCalledWith(true);
+
+      // Even if a job raised the flag anyway, it does not outlast the tick.
+      (store as any).annotationPanelBadge = true;
+      await nextTick();
+      expect((store as any).annotationPanelBadge).toBe(false);
+      vm.togglePalette("annotationPanel");
+      await nextTick();
+      expect(
+        wrapper
+          .get('[data-command-id="panel.toggle.annotationPanel"]')
+          .classes(),
+      ).not.toContain("relevant");
     });
 
     it("a minimized panel's chip carries the accent, and another dataset clears it", async () => {
@@ -850,6 +916,32 @@ describe("App", () => {
       paletteStub(wrapper, "Tools").vm.$emit("minimize");
       expect(controller.minimizedPanels()).toEqual(["toolsPanel"]);
       expect(controller.isAvailable("transcriptsPanel")).toBe(false);
+
+      // A snapshot puts back what was open and what was minimized.
+      const snapshot = JSON.parse(JSON.stringify(controller.layoutSnapshot()));
+      controller.applyOpenSet(["navigatorPanel"]);
+      controller.restoreLayout(snapshot);
+      expect(controller.openPanels()).toEqual([
+        "filtersPanel",
+        "analysisPanel",
+        "toolsPanel",
+      ]);
+      expect(controller.minimizedPanels()).toEqual(["toolsPanel"]);
+      controller.restoreLayout({ layout: { open: "nonsense" } });
+      controller.restoreLayout(null);
+      expect(controller.minimizedPanels()).toEqual(["toolsPanel"]);
+
+      // A snapshot taken under "hide all panels" puts that back too.
+      const hideAll = vm.appHotkeys.find(
+        (entry: any) => entry.bind === "mod+.",
+      );
+      hideAll.handler(document.body, new KeyboardEvent("keydown"));
+      const hidden = JSON.parse(JSON.stringify(controller.layoutSnapshot()));
+      controller.open("navigatorPanel"); // ends hide-all
+      expect(controller.allHidden()).toBe(false);
+      controller.restoreLayout(hidden);
+      expect(controller.allHidden()).toBe(true);
+      expect(controller.openPanels()).not.toContain("navigatorPanel");
 
       wrapper.unmount();
       expect(panelLayoutController()).toBeNull();

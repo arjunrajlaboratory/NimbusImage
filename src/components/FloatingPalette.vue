@@ -24,9 +24,19 @@
           v-bind="
             reorderable
               ? {
-                  role: 'button',
+                  // Its value is the palette's place in the stack, which is
+                  // what the arrow keys change. (A button would promise that
+                  // Enter does something.)
+                  role: 'slider',
                   tabindex: 0,
-                  'aria-label': `Move ${title}: drag, or press the up and down arrow keys`,
+                  'aria-orientation': 'vertical',
+                  'aria-label': `Position of ${title} in the stack: drag, or press the up and down arrow keys`,
+                  'aria-valuemin': 1,
+                  'aria-valuemax': stackPosition?.count,
+                  'aria-valuenow': stackPosition?.position,
+                  'aria-valuetext': stackPosition
+                    ? `${stackPosition.position} of ${stackPosition.count}`
+                    : undefined,
                 }
               : { 'aria-hidden': 'true' }
           "
@@ -91,6 +101,8 @@
         title="Drag to resize. Double-click to reset."
         tabindex="0"
         :aria-valuenow="typeof width === 'number' ? width : undefined"
+        :aria-valuemin="resizeRange?.min"
+        :aria-valuemax="resizeRange?.max"
         @keydown="onHandleKey"
         @pointerdown="startResize"
         @pointermove="moveGesture"
@@ -123,8 +135,17 @@ const props = withDefaults(
     minimizable?: boolean;
     /** Which edge resizes the palette's zone: the one facing the canvas. */
     resizeEdge?: "left" | "right";
+    /**
+     * The widths the zone can take, and the width a resize starts from: the
+     * zone's current width (its widest palette while it is unresized). Not
+     * this palette's own: starting from a narrower palette, "wider" would
+     * first make the wider ones narrower.
+     */
+    resizeRange?: { base: number; min: number; max: number };
     /** The grip drags the palette up and down within its stack. */
     reorderable?: boolean;
+    /** Where the palette is among those showing in its stack, from 1. */
+    stackPosition?: { position: number; count: number };
     /**
      * The palette's id in the panel registry, written to the DOM so code
      * holding only an element inside it (a tour's anchor) can ask for the
@@ -199,8 +220,12 @@ function startResize(event: PointerEvent) {
     startX: event.clientX,
     startY: event.clientY,
     moved: false,
-    startWidth: rootEl.value?.offsetWidth ?? 0,
+    startWidth: resizeStartWidth(),
   });
+}
+
+function resizeStartWidth(): number {
+  return props.resizeRange?.base ?? rootEl.value?.offsetWidth ?? 0;
 }
 
 function startReorder(event: PointerEvent) {
@@ -311,8 +336,7 @@ function onHandleKey(event: KeyboardEvent) {
       props.resizeEdge === "right" ? "ArrowRight" : "ArrowLeft";
     emit(
       "resize-end",
-      (rootEl.value?.offsetWidth ?? 0) +
-        (event.key === towardCanvas ? step : -step),
+      resizeStartWidth() + (event.key === towardCanvas ? step : -step),
     );
   } else {
     return;

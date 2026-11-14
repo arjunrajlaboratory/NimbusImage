@@ -223,10 +223,31 @@ describe("FloatingPalette", () => {
       return wrapper;
     }
 
-    it("the handle can be focused and says how wide the palette is", () => {
+    it("the handle can be focused and says how wide the palette is and can be", () => {
       const handle = mountResizable("right").find(HANDLE);
       expect(handle.attributes("tabindex")).toBe("0");
       expect(handle.attributes("aria-valuenow")).toBe("400");
+      const ranged = mountPalette({
+        resizeEdge: "right",
+        resizeRange: { base: 420, min: 380, max: 648 },
+      }).find(HANDLE);
+      expect(ranged.attributes("aria-valuemin")).toBe("380");
+      expect(ranged.attributes("aria-valuemax")).toBe("648");
+    });
+
+    it("a resize starts from the zone's width, not this palette's", () => {
+      // A 400px palette in a zone whose widest palette is 420.
+      const wrapper = mountPalette({
+        resizeEdge: "right",
+        resizeRange: { base: 420, min: 380, max: 648 },
+      });
+      Object.defineProperty(palette(wrapper), "offsetWidth", { value: 400 });
+      key(wrapper, HANDLE, { key: "ArrowRight" });
+      fire(wrapper, HANDLE, "pointerdown", { clientX: 500 });
+      fire(wrapper, HANDLE, "pointermove", { clientX: 510 });
+      fire(wrapper, HANDLE, "pointerup", { clientX: 510 });
+      // Never below the 420 the wider palette already has.
+      expect(wrapper.emitted("resize-end")).toEqual([[436], [430]]);
     });
 
     it("arrows resize toward and away from the canvas, more with Shift", () => {
@@ -267,9 +288,17 @@ describe("FloatingPalette", () => {
       const wrapper = mountPalette({ reorderable: true });
       const grip = wrapper.find(GRIP);
       expect(grip.attributes("tabindex")).toBe("0");
-      expect(grip.attributes("role")).toBe("button");
+      // A slider over its place in the stack: that is what the arrows change.
+      expect(grip.attributes("role")).toBe("slider");
       expect(grip.attributes("aria-hidden")).toBeUndefined();
-      expect(grip.attributes("aria-label")).toContain("Move Layers");
+      expect(grip.attributes("aria-label")).toContain("Position of Layers");
+      const placed = mountPalette({
+        reorderable: true,
+        stackPosition: { position: 2, count: 3 },
+      }).find(GRIP);
+      expect(placed.attributes("aria-valuenow")).toBe("2");
+      expect(placed.attributes("aria-valuemax")).toBe("3");
+      expect(placed.attributes("aria-valuetext")).toBe("2 of 3");
       key(wrapper, GRIP, { key: "ArrowUp" });
       key(wrapper, GRIP, { key: "ArrowDown" });
       expect(wrapper.emitted("reorder-step")).toEqual([[-1], [1]]);

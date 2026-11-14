@@ -7,6 +7,7 @@ import {
   applyOpen,
   countBadge,
   isPanelAvailable,
+  isPanelId,
   isPanelRelevant,
   panelBadge,
 } from "./panelRegistry";
@@ -44,6 +45,13 @@ describe("panelRegistry", () => {
         open = applyOpen(open, id);
       }
       expect([...open], workspace.title).toEqual(workspace.open);
+    }
+  });
+
+  it("knows a panel id from anything else, inherited names included", () => {
+    expect(isPanelId("layersPanel")).toBe(true);
+    for (const value of ["constructor", "toString", "sidePanel", 3, null]) {
+      expect(isPanelId(value)).toBe(false);
     }
   });
 

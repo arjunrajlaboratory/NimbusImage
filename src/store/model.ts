@@ -2630,6 +2630,12 @@ export type TJobType =
 export interface IComputeJobBase {
   jobId: string;
   datasetId: string | null;
+  // The job adds objects or measurements to the dataset: what the Object
+  // Browser lists. Set by the stores that run annotation workers and
+  // property computations; not by jobs that only prepare something (worker
+  // interfaces, previews, caches, uploads, publishing). When such a job
+  // succeeds with the Object Browser not showing, its toggle is accented.
+  leavesResults?: boolean;
   eventCallback?: (data: IJobEventData) => void;
   errorCallback?: (data: IJobEventData) => void;
 }

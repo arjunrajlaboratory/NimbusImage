@@ -491,7 +491,18 @@ export class Jobs extends VuexModule {
     // A job that worked has left results in the Object Browser. If it is not
     // showing, App.vue marks its toggle until the user looks (the panel
     // registry's `relevant` rule). A failed job has its own notification.
-    if (success && !main.isAnnotationPanelOpen) {
+    // Only for a job that added objects or measurements to the dataset on
+    // screen: the flag says "there is something new to look at here".
+    if (
+      success &&
+      !main.isAnnotationPanelOpen &&
+      jobInfo.listeners.some(
+        (job) =>
+          job.leavesResults === true &&
+          job.datasetId != null &&
+          job.datasetId === main.dataset?.id,
+      )
+    ) {
       main.setAnnotationPanelBadge(true);
     }
   }

@@ -197,11 +197,16 @@ describe("jobs store: settling tracked jobs when the stream fails", () => {
     const socket = latestSocket();
     socket.readyState = 1;
     await socket.onopen(new Event("open"));
-    const finish = async (jobId: string, status: number) => {
+    (main as any).dataset = { id: "ds" };
+    const finish = async (
+      jobId: string,
+      status: number,
+      job: Record<string, unknown> = { leavesResults: true },
+    ) => {
       mocks.statuses[jobId] = status;
-      const job = await track(jobId);
+      jobs.addJob({ jobId, datasetId: "ds", ...job } as any);
+      await microtasks();
       await new Promise((resolve) => setTimeout(resolve, 0));
-      return job;
     };
 
     // Showing: nothing to mark.
@@ -214,6 +219,18 @@ describe("jobs store: settling tracked jobs when the stream fails", () => {
     try {
       // A failure has its own notification; it left no results to look at.
       await finish("failed-job", ERROR);
+      expect(badge).not.toHaveBeenCalled();
+      // A job that only prepares something (a cache, a preview, a publish)
+      // leaves nothing to look at; nor does one for another dataset.
+      await finish("cache-job", SUCCESS, {});
+      await finish("elsewhere-job", SUCCESS, {
+        leavesResults: true,
+        datasetId: "another",
+      });
+      await finish("no-dataset-job", SUCCESS, {
+        leavesResults: true,
+        datasetId: null,
+      });
       expect(badge).not.toHaveBeenCalled();
       await finish("unseen-job", SUCCESS);
       expect(badge).toHaveBeenCalledWith(true);

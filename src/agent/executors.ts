@@ -59,6 +59,7 @@ import {
   PANEL_BY_ID,
   PanelId,
   WORKSPACES,
+  isPanelId,
 } from "@/utils/panelRegistry";
 import { panelLayoutController } from "@/utils/panelLayoutController";
 import {
@@ -1967,8 +1968,10 @@ const registry: { [name: string]: IAgentToolEntry } = {
           "Panels can only be arranged in the dataset viewer. Open a dataset first.",
         );
       }
+      // null as well as absent: models send null for an optional field they
+      // are not using.
       const workspace =
-        input.workspace === undefined
+        input.workspace == null
           ? null
           : WORKSPACES.find((candidate) => candidate.id === input.workspace);
       if (workspace === undefined) {
@@ -1979,14 +1982,14 @@ const registry: { [name: string]: IAgentToolEntry } = {
         );
       }
       const panelIds = (value: unknown, field: string): PanelId[] => {
-        if (value === undefined) {
+        if (value == null) {
           return [];
         }
         if (!Array.isArray(value)) {
           throw new ToolExecutionError(`${field} must be a list of panel ids`);
         }
         for (const id of value) {
-          if (typeof id !== "string" || !(id in PANEL_BY_ID)) {
+          if (!isPanelId(id)) {
             throw new ToolExecutionError(
               `Unknown panel "${id}" in ${field}. Panels: ${PANELS.map(
                 (panel) => panel.id,
@@ -2021,7 +2024,10 @@ const registry: { [name: string]: IAgentToolEntry } = {
       // a time; Filters only beside the Object Browser or Analysis). Say so,
       // or the model reports panels open that are not.
       const nowOpen = controller.openPanels();
-      const displaced = toOpen.filter((id) => !nowOpen.includes(id));
+      const displaced = toOpen.filter(
+        // Not one this same call was asked to close: that is not the rules.
+        (id) => !nowOpen.includes(id) && !toClose.includes(id),
+      );
       return {
         result: {
           panels: describePanels(),
@@ -2032,8 +2038,10 @@ const registry: { [name: string]: IAgentToolEntry } = {
                   "Some requested panels are not open: only one of the " +
                   "right-side main panels (Object Browser, Analysis, " +
                   "Transcripts, Snapshots, Settings) can be open at a time, " +
-                  "and Filters stays open only beside the Object Browser or " +
-                  "Analysis. The last one opened wins.",
+                  "and Filters shares the right side only with the Object " +
+                  "Browser or Analysis (opening Filters closes any of the " +
+                  "other three, and opening one of them closes Filters). " +
+                  "The last one opened wins.",
               }
             : {}),
         },
@@ -2812,6 +2820,7 @@ const registry: { [name: string]: IAgentToolEntry } = {
         .addJob({
           jobId: computeJob.jobId,
           datasetId: main.dataset?.id ?? null,
+          leavesResults: true,
         })
         .then(onCompletion);
       return {
@@ -3787,6 +3796,10 @@ export interface IViewStateSnapshot {
   selectedToolId: string | null;
   displayOptions: ReturnType<typeof currentDisplayOptions>;
   viewMode: string;
+  // Which panels were open or minimized (set_panels changes it). Opaque
+  // here: the layout's owner hands it out and takes it back. Null outside
+  // the viewer.
+  panelLayout: unknown;
 }
 
 // The dataset/collection/view currently loaded in the viewer.
@@ -3836,6 +3849,7 @@ export function snapshotViewState(): IViewStateSnapshot {
       selectedToolId: main.selectedTool?.configuration.id ?? null,
       displayOptions: currentDisplayOptions(),
       viewMode: volumeViewStore.viewMode,
+      panelLayout: panelLayoutController()?.layoutSnapshot() ?? null,
     }),
   );
 }
@@ -3942,6 +3956,9 @@ export async function restoreViewState(snapshot: IViewStateSnapshot) {
   }
   if (snapshot.viewMode === "2d" || snapshot.viewMode === "3d") {
     volumeViewStore.setViewMode(snapshot.viewMode);
+  }
+  if (snapshot.panelLayout) {
+    panelLayoutController()?.restoreLayout(snapshot.panelLayout);
   }
   await main.setCameraInfo(snapshot.cameraInfo);
 }

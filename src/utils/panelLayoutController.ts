@@ -21,6 +21,10 @@ export interface IPanelLayoutController {
   close: (id: PanelId) => void;
   /** Show exactly these panels. */
   applyOpenSet: (ids: readonly PanelId[]) => void;
+  /** The layout as it is now, to hand back to `restoreLayout` later. */
+  layoutSnapshot: () => unknown;
+  /** Put back a layout from `layoutSnapshot`. One that is not valid: ignored. */
+  restoreLayout: (snapshot: unknown) => void;
 }
 
 let registered: IPanelLayoutController | null = null;

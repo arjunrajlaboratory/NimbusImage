@@ -1962,6 +1962,10 @@ describe("display + view mode tools", () => {
         applyOpenSet: (ids) => {
           state.open = [...ids];
         },
+        layoutSnapshot: () => ({ version: 1, open: [...state.open] }),
+        restoreLayout: (snapshot) => {
+          state.open = [...(snapshot as { open: PanelId[] }).open];
+        },
         ...overrides,
       });
       return {
@@ -2036,6 +2040,64 @@ describe("display + view mode tools", () => {
       await expect(
         executeAgentTool("set_panels", { workspace: "plot" }, context),
       ).rejects.toThrow(/dataset viewer/);
+    });
+
+    it("does not call a panel displaced when the same call closed it", async () => {
+      layout = registerLayout();
+      const { result } = (await executeAgentTool(
+        "set_panels",
+        { open: ["analysisPanel"], close: ["analysisPanel"] },
+        context,
+      )) as any;
+      expect(result.notOpen).toBeUndefined();
+    });
+
+    it("rejects a name every object inherits", async () => {
+      layout = registerLayout();
+      await expect(
+        executeAgentTool("set_panels", { open: ["constructor"] }, context),
+      ).rejects.toThrow(/Unknown panel/);
+    });
+
+    it("takes a null workspace as no workspace", async () => {
+      layout = registerLayout();
+      await executeAgentTool(
+        "set_panels",
+        { workspace: null, open: ["toolsPanel"], close: null },
+        context,
+      );
+      await executeAgentTool(
+        "set_panels",
+        { workspace: "annotate", open: null },
+        context,
+      );
+      expect(layout.open).toEqual([
+        "navigatorPanel",
+        "layersPanel",
+        "toolsPanel",
+      ]);
+    });
+
+    it("the view snapshot carries the panels, and restoring it puts them back", async () => {
+      layout = registerLayout();
+      const snapshot = snapshotViewState();
+      expect(snapshot.panelLayout).toEqual({
+        version: 1,
+        open: ["navigatorPanel", "layersPanel"],
+      });
+      await executeAgentTool("set_panels", { workspace: "plot" }, context);
+      expect(layout.open).toContain("analysisPanel");
+
+      await restoreViewState(snapshot);
+      expect(layout.open).toEqual(["navigatorPanel", "layersPanel"]);
+    });
+
+    it("a snapshot taken outside the viewer has no panels to restore", async () => {
+      const snapshot = snapshotViewState();
+      expect(snapshot.panelLayout).toBeNull();
+      layout = registerLayout();
+      await restoreViewState(snapshot);
+      expect(layout.open).toEqual(["navigatorPanel", "layersPanel"]);
     });
 
     it("is not gated: it is visible and reversible", () => {

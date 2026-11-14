@@ -866,6 +866,17 @@ Three traps that come with remembering anything:
   could assume their anchors were showing. A mounted-but-hidden anchor is
   still found by `querySelector`. Tours now ask for the palette
   (`data-panel-id` → `TOUR_REVEAL_PANEL_EVENT`).
+- **A list remembered by many instances of a component needs one ref.**
+  Each layer row remembering "am I expanded" in its own
+  `usePersistedUiState` copy of the list overwrites the other rows' changes
+  on its next write. Use `useSharedPersistedUiState` (one ref per key), and
+  have a component deep inside a palette read `usePanelVisible()`
+  (`src/utils/panelVisibility.ts`) rather than thread a `visible` prop
+  through every level.
+- **Test whether a string names something with a `Map` or `includes`, not
+  `in`.** `id in PANEL_BY_ID` is true for "constructor" and "toString",
+  which every object inherits; that let an AI tool input and stored state
+  through as panel ids (`isPanelId` in `panelRegistry.ts`).
 - **Derive visibility; do not mutate the remembered state to hide things.**
   The layout used to be closed when the route left the viewer, which is one
   watcher away from saving "all closed". A palette is now on screen when it

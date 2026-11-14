@@ -595,6 +595,7 @@
     <floating-palette
       v-model="settingsPanel"
       v-bind="paletteChrome.settingsPanel"
+      :resize-range="zoneResizeRange.right"
       :title="PANEL_BY_ID.settingsPanel.title"
       :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.settings)"
       :top="rightColumnTop"
@@ -606,6 +607,7 @@
     <floating-palette
       v-model="snapshotPanel"
       v-bind="paletteChrome.snapshotPanel"
+      :resize-range="zoneResizeRange.right"
       :title="PANEL_BY_ID.snapshotPanel.title"
       :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.snapshots)"
       :top="rightColumnTop"
@@ -617,6 +619,7 @@
     <floating-palette
       v-model="annotationPanel"
       v-bind="paletteChrome.annotationPanel"
+      :resize-range="zoneResizeRange.right"
       :title="PANEL_BY_ID.annotationPanel.title"
       :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.objectBrowser)"
       :top="stackedHostTop"
@@ -629,6 +632,7 @@
       ref="filtersPaletteRef"
       v-model="filtersPanel"
       v-bind="paletteChrome.filtersPanel"
+      :resize-range="zoneResizeRange.right"
       :title="PANEL_BY_ID.filtersPanel.title"
       :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.filters)"
       :top="rightColumnTop"
@@ -640,6 +644,7 @@
     <floating-palette
       v-model="analysisPanel"
       v-bind="paletteChrome.analysisPanel"
+      :resize-range="zoneResizeRange.right"
       :title="PANEL_BY_ID.analysisPanel.title"
       :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.analysis)"
       :top="stackedHostTop"
@@ -655,6 +660,7 @@
     <floating-palette
       v-model="transcriptsPanel"
       v-bind="paletteChrome.transcriptsPanel"
+      :resize-range="zoneResizeRange.right"
       :title="PANEL_BY_ID.transcriptsPanel.title"
       :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.transcripts)"
       :top="rightColumnTop"
@@ -668,6 +674,8 @@
         ref="navigatorPaletteRef"
         v-model="navigatorPanel"
         v-bind="paletteChrome.navigatorPanel"
+        :resize-range="zoneResizeRange.left"
+        :stack-position="leftStackPositions.navigatorPanel"
         :title="PANEL_BY_ID.navigatorPanel.title"
         :left="PALETTE_INSET"
         :width="leftPaletteWidth(LEFT_COLUMN_PALETTE_WIDTHS.navigator)"
@@ -695,6 +703,8 @@
         ref="layersPaletteRef"
         v-model="layersPanel"
         v-bind="paletteChrome.layersPanel"
+        :resize-range="zoneResizeRange.left"
+        :stack-position="leftStackPositions.layersPanel"
         :title="PANEL_BY_ID.layersPanel.title"
         :left="PALETTE_INSET"
         :width="leftPaletteWidth(LEFT_COLUMN_PALETTE_WIDTHS.layers)"
@@ -708,6 +718,8 @@
         ref="toolsPaletteRef"
         v-model="toolsPanel"
         v-bind="paletteChrome.toolsPanel"
+        :resize-range="zoneResizeRange.left"
+        :stack-position="leftStackPositions.toolsPanel"
         :title="PANEL_BY_ID.toolsPanel.title"
         :left="PALETTE_INSET"
         :width="leftPaletteWidth(LEFT_COLUMN_PALETTE_WIDTHS.tools)"
@@ -789,6 +801,7 @@ import {
   STACKED_ACTION_PANEL_OFFSET,
   TIMELAPSE_PALETTE_WIDTH,
   TPaletteZone,
+  ZONE_MIN_WIDTH,
   actionPanelClearsTimelapsePalette,
   clampZoneWidth,
   leftColumnWidth,
@@ -814,6 +827,7 @@ import {
   PANEL_IDS,
   PanelId,
   isPanelAvailable as panelIsAvailable,
+  isPanelId,
   isPanelRelevant,
   panelBadge,
 } from "@/utils/panelRegistry";
@@ -984,14 +998,18 @@ const openPalette = panelLayout.open;
 const togglePalette = panelLayout.toggle;
 
 // "Unseen job results" ends when the Object Browser is shown, and does not
-// follow the user to another dataset. (jobs.ts raises it.)
+// follow the user to another dataset. (jobs.ts raises it.) The flag itself
+// is watched too: raised while the browser is showing, it is not unseen.
+// jobs.ts asks the store's mirror of the browser's visibility, and this does
+// not rely on that mirror being right at that moment.
 watch(
-  [() => panelLayout.isVisible("annotationPanel"), () => store.dataset?.id],
-  ([browserShown, datasetId], [, previousDatasetId]) => {
-    if (
-      store.annotationPanelBadge &&
-      (browserShown || datasetId !== previousDatasetId)
-    ) {
+  [
+    () => panelLayout.isVisible("annotationPanel"),
+    () => store.dataset?.id,
+    () => store.annotationPanelBadge,
+  ],
+  ([browserShown, datasetId, raised], [, previousDatasetId]) => {
+    if (raised && (browserShown || datasetId !== previousDatasetId)) {
       store.setAnnotationPanelBadge(false);
     }
   },
@@ -1008,6 +1026,23 @@ const unregisterPanelLayoutController = registerPanelLayoutController({
   open: panelLayout.open,
   close: panelLayout.close,
   applyOpenSet: panelLayout.applyOpenSet,
+  // With whether everything was hidden: a turn made under "hide all panels"
+  // that opened something ended it, and putting the layout back without
+  // that would leave the panels showing.
+  layoutSnapshot: () => ({
+    layout: panelLayout.layout.value,
+    allHidden: panelLayout.chromeHidden.value,
+  }),
+  restoreLayout: (snapshot) => {
+    const saved = snapshot as { layout?: unknown; allHidden?: unknown } | null;
+    panelLayout.applyLayout(saved?.layout);
+    if (
+      typeof saved?.allHidden === "boolean" &&
+      saved.allHidden !== panelLayout.chromeHidden.value
+    ) {
+      panelLayout.toggleChromeHidden();
+    }
+  },
 });
 // "Hide all panels" is on. It covers every panel that floats over or beside
 // the canvas, not only the registry's: the Timelapse palette, the AI panel
@@ -1583,6 +1618,56 @@ const leftColumn = computed(() =>
   leftColumnWidth(zoneWidth("left"), windowWidth.value),
 );
 
+// Each registry palette's default width, for the width of an unresized zone.
+const PALETTE_DEFAULT_WIDTHS: Record<PanelId, number> = {
+  navigatorPanel: LEFT_COLUMN_PALETTE_WIDTHS.navigator,
+  layersPanel: LEFT_COLUMN_PALETTE_WIDTHS.layers,
+  toolsPanel: LEFT_COLUMN_PALETTE_WIDTHS.tools,
+  annotationPanel: RIGHT_PALETTE_WIDTHS.objectBrowser,
+  filtersPanel: RIGHT_PALETTE_WIDTHS.filters,
+  analysisPanel: RIGHT_PALETTE_WIDTHS.analysis,
+  transcriptsPanel: RIGHT_PALETTE_WIDTHS.transcripts,
+  snapshotPanel: RIGHT_PALETTE_WIDTHS.snapshots,
+  settingsPanel: RIGHT_PALETTE_WIDTHS.settings,
+};
+
+// What a resize of each zone starts from and may reach. The start is the
+// zone's width: its remembered one, or while it is unresized the widest
+// palette showing in it, so the first step toward "wider" never makes a
+// wider palette narrower.
+const zoneResizeRange = computed(() => {
+  const range = (zone: TPaletteZone) => {
+    const min = ZONE_MIN_WIDTH[zone];
+    const max = clampZoneWidth(zone, Infinity, windowWidth.value);
+    const stored = panelLayout.arrangement.value.widths[zone];
+    const showing = PANELS.filter(
+      (panel) => panel.zone === zone && panelLayout.isVisible(panel.id),
+    ).map((panel) => PALETTE_DEFAULT_WIDTHS[panel.id]);
+    return {
+      base:
+        stored === undefined
+          ? Math.max(min, ...showing)
+          : clampZoneWidth(zone, stored, windowWidth.value),
+      min,
+      max,
+    };
+  };
+  return { left: range("left"), right: range("right") };
+});
+
+// Each left palette's place among those showing, for its grip.
+const leftStackPositions = computed(() => {
+  const showing = panelLayout.arrangement.value.leftOrder.filter((id) =>
+    panelLayout.isVisible(id),
+  );
+  return Object.fromEntries(
+    LEFT_PANEL_IDS.map((id) => [
+      id,
+      { position: showing.indexOf(id) + 1, count: showing.length },
+    ]),
+  ) as Record<PanelId, { position: number; count: number }>;
+});
+
 function endZoneDrag(zone: TPaletteZone) {
   const widths = { ...draggedZoneWidths.value };
   delete widths[zone];
@@ -2038,7 +2123,10 @@ function annotationPanelChanged() {
   store.setIsAnnotationPanelOpen(annotationPanel.value);
 }
 
-watch(annotationPanel, () => annotationPanelChanged());
+// Immediate: a layout restored with the browser open is already open when
+// this watcher is created, and the store would otherwise keep saying closed
+// until the first toggle.
+watch(annotationPanel, () => annotationPanelChanged(), { immediate: true });
 
 // The reverse direction, so `store.openAnnotationBrowserTab` can reach the
 // palette registry from a component that has no access to it (the Timelapse
@@ -2117,8 +2205,8 @@ watch(
 // asks for it (plugins/tour.ts). Before layouts were remembered every visit
 // opened the left stack, so tours could assume their anchors were showing.
 function revealPanelForTour(panelId: unknown) {
-  if (typeof panelId === "string" && panelId in PANEL_BY_ID) {
-    openPalette(panelId as PanelId);
+  if (isPanelId(panelId)) {
+    openPalette(panelId);
   } else if (panelsHidden.value) {
     // Not one of the registry's palettes: all that can be hiding it from
     // here is "hide all panels".

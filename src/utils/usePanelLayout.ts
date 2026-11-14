@@ -268,6 +268,18 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
     change(layoutWithMinimized(layout.value, id));
   }
 
+  /**
+   * Put back a layout taken earlier from `layout` (the AI panel's "revert
+   * view changes"). It is validated like a stored one; an invalid one is
+   * ignored.
+   */
+  function applyLayout(raw: unknown) {
+    const next = validateLayout(raw);
+    if (next && options.inViewer()) {
+      change(next);
+    }
+  }
+
   /** Show exactly `ids` (a workspace or a collection default). */
   function applyOpenSet(ids: readonly PanelId[]) {
     if (!options.inViewer()) {
@@ -372,6 +384,7 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
     close,
     toggle,
     minimize,
+    applyLayout,
     applyOpenSet,
     reset,
     toggleChromeHidden,
