@@ -3,7 +3,6 @@ import {
   completeLeftOrder,
   defaultArrangement,
   defaultLayout,
-  layoutWithAdded,
   layoutWithClosed,
   layoutWithMinimized,
   layoutWithOpen,
@@ -51,6 +50,11 @@ describe("panelLayout", () => {
       expect(
         validateLayout({ open: ["filtersPanel", "snapshotPanel"] })?.open,
       ).toEqual(["snapshotPanel"]);
+    });
+
+    it("reads a later format as nothing stored", () => {
+      expect(validateLayout({ version: 2, open: ["toolsPanel"] })).toBeNull();
+      expect(validateArrangement({ version: 2, widths: {} })).toBeNull();
     });
 
     it("accepts a layout with only an open set", () => {
@@ -104,15 +108,6 @@ describe("panelLayout", () => {
         open: ["toolsPanel", "filtersPanel"],
         minimized: [],
       });
-    });
-
-    it("adding a panel as is applies no placement rule", () => {
-      expect(layoutWithAdded(base, "settingsPanel").open).toEqual([
-        "toolsPanel",
-        "annotationPanel",
-        "filtersPanel",
-        "settingsPanel",
-      ]);
     });
   });
 

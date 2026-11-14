@@ -449,6 +449,7 @@ describe("layoutCommands", () => {
     return {
       applyOpenSet: vi.fn(),
       reset: vi.fn(),
+      resetArrangement: vi.fn(),
       hasCollectionDefault: () => false,
       canSaveCollectionDefault: () => true,
       saveCollectionDefault: vi.fn(),
@@ -482,6 +483,10 @@ describe("layoutCommands", () => {
     );
     reset().run();
     expect(owner.reset).toHaveBeenCalledTimes(1);
+    layoutCommands(ctx, owner)()
+      .find((c) => c.id === "layout.resetArrangement")!
+      .run();
+    expect(owner.resetArrangement).toHaveBeenCalledTimes(1);
   });
 
   it("offers saving the collection default only to someone who can write", () => {

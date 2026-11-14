@@ -149,6 +149,19 @@ describe("usePanelLayout", () => {
       expect(reload().visible.analysisPanel.value).toBe(true);
     });
 
+    it("a request that changes nothing while the collection loads does not override its layout", () => {
+      mount().open("snapshotPanel"); // config-a's layout
+      env.configurationId = "config-b";
+      reload().open("settingsPanel"); // my last
+
+      env.configurationId = null;
+      const panels = reload();
+      // e.g. a component asking for a panel that is already showing.
+      panels.open("settingsPanel");
+      env.configurationId = "config-a";
+      expect(panels.visible.snapshotPanel.value).toBe(true);
+    });
+
     it("does not restore again when the same collection is re-read", () => {
       env.collectionDefault = { version: 1, open: ["annotationPanel"] };
       const panels = mount();
@@ -324,13 +337,14 @@ describe("usePanelLayout", () => {
       expect(panels.visible.settingsPanel.value).toBe(false);
     });
 
-    it("writing a panel's ref adds or closes just that panel", () => {
+    it("writing a panel's ref opens it by the placement rules, or closes it", () => {
       const panels = mount();
       panels.visible.annotationPanel.value = true;
       panels.visible.settingsPanel.value = true;
-      expect(panels.visible.annotationPanel.value).toBe(true);
-      panels.visible.annotationPanel.value = false;
-      expect(panels.layout.value.open).not.toContain("annotationPanel");
+      expect(panels.visible.settingsPanel.value).toBe(true);
+      expect(panels.visible.annotationPanel.value).toBe(false);
+      panels.visible.settingsPanel.value = false;
+      expect(panels.layout.value.open).not.toContain("settingsPanel");
     });
 
     it("a minimized panel is open but not shown, and toggling brings it back", () => {
@@ -422,14 +436,55 @@ describe("usePanelLayout", () => {
       panels.open("settingsPanel");
       panels.reset();
       expect(shown(panels)).toEqual([...DEFAULT_OPEN].sort());
+      // Without a collection default the reset is my layout for it, or a
+      // reload would bring back my last layout from somewhere else.
+      expect(shown(reload())).toEqual([...DEFAULT_OPEN].sort());
 
       env.collectionDefault = { version: 1, open: ["snapshotPanel"] };
+      const again = reload();
+      again.reset();
+      expect(shown(again)).toEqual(["snapshotPanel"]);
+    });
+
+    it("after a reset I follow the collection default, including one changed later", () => {
+      env.collectionDefault = { version: 1, open: ["snapshotPanel"] };
+      const panels = mount();
+      panels.open("settingsPanel");
       panels.reset();
-      expect(shown(panels)).toEqual(["snapshotPanel"]);
+      expect(stored("layout.byConfiguration")).toEqual([]);
+
+      env.collectionDefault = { version: 1, open: ["annotationPanel"] };
+      expect(shown(reload())).toEqual(["annotationPanel"]);
+    });
+
+    it("hide-all outlasts a restore within the visit", () => {
+      const panels = mount();
+      panels.toggleChromeHidden();
+      // Another view of the same collection: unknown, then known again.
+      env.configurationId = null;
+      env.configurationId = "config-a";
+      expect(panels.chromeHidden.value).toBe(true);
+      // A different collection arriving does not bring the panels back either.
+      env.configurationId = "config-b";
+      expect(shown(panels)).toEqual([]);
+      panels.toggleChromeHidden();
+      expect(shown(panels)).toEqual([...DEFAULT_OPEN].sort());
     });
   });
 
   describe("arrangement", () => {
+    it("resetting the arrangement returns to default widths and order", () => {
+      const panels = mount();
+      panels.setZoneWidth("left", 500);
+      panels.setLeftOrder(["toolsPanel"]);
+      panels.resetArrangement();
+      expect(reload().arrangement.value).toEqual({
+        version: 1,
+        leftOrder: ["navigatorPanel", "layersPanel", "toolsPanel"],
+        widths: {},
+      });
+    });
+
     it("remembers zone widths and the left order across collections", () => {
       const panels = mount();
       panels.setZoneWidth("right", 611.6);

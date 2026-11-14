@@ -236,9 +236,13 @@ these that exists is shown:
   for this dataset. Leaving the viewer therefore changes nothing in the
   layout, so there is no "all closed" to save by mistake, and nothing is
   refused silently except opening outside the viewer.
-- **Restore once per (user, collection).** The watcher's source is a token
-  string of the two; replacing the configuration object with the same id
-  does nothing.
+- **Restore when the (user, collection) token changes.** The watcher's source
+  is a string of the two, so replacing the configuration object with the
+  same id does nothing. It is not "once per collection", though: another view
+  of the same collection takes the token A → unknown → A, and the restore
+  runs again. So **a restore must be idempotent and must do nothing but
+  replace the layout.** It once also cleared "hide all", which brought every
+  panel back on a view switch.
 - **The collection is not always known.** While it is unknown nothing is
   restored: a fresh visit shows the last layout, a switch keeps what is on
   screen, and a change made in that time wins over the layout that arrives
@@ -308,6 +312,10 @@ palette in it uses the zone's width.
   `paletteGeometry.ts` are the unresized case only.
 - The handle lies over the palette's edge, so the palette body is inset
   under it; otherwise grabbing a scrollbar's outer edge resized the zone.
+- **Content that sizes itself must follow the palette, not the window.**
+  Plotly's `responsive` listens for window resizes only, so Analysis plots
+  kept their old width; `AnalysisScatterPlot` now observes its plot element.
+  `ContrastHistogram` already did. Check any new chart or canvas in a panel.
 
 **Reorder the left stack.** Drag a left palette by its grip. It follows the
 pointer and, on release, takes the place its center was carried to among the
@@ -325,7 +333,8 @@ palettes that are showing (`leftOrderAfterDrop`). The stack's positions are
 view of the layout (`chromeHidden`), not a change to it: not remembered, and
 ended by leaving the viewer or by opening any panel. It also masks the
 Timelapse palette, the AI panel and the Analyze drawer, which keep their own
-open state. While it is on, one "Show panels" chip remains, so a hidden
+open state; opening any of those ends it too, and the AI button shows a
+masked AI panel rather than closing it. While it is on, one "Show panels" chip remains, so a hidden
 interface always shows how to undo it.
 
 Deferred: moving a panel between the left and right zones.
@@ -339,7 +348,12 @@ widths and order stay the user's own. Each set must already satisfy the
 placement rules (tested).
 
 **"Reset panel layout"** returns to the collection default, or the app's
-when the collection has none.
+when the collection has none. With a collection default it _forgets_ the
+user's own layout for the collection instead of storing a copy of the
+default, so a default the owner changes later still reaches them.
+
+**"Reset panel widths and order"** restores the default arrangement. It is
+also the keyboard route to what double-clicking a column's edge does.
 
 **The collection default** is `defaultPanelLayout?: IPanelLayout | null` on
 the configuration.
@@ -353,6 +367,11 @@ the configuration.
   saving while "hide all" is on does not save an empty default.
 - The commands are offered only when logged in and when the collection on
   screen is the one in the store.
+- A refused write (a read-only or share-link user) puts the previous value
+  back in the store. Without that the app offered, described and reset to a
+  default the collection did not have.
+- A new configuration is created without the key: null is how an update
+  clears it, and the create path stores metadata as given.
 - No backend change: `CollectionSchema` does not restrict `meta` keys, and
   the `nimbusimage` Python package only reads the keys it knows.
 - It must be in `exampleConfigurationBase()`: `configurationBaseKeys` is
@@ -534,7 +553,23 @@ Run `pnpm test src/utils src/components/FloatingPalette.test.ts src/App.test.ts 
 - [ ] **The handle does not cover the scrollbar.** — _"keeps the body, and its scrollbar, out from under the handle"_
 - [ ] **Reordering places among the palettes that are showing.** — _"places relative to the palettes that are showing only"_
 
+### Found by the second review round
+
+- [ ] **A restore replaces the layout and nothing else.** — _"hide-all outlasts a restore within the visit"_
+- [ ] **A request that changes nothing is not a change.** — _"a request that changes nothing while the collection loads does not override its layout"_
+- [ ] **After a reset the user follows the collection default.** — _"after a reset I follow the collection default, including one changed later"_
+- [ ] **Opening a masked panel ends hide-all.** — _"opening a panel that hide-all masks ends hide-all"_, _"the AI button shows a masked AI panel instead of closing it"_
+- [ ] **A toggle is lit while its panel is open, minimized or not.** — _"a minimized panel's toggle stays lit, and no toggle is lit under hide-all"_
+- [ ] **Chip rows are cleared by their measured width.** — _"canvas surfaces clear a chip row by its measured width"_
+- [ ] **A tour anchor hidden any way is revealed.** — _"names the palette that holds a hidden anchor"_, _"asks for the panels back when the anchor is hidden outside any palette"_, _"a tour step hidden only by hide-all gets the panels back"_
+- [ ] **A plot follows its palette's width.** — _"redraws at the new width when its palette's column is resized"_
+- [ ] **A stored value from a later format reads as nothing.** — _"reads a later format as nothing stored"_
+- [ ] **Widths and order can be reset without the pointer.** — _"resetting the arrangement returns to default widths and order"_
+
 ### The collection default (the only server write)
+
+- [ ] **A refused write is rolled back, on the collection it was for.** — _"a refused save or clear leaves the default as it was"_, _"a refused save does not touch a collection opened meanwhile"_
+- [ ] **A new configuration carries no null key.** — _"a new configuration is created without the null key"_
 
 - [ ] **Saving is one configuration write; toggling panels is none.** — _"saving stores the layout and writes that one key once"_
 - [ ] **Clearing writes null.** — _"clearing writes null, which the server drops from the metadata"_

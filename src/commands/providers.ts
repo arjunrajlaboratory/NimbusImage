@@ -285,6 +285,8 @@ export interface ILayoutController {
   applyOpenSet: (ids: readonly PanelId[]) => void;
   /** Back to the collection's default layout, or the app's. */
   reset: () => void;
+  /** Default column widths and left-stack order. */
+  resetArrangement: () => void;
   hasCollectionDefault: () => boolean;
   /** Whether this user can try to write the collection (logged in). */
   canSaveCollectionDefault: () => boolean;
@@ -325,6 +327,17 @@ export function layoutCommands(
       icon: "mdi-backup-restore",
       enabled: ctx.inViewer,
       run: controller.reset,
+    },
+    // The keyboard route to what double-clicking a column's edge and dragging
+    // a palette back do with the pointer.
+    {
+      id: "layout.resetArrangement",
+      title: "Reset panel widths and order",
+      group: "Panels",
+      keywords: ["workspace", "panels", "resize", "column", "size", "arrange"],
+      icon: "mdi-arrow-expand-horizontal",
+      enabled: ctx.inViewer,
+      run: controller.resetArrangement,
     },
     {
       id: "layout.saveCollectionDefault",

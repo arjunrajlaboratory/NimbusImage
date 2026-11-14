@@ -9,6 +9,32 @@ import { ITourConfig, ITourMetadata, ITourStepRuntime } from "@/store/model";
 
 const DEFAULT_WAIT_MS = 8000; // datasetview loads images; give async UI room
 
+/**
+ * What to ask the app for so that `target` can be seen, or null when it is
+ * already showing. `panelId` names the registry palette that holds it; with
+ * no id the target is hidden some other way (the Timelapse palette, the AI
+ * panel or a drawer under "hide all panels"), and the app is asked to show
+ * its panels again.
+ */
+export function panelRevealRequest(
+  target: Element,
+): { panelId: string | undefined } | null {
+  let hidden = false;
+  for (
+    let element: Element | null = target;
+    element && !hidden;
+    element = element.parentElement
+  ) {
+    hidden = getComputedStyle(element).display === "none";
+  }
+  if (!hidden) {
+    return null;
+  }
+  return {
+    panelId: target.closest<HTMLElement>("[data-panel-id]")?.dataset.panelId,
+  };
+}
+
 export class TourManager {
   private driverObj: Driver | null = null;
   private steps: ITourStepRuntime[] = [];
@@ -227,11 +253,11 @@ export class TourManager {
   // popover would point at nothing. Ask for the palette that holds it, then
   // give the app a turn to show it before the step is drawn.
   private async revealContainingPanel(target: Element) {
-    const palette = target.closest<HTMLElement>("[data-panel-id]");
-    if (!palette || getComputedStyle(palette).display !== "none") {
+    const request = panelRevealRequest(target);
+    if (!request) {
       return;
     }
-    tourBus.emit(TOUR_REVEAL_PANEL_EVENT, palette.dataset.panelId);
+    tourBus.emit(TOUR_REVEAL_PANEL_EVENT, request.panelId);
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 

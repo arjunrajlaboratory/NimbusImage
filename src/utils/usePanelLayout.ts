@@ -24,7 +24,6 @@ import {
   completeLeftOrder,
   defaultArrangement,
   defaultLayout,
-  layoutWithAdded,
   layoutWithClosed,
   layoutWithMinimized,
   layoutWithOpen,
@@ -119,10 +118,13 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
     changedBeforeConfiguration: boolean;
   } = null;
 
+  // Restoring replaces the layout and nothing else. In particular it leaves
+  // "hide all panels" alone: that ends with the visit or when the user opens
+  // something, not because the collection finished loading or the view
+  // changed within it.
   function show(next: IPanelLayout) {
     persisted = serializeLayout(next);
     layout.value = next;
-    chromeHidden.value = false;
   }
 
   function save() {
@@ -177,6 +179,7 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
       const isNewStay = !stay || stay.scope !== uiStateScope.value;
       if (isNewStay) {
         stay = { scope: uiStateScope.value, changedBeforeConfiguration: false };
+        chromeHidden.value = false;
       } else if (!configurationId) {
         return;
       }
@@ -213,6 +216,11 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
   );
 
   function change(next: IPanelLayout) {
+    // A request that changes nothing (opening what is already showing) is
+    // not a change the user made, and must not count as one below.
+    if (serializeLayout(next) === serializeLayout(layout.value)) {
+      return;
+    }
     if (stay && !options.configurationId()) {
       stay.changedBeforeConfiguration = true;
     }
@@ -269,13 +277,31 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
     change(layoutWithOpenSet(ids));
   }
 
-  /** Back to the collection's default, or the app's when it has none. */
+  /**
+   * Back to the collection's default, or the app's when it has none.
+   *
+   * With a collection default, the user's own layout for the collection is
+   * forgotten rather than overwritten with a copy of the default: they asked
+   * to follow the collection, so a default its owner changes later must
+   * still reach them.
+   */
   function reset() {
     if (!options.inViewer()) {
       return;
     }
     chromeHidden.value = false;
-    change(presetLayout(options.collectionDefault()) ?? defaultLayout());
+    const collectionDefault = presetLayout(options.collectionDefault());
+    const configurationId = options.configurationId();
+    if (!collectionDefault || !configurationId) {
+      change(defaultLayout());
+      return;
+    }
+    writeUiState(
+      LAYOUT_BY_CONFIGURATION_KEY,
+      readLayoutByConfiguration().filter(([id]) => id !== configurationId),
+    );
+    writeUiState(LAST_LAYOUT_KEY, collectionDefault);
+    show(collectionDefault);
   }
 
   function toggleChromeHidden() {
@@ -294,6 +320,11 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
     arrangement.value = { ...arrangement.value, widths };
   }
 
+  /** Default widths and the registry's left order again. */
+  function resetArrangement() {
+    arrangement.value = defaultArrangement();
+  }
+
   function setLeftOrder(order: readonly PanelId[]) {
     arrangement.value = {
       ...arrangement.value,
@@ -302,8 +333,7 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
   }
 
   // One writable ref per panel for `v-model` and the template. Reading gives
-  // "on screen"; writing true adds the panel as is (the placement rules are
-  // `open`'s job), writing false closes it.
+  // "on screen"; writing opens or closes the panel like any other request.
   const visible = Object.fromEntries(
     PANEL_IDS.map((id) => [
       id,
@@ -311,7 +341,7 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
         get: () => isVisible(id),
         set: (value: boolean) => {
           if (value) {
-            change(layoutWithAdded(layout.value, id));
+            open(id);
           } else {
             close(id);
           }
@@ -347,5 +377,6 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
     toggleChromeHidden,
     setZoneWidth,
     setLeftOrder,
+    resetArrangement,
   };
 }

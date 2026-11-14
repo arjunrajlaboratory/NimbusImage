@@ -124,7 +124,7 @@
                 v-bind="activatorProps"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: navigatorPanel }"
+                :class="{ active: panelToggleOn.navigatorPanel }"
                 aria-label="Navigator"
                 data-command-id="panel.toggle.navigatorPanel"
                 @click.stop="togglePalette('navigatorPanel')"
@@ -139,7 +139,7 @@
                 v-bind="activatorProps"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: layersPanel }"
+                :class="{ active: panelToggleOn.layersPanel }"
                 aria-label="Layers"
                 data-command-id="panel.toggle.layersPanel"
                 @click.stop="togglePalette('layersPanel')"
@@ -154,7 +154,7 @@
                 v-bind="activatorProps"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: toolsPanel }"
+                :class="{ active: panelToggleOn.toolsPanel }"
                 aria-label="Tools"
                 data-command-id="panel.toggle.toolsPanel"
                 @click.stop="togglePalette('toolsPanel')"
@@ -228,7 +228,7 @@
                 v-tour-trigger="TOUR_TRIGGERS.objectListButton"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: annotationPanel }"
+                :class="{ active: panelToggleOn.annotationPanel }"
                 aria-label="Object list"
                 data-command-id="panel.toggle.annotationPanel"
                 @click.stop="togglePalette('annotationPanel')"
@@ -247,7 +247,7 @@
                 v-tour-trigger="TOUR_TRIGGERS.filtersButton"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: filtersPanel }"
+                :class="{ active: panelToggleOn.filtersPanel }"
                 :aria-label="filtersAriaLabel"
                 data-command-id="panel.toggle.filtersPanel"
                 @click.stop="togglePalette('filtersPanel')"
@@ -270,7 +270,7 @@
                 v-bind="activatorProps"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: analysisPanel }"
+                :class="{ active: panelToggleOn.analysisPanel }"
                 :aria-label="analysisAriaLabel"
                 data-command-id="panel.toggle.analysisPanel"
                 @click.stop="togglePalette('analysisPanel')"
@@ -300,7 +300,7 @@
                 v-bind="activatorProps"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: transcriptsPanel }"
+                :class="{ active: panelToggleOn.transcriptsPanel }"
                 aria-label="Transcripts"
                 data-command-id="panel.toggle.transcriptsPanel"
                 @click.stop="togglePalette('transcriptsPanel')"
@@ -321,7 +321,7 @@
                 v-tour-trigger="TOUR_TRIGGERS.snapshotsButton"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: snapshotPanel }"
+                :class="{ active: panelToggleOn.snapshotPanel }"
                 aria-label="Snapshots"
                 data-command-id="panel.toggle.snapshotPanel"
                 @click.stop="togglePalette('snapshotPanel')"
@@ -338,7 +338,7 @@
                 v-tour-trigger="TOUR_TRIGGERS.settingsButton"
                 type="button"
                 class="palette-ibtn"
-                :class="{ active: settingsPanel }"
+                :class="{ active: panelToggleOn.settingsPanel }"
                 aria-label="Settings"
                 data-command-id="panel.toggle.settingsPanel"
                 @click.stop="togglePalette('settingsPanel')"
@@ -866,6 +866,19 @@ function isPanelAvailable(id: PanelId): boolean {
   return panelIsAvailable(id, panelContext.value);
 }
 
+// Whether each panel's app-bar toggle is lit: the panel is open, as a palette
+// or as a chip. Not the same as "on screen": a minimized panel's toggle stays
+// lit, like its chip, so the two never disagree about whether it is open.
+const panelToggleOn = computed(
+  () =>
+    Object.fromEntries(
+      PANEL_IDS.map((id) => [
+        id,
+        panelLayout.isOpen(id) && !panelsHidden.value && isPanelAvailable(id),
+      ]),
+    ) as Record<PanelId, boolean>,
+);
+
 const panelBadges = computed(
   () =>
     Object.fromEntries(
@@ -922,6 +935,13 @@ const togglePalette = panelLayout.toggle;
 // open state for when the panels come back.
 const panelsHidden = panelLayout.chromeHidden;
 
+/** End "hide all panels", if it is on. */
+function showPanels() {
+  if (panelsHidden.value) {
+    panelLayout.toggleChromeHidden();
+  }
+}
+
 const snapshotPanelFull = ref(false);
 const analyzePanel = ref(false);
 const aiPanelOpen = ref(false);
@@ -934,6 +954,19 @@ const timelapsePanel = computed({
   get: () => timelapseStore.showMode,
   set: (value: boolean) => timelapseStore.setShowMode(value),
 });
+// Opening any of the panels "hide all panels" masks ends it, as opening a
+// registry palette does: something the user just asked for must not stay
+// invisible. (These three are not in the panel registry; see `panelsHidden`.)
+watch(
+  [aiPanelOpen, timelapsePanel, analyzePanel],
+  (open, wasOpen) => {
+    if (open.some((isOpen, index) => isOpen && !wasOpen[index])) {
+      showPanels();
+    }
+  },
+  { flush: "sync" },
+);
+
 // What the palette's v-model and the geometry read: the mode, unless "hide all
 // panels" is masking it. Closing the palette still turns the mode off.
 const timelapsePaletteShown = computed({
@@ -1064,6 +1097,12 @@ function toggleAiPanel() {
   if (!canUseAiPanel.value) {
     return;
   }
+  // Under "hide all panels" an open AI panel is masked, so the button's job
+  // is to show it, not to close what cannot be seen.
+  if (aiPanelOpen.value && panelsHidden.value) {
+    showPanels();
+    return;
+  }
   aiPanelOpen.value = !aiPanelOpen.value;
 }
 
@@ -1086,6 +1125,9 @@ watch(aiPromptRequest, (prompt) => {
   }
   if (canUseAiPanel.value) {
     aiPanelOpen.value = true;
+    // The panel may already be open but masked; the watcher below only sees
+    // it opening.
+    showPanels();
   } else {
     // Drop it rather than leave it for the next time the panel mounts.
     aiPromptRequest.value = null;
@@ -1121,16 +1163,16 @@ const anyLeftPaletteOpen = computed(
 const leftEdgeOccupied = computed(
   () => anyLeftPaletteOpen.value || paletteChips.value.left.length > 0,
 );
-const leftEdgeClearX = computed(() =>
-  Math.max(
-    anyLeftPaletteOpen.value ? leftPaletteClearX(leftColumn.value) : 0,
-    paletteChips.value.left.length > 0
-      ? leftPaletteClearX(chipRowWidths.value.left)
-      : 0,
-    // Nothing on the edge: the value is unused, keep the column's.
-    leftEdgeOccupied.value ? 0 : leftPaletteClearX(leftColumn.value),
-  ),
-);
+const leftEdgeClearX = computed(() => {
+  const hasChips = paletteChips.value.left.length > 0;
+  // With a palette showing (or nothing on the edge, when the value is not
+  // used) it is the column's width; with only chips, the row's.
+  const occupantWidth =
+    hasChips && !anyLeftPaletteOpen.value
+      ? chipRowWidths.value.left
+      : Math.max(leftColumn.value, hasChips ? chipRowWidths.value.left : 0);
+  return leftPaletteClearX(occupantWidth);
+});
 
 // The Measure dialog is mounted once here but can be opened from several
 // places (app-bar ruler, Object Browser), so its open state lives in the
@@ -1329,7 +1371,11 @@ const paletteChips = computed<Record<TPaletteZone, IPaletteChip[]>>(() => {
       key: panel.id,
       title: panel.title,
       icon: panel.icon,
-      label: `Restore ${panel.title}`,
+      // The label replaces the chip's text for assistive tech, so the badge
+      // has to be in it or the count is only there for people who can see it.
+      label: panelBadges.value[panel.id]
+        ? `Restore ${panel.title} (${panelBadges.value[panel.id]})`
+        : `Restore ${panel.title}`,
       badge: panelBadges.value[panel.id],
       restore: () => openPalette(panel.id),
     });
@@ -1750,6 +1796,7 @@ useCommandProvider(
   layoutCommands(viewerContext, {
     applyOpenSet: panelLayout.applyOpenSet,
     reset: panelLayout.reset,
+    resetArrangement: panelLayout.resetArrangement,
     hasCollectionDefault: () => !!viewedConfiguration.value?.defaultPanelLayout,
     // The store action writes to `store.configuration`, so only once that is
     // the collection on screen.
@@ -1977,6 +2024,10 @@ watch(
 function revealPanelForTour(panelId: unknown) {
   if (typeof panelId === "string" && panelId in PANEL_BY_ID) {
     openPalette(panelId as PanelId);
+  } else if (panelsHidden.value) {
+    // Not one of the registry's palettes: all that can be hiding it from
+    // here is "hide all panels".
+    panelLayout.toggleChromeHidden();
   }
 }
 

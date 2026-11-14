@@ -60,7 +60,7 @@ import MeasurementsTab from "@/components/AnnotationBrowser/MeasurementsTab.vue"
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
-import { TAnnotationBrowserTab } from "@/store/model";
+import { ANNOTATION_BROWSER_TABS, TAnnotationBrowserTab } from "@/store/model";
 import { usePersistedUiState } from "@/utils/uiState";
 
 // Whether the palette is open. Its content stays mounted while closed
@@ -93,16 +93,11 @@ function clickedTag(tag: string) {
 // The tab is remembered per user between visits. The store stays the one
 // live value: this only seeds it (at mount, and for a user who logs in) and
 // records what it becomes, whoever changes it.
-const BROWSER_TABS: readonly TAnnotationBrowserTab[] = [
-  "objects",
-  "measurements",
-  "connections",
-];
 const rememberedTab = usePersistedUiState<TAnnotationBrowserTab>(
   "objectBrowser.tab",
   () => store.annotationBrowserTab,
   (raw) =>
-    BROWSER_TABS.includes(raw as TAnnotationBrowserTab)
+    ANNOTATION_BROWSER_TABS.includes(raw as TAnnotationBrowserTab)
       ? (raw as TAnnotationBrowserTab)
       : null,
 );

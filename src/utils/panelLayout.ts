@@ -39,6 +39,13 @@ function isRecord(raw: unknown): raw is Record<string, unknown> {
   return typeof raw === "object" && raw !== null && !Array.isArray(raw);
 }
 
+// A stored value from a later format is not this one with extra fields: it
+// reads as nothing stored. A value with no version (a hand-written workspace
+// or collection default) is read as the current format.
+function isReadableVersion(version: unknown): boolean {
+  return version === undefined || version === 1;
+}
+
 /** The known panel ids in `raw`, in order, once each. Not an array: null. */
 function knownPanelIds(raw: unknown): PanelId[] | null {
   if (!Array.isArray(raw)) {
@@ -79,7 +86,7 @@ export function layoutWithOpenSet(ids: readonly PanelId[]): IPanelLayout {
  * layout at all.
  */
 export function validateLayout(raw: unknown): IPanelLayout | null {
-  if (!isRecord(raw)) {
+  if (!isRecord(raw) || !isReadableVersion(raw.version)) {
     return null;
   }
   const openIds = knownPanelIds(raw.open);
@@ -105,21 +112,6 @@ export function layoutWithOpen(
     minimized: layout.minimized.filter(
       (other) => other !== id && open.includes(other),
     ),
-  };
-}
-
-/**
- * `layout` with `id` added to the open set as is, without the placement
- * rules. For a caller that sets one panel's flag directly.
- */
-export function layoutWithAdded(
-  layout: IPanelLayout,
-  id: PanelId,
-): IPanelLayout {
-  return {
-    version: 1,
-    open: layout.open.includes(id) ? layout.open : [...layout.open, id],
-    minimized: layout.minimized.filter((other) => other !== id),
   };
 }
 
@@ -165,7 +157,7 @@ export function completeLeftOrder(order: readonly PanelId[]): PanelId[] {
 }
 
 export function validateArrangement(raw: unknown): IPanelArrangement | null {
-  if (!isRecord(raw)) {
+  if (!isRecord(raw) || !isReadableVersion(raw.version)) {
     return null;
   }
   const widths: IPanelArrangement["widths"] = {};

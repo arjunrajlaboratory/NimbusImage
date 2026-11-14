@@ -67,6 +67,37 @@ describe("collection default panel layout", () => {
     ).toBeNull();
   });
 
+  it("a refused save or clear leaves the default as it was", async () => {
+    const saved = layoutWithOpenSet(["snapshotPanel"]);
+    await main.saveDefaultPanelLayout(saved);
+    updateConfigurationKey.mockRejectedValue(new Error("403"));
+
+    await main.saveDefaultPanelLayout(layoutWithOpenSet(["toolsPanel"]));
+    expect((store.state as any).main.configuration.defaultPanelLayout).toEqual(
+      saved,
+    );
+
+    await main.saveDefaultPanelLayout(null);
+    expect((store.state as any).main.configuration.defaultPanelLayout).toEqual(
+      saved,
+    );
+  });
+
+  it("a refused save does not touch a collection opened meanwhile", async () => {
+    updateConfigurationKey.mockImplementation(async () => {
+      (store.state as any).main.configuration = {
+        ...(store.state as any).main.configuration,
+        id: "config2",
+        defaultPanelLayout: layoutWithOpenSet(["settingsPanel"]),
+      };
+      throw new Error("403");
+    });
+    await main.saveDefaultPanelLayout(layoutWithOpenSet(["toolsPanel"]));
+    expect(
+      (store.state as any).main.configuration.defaultPanelLayout.open,
+    ).toEqual(["settingsPanel"]);
+  });
+
   it("writes nothing with no configuration open", async () => {
     setConfiguration(false);
     await main.saveDefaultPanelLayout(layoutWithOpenSet(["toolsPanel"]));
@@ -88,6 +119,34 @@ describe("collection default panel layout", () => {
     expect(validateLayout(configuration.defaultPanelLayout)?.open).toEqual([
       "snapshotPanel",
     ]);
+  });
+
+  it("a new configuration is created without the null key", async () => {
+    // Null is how an update clears the key; on create it would be stored.
+    const post = vi.fn(async () => ({
+      data: { _id: "new", name: "n", description: "", meta: {} },
+    }));
+    const api = (main as any).api;
+    const client = api.client;
+    api.client = { post };
+    try {
+      await api.createConfigurationFromBase(
+        "n",
+        "",
+        "folder1",
+        exampleConfigurationBase(),
+      );
+    } finally {
+      api.client = client;
+    }
+    const metadata = JSON.parse(
+      ((post.mock.calls[0] as any[])[1] as FormData).get("metadata") as string,
+    );
+    expect("defaultPanelLayout" in metadata).toBe(false);
+    expect(Object.values(metadata)).not.toContain(null);
+    // The keys with values are all still sent.
+    expect(metadata.layers).toEqual([]);
+    expect(metadata.subtype).toBe("contrastConfiguration");
   });
 
   it("a configuration saved before this existed has no default", () => {

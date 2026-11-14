@@ -3455,13 +3455,30 @@ export class Main extends VuexModule {
   // The layout a collection opens with for someone who has none of their own
   // for it. One write per explicit request; null clears it (the server drops
   // a metadata key set to null).
+  //
+  // A refused write (a read-only or share-link user) puts the previous value
+  // back: otherwise the app would offer, describe and reset to a default the
+  // collection does not have. The failure itself is reported by
+  // syncConfiguration, through the sync indicator.
   @Action
   async saveDefaultPanelLayout(layout: IPanelLayout | null) {
     if (!this.configuration) {
       return;
     }
+    const configurationId = this.configuration.id;
+    const previous = this.configuration.defaultPanelLayout ?? null;
     this.setConfigurationDefaultPanelLayout(layout);
-    await this.syncConfiguration("defaultPanelLayout");
+    try {
+      await this.syncConfiguration({
+        key: "defaultPanelLayout",
+        throwOnError: true,
+      });
+    } catch {
+      // Only if the collection that was written to is still the open one.
+      if (this.configuration?.id === configurationId) {
+        this.setConfigurationDefaultPanelLayout(previous);
+      }
+    }
   }
 
   // Debounced entry point called by the properties/filters stores whenever

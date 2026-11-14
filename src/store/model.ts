@@ -464,7 +464,12 @@ export type TLayerMode = "single" | "multiple" | "unroll";
 export type TTimelapseTrackColoring = "track" | "uniform";
 
 /** Which tab the Object Browser is showing. */
-export type TAnnotationBrowserTab = "objects" | "measurements" | "connections";
+export const ANNOTATION_BROWSER_TABS = [
+  "objects",
+  "measurements",
+  "connections",
+] as const;
+export type TAnnotationBrowserTab = (typeof ANNOTATION_BROWSER_TABS)[number];
 
 /**
  * Palettes that a component with no access to App.vue's open/closed refs may

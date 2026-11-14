@@ -433,7 +433,8 @@ describe("App", () => {
       vm.togglePalette("filtersPanel");
       paletteStub(wrapper, "Filters").vm.$emit("minimize");
       await nextTick();
-      const chip = wrapper.get('[aria-label="Restore Filters"]');
+      // The count is in the label too, not only in the badge it draws.
+      const chip = wrapper.get('[aria-label="Restore Filters (4)"]');
       expect(chip.find(".palette-chip-badge").text()).toBe("4");
       // A chip with nothing to report has no badge.
       paletteStub(wrapper, "Tools").vm.$emit("minimize");
@@ -561,6 +562,54 @@ describe("App", () => {
       timelapseStore.setShowMode(false);
     });
 
+    it("opening a panel that hide-all masks ends hide-all", async () => {
+      const { default: timelapseStore } = await import("@/store/timelapse");
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      const hideAll = vm.appHotkeys.find(
+        (entry: any) => entry.bind === "mod+.",
+      );
+
+      hideAll.handler(document.body, new KeyboardEvent("keydown"));
+      timelapseStore.setShowMode(true);
+      await nextTick();
+      expect(vm.timelapsePaletteShown).toBe(true);
+      expect(vm.navigatorPanel).toBe(true);
+
+      hideAll.handler(document.body, new KeyboardEvent("keydown"));
+      vm.analyzePanel = true;
+      await nextTick();
+      expect(vm.navigatorPanel).toBe(true);
+
+      // Closing one of them is not a reason to bring the panels back.
+      hideAll.handler(document.body, new KeyboardEvent("keydown"));
+      timelapseStore.setShowMode(false);
+      vm.analyzePanel = false;
+      await nextTick();
+      expect(vm.navigatorPanel).toBe(false);
+    });
+
+    it("the AI button shows a masked AI panel instead of closing it", async () => {
+      (store as any).isLoggedIn = true;
+      (store as any).girderUser = { _id: "u1" };
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      vm.aiPanelOpen = true;
+      const hideAll = vm.appHotkeys.find(
+        (entry: any) => entry.bind === "mod+.",
+      );
+      hideAll.handler(document.body, new KeyboardEvent("keydown"));
+      await nextTick();
+      expect(vm.navigatorPanel).toBe(false);
+
+      const { allCommands } = await import("@/commands/registry");
+      allCommands.value
+        .find((command) => command.id === "ai.togglePanel")!
+        .run();
+      expect(vm.aiPanelOpen).toBe(true);
+      expect(vm.navigatorPanel).toBe(true);
+    });
+
     it("a chip row holds its edge, so canvas surfaces clear it like a palette", async () => {
       const wrapper = mountViewer();
       const vm = wrapper.vm as any;
@@ -585,6 +634,46 @@ describe("App", () => {
       }
       await nextTick();
       expect(vm.leftEdgeOccupied).toBe(false);
+    });
+
+    it("canvas surfaces clear a chip row by its measured width", async () => {
+      // jsdom has no ResizeObserver: stand one in and report a width.
+      let report: (entries: { target: Element }[]) => void = () => {};
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          observe = vi.fn();
+          disconnect = vi.fn();
+          constructor(callback: typeof report) {
+            report = callback;
+          }
+        },
+      );
+      try {
+        const wrapper = mountViewer();
+        const vm = wrapper.vm as any;
+        for (const title of ["Navigator", "Layers", "Tools"]) {
+          paletteStub(wrapper, title).vm.$emit("minimize");
+        }
+        vm.togglePalette("annotationPanel");
+        paletteStub(wrapper, "Object Browser").vm.$emit("minimize");
+        await nextTick();
+        const rows = wrapper.findAll(".palette-chips");
+        expect(rows.map((row) => row.attributes("data-zone"))).toEqual([
+          "left",
+          "right",
+        ]);
+        Object.defineProperty(rows[0].element, "offsetWidth", { value: 200 });
+        Object.defineProperty(rows[1].element, "offsetWidth", { value: 150 });
+        report(rows.map((row) => ({ target: row.element })));
+        await nextTick();
+        // Inset 16 + the row + the 10px canvas-surface gap.
+        expect(vm.leftEdgeClearX).toBe(226);
+        // Inset 16 + the row + inset 16.
+        expect(vm.rightEdgeClearance).toBe(182);
+      } finally {
+        vi.unstubAllGlobals();
+      }
     });
 
     it("the hide-all chip also holds the left edge", async () => {
@@ -626,6 +715,50 @@ describe("App", () => {
       expect(() =>
         tourBus.emit(TOUR_REVEAL_PANEL_EVENT, "settingsPanel"),
       ).not.toThrow();
+    });
+
+    it("a tour step hidden only by hide-all gets the panels back", async () => {
+      const { tourBus, TOUR_REVEAL_PANEL_EVENT } = await import(
+        "@/plugins/tourBus"
+      );
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      // Nothing to do while nothing is hidden.
+      tourBus.emit(TOUR_REVEAL_PANEL_EVENT, undefined);
+      expect(vm.navigatorPanel).toBe(true);
+
+      const hideAll = vm.appHotkeys.find(
+        (entry: any) => entry.bind === "mod+.",
+      );
+      hideAll.handler(document.body, new KeyboardEvent("keydown"));
+      expect(vm.navigatorPanel).toBe(false);
+      tourBus.emit(TOUR_REVEAL_PANEL_EVENT, undefined);
+      expect(vm.navigatorPanel).toBe(true);
+    });
+
+    it("a minimized panel's toggle stays lit, and no toggle is lit under hide-all", async () => {
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      const toggle = () => wrapper.get('[aria-label="Object list"]');
+      expect(toggle().classes()).not.toContain("active");
+      vm.togglePalette("annotationPanel");
+      await nextTick();
+      expect(toggle().classes()).toContain("active");
+
+      paletteStub(wrapper, "Object Browser").vm.$emit("minimize");
+      await nextTick();
+      expect(vm.annotationPanel).toBe(false);
+      expect(toggle().classes()).toContain("active");
+      // The lit toggle brings a minimized panel back rather than closing it.
+      await toggle().trigger("click");
+      expect(vm.annotationPanel).toBe(true);
+
+      const hideAll = vm.appHotkeys.find(
+        (entry: any) => entry.bind === "mod+.",
+      );
+      hideAll.handler(document.body, new KeyboardEvent("keydown"));
+      await nextTick();
+      expect(toggle().classes()).not.toContain("active");
     });
 
     it("the palettes of a zone start below its chip row, the other zone does not move", async () => {
