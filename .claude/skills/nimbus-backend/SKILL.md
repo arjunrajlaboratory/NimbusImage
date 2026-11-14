@@ -784,6 +784,32 @@ the container's cgroup `anon` memory (`/sys/fs/cgroup/memory.stat`), which is
 what the OOM killer acts on and counts every process in the container, the
 celery workers included. Sample it while the request runs and abort past a cap.
 
+## API responses are zstd-compressed by Content-Type
+
+`server/helpers/compression.py` installs a CherryPy `before_finalize` tool on the
+API root. Every response under `/api/v1` whose `Content-Type` is JSON, GeoJSON,
+CSV or TSV is zstd-encoded when the client sends `zstd` in `Accept-Encoding`, and
+sent uncompressed otherwise (there is no gzip). Browsers, and recent urllib3
+2.x when a zstd module imports (`compression.zstd` on Python 3.14+, else
+`backports.zstd`; older 2.x looked for `zstandard`), ask for it and decode it
+transparently. The worker images checked in 2026-11 (worker-base,
+image-processing-base and a few workers, all urllib3 2.7 on Python 3.14) do.
+What follows for endpoint authors:
+
+- **Content-Type decides.** Return binary as `application/octet-stream` (or its
+  real image type) so it isn't compressed. Never set `Content-Encoding` yourself
+  unless you compress the body yourself; the tool skips any response that has it.
+- **Streamed bodies cost more.** They get two compression threads and hold ~10 MB
+  of job buffers while in flight, plus the compressed output of each chunk (all of
+  it when an export yields one chunk). Buffered bodies compress on the request
+  thread.
+- **The streaming chunk check above only holds without `Accept-Encoding`.** The
+  compressor emits mostly empty chunks. pytest-girder's `server.request` sends no
+  `Accept-Encoding`, and it bypasses CherryPy's WSGI response and the ASGI bridge,
+  so close and empty-chunk behavior can't be tested through it.
+- **Debugging with curl:** pass `--compressed`, or omit `Accept-Encoding`, to read
+  a body.
+
 ## Returning a large JSON body from numpy (orjson + raw response)
 
 Two traps, both hit by the spatial plugin's `column` endpoint (hundreds of thousands

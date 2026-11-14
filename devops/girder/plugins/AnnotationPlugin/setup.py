@@ -44,6 +44,9 @@ setup(
         # cut bytes 5-8x but made large reads 20-32% slower, since Atlas
         # compresses at a fixed, slower level and the link isn't the limit.
         "pymongo[zstd]",
+        # zstd API responses (helpers/compression.py); in the standard
+        # library from Python 3.14
+        "backports.zstd; python_version < '3.14'",
         "Pillow",
         # raw_region writes full-bit-depth TIFFs (server/api/rawRegion.py)
         "tifffile",
