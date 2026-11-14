@@ -290,11 +290,7 @@
             </template>
           </v-tooltip>
           <v-tooltip
-            v-if="
-              transcriptsStore.hasTranscripts ||
-              transcriptsStore.error ||
-              transcriptsStore.loading
-            "
+            v-if="isPanelAvailable('transcriptsPanel')"
             text="Transcripts"
           >
             <template v-slot:activator="{ props: activatorProps }">
@@ -713,17 +709,13 @@ import {
 } from "@/utils/paletteGeometry";
 import AiPanel from "@/components/AiPanel.vue";
 import FloatingPalette from "@/components/FloatingPalette.vue";
+import { usePanelLayout } from "@/utils/usePanelLayout";
+import { setUiStateScope } from "@/utils/uiState";
 import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
 import { useTour } from "@/utils/useTour";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
-import {
-  PANELS,
-  PANEL_BY_ID,
-  PANEL_IDS,
-  PanelId,
-  applyOpen,
-} from "@/utils/panelRegistry";
+import { PANEL_BY_ID, PanelId } from "@/utils/panelRegistry";
 import { useCommand, useCommandProvider } from "@/commands/registry";
 import { panelCommands, tourCommands } from "@/commands/providers";
 import { aiPromptRequest } from "@/commands/requests";
@@ -760,13 +752,67 @@ const { startTour, loadAllTours: loadAllToursFromManager } = useTour();
 const tourSearch = ref("");
 const availableTours = ref<Record<string, ITourMetadata>>({});
 
-const snapshotPanel = ref(false);
+const routeName = computed(() =>
+  route.name === "shared" || route.name === "embed"
+    ? "datasetview"
+    : route.name,
+);
+const embedMode = computed(
+  () => route.name === "embed" || route.query.embed === "1",
+);
+
+const isDatasetView = computed(() => routeName.value === "datasetview");
+
+// --- Palette layout ---------------------------------------------------------
+//
+// Which palettes exist, which edge each lives on and how they evict each other
+// are defined in `@/utils/panelRegistry`. Which are open, minimized or hidden,
+// and remembering that between visits, is `usePanelLayout`. App.vue binds the
+// template and the stacking observers to the refs it returns.
+
+// Remembered UI state is kept per user. Sync and before `usePanelLayout`,
+// which reads that state as it is created.
+watch(
+  () => store.girderUser?._id ?? null,
+  (userId) => setUiStateScope(userId),
+  { immediate: true, flush: "sync" },
+);
+
+// The Transcripts button and palette only exist for a dataset with a
+// registered transcript store (or while that is being looked up or failed,
+// so the failure can be read and retried).
+function isPanelAvailable(id: PanelId): boolean {
+  return (
+    id !== "transcriptsPanel" ||
+    transcriptsStore.hasTranscripts ||
+    !!transcriptsStore.error ||
+    transcriptsStore.loading
+  );
+}
+
+const panelLayout = usePanelLayout({
+  // The embed route (a share link in an iframe) shows only the canvas.
+  inViewer: () => isDatasetView.value && !embedMode.value,
+  configurationId: () => store.configuration?.id ?? null,
+  collectionDefault: () => null,
+  isAvailable: isPanelAvailable,
+});
+// True while the palette is on screen; see `usePanelLayout`'s `visible`.
+const {
+  snapshotPanel,
+  annotationPanel,
+  settingsPanel,
+  filtersPanel,
+  analysisPanel,
+  transcriptsPanel,
+  navigatorPanel,
+  toolsPanel,
+  layersPanel,
+} = panelLayout.visible;
+const openPalette = panelLayout.open;
+const togglePalette = panelLayout.toggle;
+
 const snapshotPanelFull = ref(false);
-const annotationPanel = ref(false);
-const settingsPanel = ref(false);
-const filtersPanel = ref(false);
-const analysisPanel = ref(false);
-const transcriptsPanel = ref(false);
 const analyzePanel = ref(false);
 const aiPanelOpen = ref(false);
 
@@ -913,11 +959,6 @@ watch(canUseAiPanel, (usable) => {
   }
 });
 
-// Left-zone palettes (dissolved left sidebar). Open by default.
-const navigatorPanel = ref(true);
-const toolsPanel = ref(true);
-const layersPanel = ref(true);
-
 // When the whole left stack is open it reaches the bottom-left corner and
 // would cover the canvas's palette/lock/reset buttons; ImageViewer shifts
 // them right while this is true (see `.left-palettes-open` in ImageViewer).
@@ -963,23 +1004,6 @@ const DOCUMENTATION_URL = "https://docs.nimbusimage.com";
 const COMMAND_PALETTE_BINDING = "mod+k";
 const commandPaletteHotkey = formatHotkey(COMMAND_PALETTE_BINDING);
 
-// --- Palette layout ---------------------------------------------------------
-//
-// Which palettes exist, which edge each lives on and how they evict each other
-// are defined in `@/utils/panelRegistry`; App.vue only owns the open/closed
-// refs, because the template and the stacking observers below bind to them.
-const paletteOpen: Record<PanelId, Ref<boolean>> = {
-  annotationPanel,
-  filtersPanel,
-  analysisPanel,
-  transcriptsPanel,
-  snapshotPanel,
-  settingsPanel,
-  navigatorPanel,
-  toolsPanel,
-  layersPanel,
-};
-
 // The Transcripts button and the viewer's overlay only appear for a dataset
 // with a registered transcript store, so the registration is looked up as
 // soon as the dataset is known rather than when the palette first opens.
@@ -993,28 +1017,6 @@ watch(
   { immediate: true },
 );
 
-function openPaletteSet(): Set<PanelId> {
-  return new Set(PANEL_IDS.filter((id) => paletteOpen[id].value));
-}
-
-function openPalette(id: PanelId) {
-  if (embedMode.value) {
-    return;
-  }
-  const next = applyOpen(openPaletteSet(), id);
-  for (const panelId of PANEL_IDS) {
-    paletteOpen[panelId].value = next.has(panelId);
-  }
-}
-
-function togglePalette(id: PanelId) {
-  if (paletteOpen[id].value) {
-    paletteOpen[id].value = false;
-  } else {
-    openPalette(id);
-  }
-}
-
 const is3DView = computed(() => volumeViewStore.viewMode === "3d");
 function toggle3DView() {
   volumeViewStore.setViewMode(is3DView.value ? "2d" : "3d");
@@ -1023,12 +1025,6 @@ function toggle3DView() {
 const isMontageOpen = computed(() => montageStore.isOpen);
 function toggleMontage() {
   montageStore.setIsOpen(!montageStore.isOpen);
-}
-
-function closeAllPalettes() {
-  for (const id of PANEL_IDS) {
-    paletteOpen[id].value = false;
-  }
 }
 
 // --- Stacked positioning ----------------------------------------------------
@@ -1241,17 +1237,6 @@ function onShowInList() {
   }
 }
 
-const routeName = computed(() =>
-  route.name === "shared" || route.name === "embed"
-    ? "datasetview"
-    : route.name,
-);
-const embedMode = computed(
-  () => route.name === "embed" || route.query.embed === "1",
-);
-
-const isDatasetView = computed(() => routeName.value === "datasetview");
-
 const activeFilterCount = computed(() => filterStore.activeFilterCount);
 
 const filtersTooltip = computed(() => {
@@ -1384,14 +1369,9 @@ const { inViewer } = viewerContext;
 
 useCommandProvider(
   panelCommands(viewerContext, {
-    isOpen: (id) => paletteOpen[id].value,
+    isOpen: panelLayout.isVisible,
     toggle: togglePalette,
-    // Same rule as the Transcripts app-bar button's v-if.
-    isAvailable: (id) =>
-      id !== "transcriptsPanel" ||
-      transcriptsStore.hasTranscripts ||
-      !!transcriptsStore.error ||
-      transcriptsStore.loading,
+    isAvailable: isPanelAvailable,
   }),
 );
 
@@ -1501,20 +1481,6 @@ function annotationPanelChanged() {
   store.setIsAnnotationPanelOpen(annotationPanel.value);
 }
 
-function datasetChanged() {
-  if (routeName.value !== "datasetview" || embedMode.value) {
-    closeAllPalettes();
-  } else {
-    // Each palette marked `defaultOpen` in the registry (the left stack) opens
-    // on every entry.
-    for (const panel of PANELS) {
-      if (panel.defaultOpen) {
-        paletteOpen[panel.id].value = true;
-      }
-    }
-  }
-}
-
 watch(annotationPanel, () => annotationPanelChanged());
 
 // The reverse direction, so `store.openAnnotationBrowserTab` can reach the
@@ -1556,11 +1522,6 @@ watch(
     store.setPaletteOpenRequests([]);
   },
 );
-
-// One watcher owns route defaults: a separate embed-close watcher can run
-// before route initialization reopens the defaults. Watch embed as well because
-// shared and embed normalize to the same viewer route name.
-watch([routeName, embedMode], datasetChanged, { immediate: true });
 
 // Left palettes mount/unmount with the dataset view, so (re)attach their
 // height observers whenever they appear.
@@ -1650,7 +1611,6 @@ defineExpose({
   goHome,
   togglePalette,
   openPalette,
-  closeAllPalettes,
   toggleHelpDialogUsingHotkey,
   handleTourStart,
   goToNewDataset,

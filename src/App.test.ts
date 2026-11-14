@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { nextTick } from "vue";
 import { routeLocationKey } from "vue-router";
 import { shallowMount, flushPromises } from "@vue/test-utils";
@@ -87,8 +87,9 @@ import transcriptsStore from "@/store/transcripts";
 import axios from "axios";
 import { logError } from "@/utils/log";
 
+// The dataset viewer: palettes only open there.
 const mockRoute = {
-  name: "root",
+  name: "datasetview",
   params: {},
 };
 
@@ -101,7 +102,7 @@ function mountComponent(
   extraStubs: Record<string, any> = {},
   providedRoute = routeProvider({ ...mockRoute, ...routeOverrides }),
 ) {
-  return shallowMount(App, {
+  const wrapper = shallowMount(App, {
     global: {
       mocks: {
         $loadAllTours: vi.fn().mockResolvedValue({}),
@@ -126,7 +127,19 @@ function mountComponent(
       },
     },
   });
+  mountedWrappers.push(wrapper);
+  return wrapper;
 }
+
+// Every mounted App watches the one mocked store and remembers its layout in
+// the one localStorage, so an App left mounted by an earlier test answers the
+// next test's store changes and overwrites its stored layout.
+const mountedWrappers: { unmount: () => void }[] = [];
+afterEach(() => {
+  for (const wrapper of mountedWrappers.splice(0)) {
+    wrapper.unmount();
+  }
+});
 
 // shallowMount stubs every Vuetify component, so App.vue's own app-bar markup
 // never renders. These pass-through stubs open up just the chain down to the
@@ -146,6 +159,9 @@ function mountWithAppBar() {
 describe("App", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // The panel layout is remembered in localStorage; without this each test
+    // would start from the layout the previous one left.
+    window.localStorage.clear();
     // Reset store mocks
     (store as any).isLoggedIn = false;
     (store as any).girderUser = null;
@@ -334,17 +350,50 @@ describe("App", () => {
     expect(vm.settingsPanel).toBe(false);
   });
 
-  // -- Method: closeAllPalettes --
-  it("closeAllPalettes closes every palette", () => {
-    const wrapper = mountComponent();
+  // -- Leaving and re-entering the viewer --
+  it("shows no palette outside the viewer and brings the layout back on return", async () => {
+    const providedRoute = routeProvider({ ...mockRoute });
+    const route = providedRoute[routeLocationKey as symbol];
+    const wrapper = mountComponent({}, {}, providedRoute);
     const vm = wrapper.vm as any;
     vm.togglePalette("annotationPanel");
     vm.togglePalette("filtersPanel");
-    vm.closeAllPalettes();
-    expect(vm.annotationPanel).toBe(false);
-    expect(vm.filtersPanel).toBe(false);
-    expect(vm.snapshotPanel).toBe(false);
+    vm.togglePalette("layersPanel");
+
+    Object.assign(route, { name: "root" });
+    await nextTick();
+    for (const id of [
+      "annotationPanel",
+      "filtersPanel",
+      "navigatorPanel",
+      "toolsPanel",
+    ]) {
+      expect(vm[id]).toBe(false);
+    }
+    // Nothing opens out there either.
+    vm.togglePalette("settingsPanel");
     expect(vm.settingsPanel).toBe(false);
+
+    Object.assign(route, { name: "datasetview" });
+    await nextTick();
+    expect(vm.annotationPanel).toBe(true);
+    expect(vm.filtersPanel).toBe(true);
+    expect(vm.navigatorPanel).toBe(true);
+    expect(vm.layersPanel).toBe(false);
+    expect(vm.settingsPanel).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("remembers the layout for the next page load", () => {
+    const first = mountComponent();
+    (first.vm as any).togglePalette("snapshotPanel");
+    (first.vm as any).togglePalette("toolsPanel");
+    first.unmount();
+
+    const vm = mountComponent().vm as any;
+    expect(vm.snapshotPanel).toBe(true);
+    expect(vm.toolsPanel).toBe(false);
+    expect(vm.navigatorPanel).toBe(true);
   });
 
   // -- Method: toggleHelpDialogUsingHotkey --
@@ -760,17 +809,6 @@ describe("App", () => {
     expect(vm.annotationPanel).toBe(true);
     wrapper.unmount();
     (store as any).isAnnotationPanelOpen = false;
-  });
-
-  // -- Watcher: routeName --
-  it("closeAllPalettes clears open palettes (run when leaving datasetview)", () => {
-    const wrapper = mountComponent({ name: "datasetview" });
-    const vm = wrapper.vm as any;
-    vm.togglePalette("annotationPanel");
-    expect(vm.annotationPanel).toBe(true);
-    // datasetChanged() calls closeAllPalettes when the route is not datasetview.
-    vm.closeAllPalettes();
-    expect(vm.annotationPanel).toBe(false);
   });
 });
 

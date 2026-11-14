@@ -51,6 +51,39 @@ apply them.
   which data is shown or measured (filters, layers, tools, columns) stays in
   the configuration or dataset view, where it already lives.
 
+## What the state-machine audit changes here
+
+`IMPLICIT_STATE_MACHINES.md` (PR #1469) audited the UI's state flags and found
+four recurring shapes. The panel layout is exactly such a machine, and this
+feature adds state to it, so the audit's rules apply directly:
+
+- **One state object, not parallel refs** (shape 4, partial reset; shape 3,
+  one question with several sources). Open, minimized, order and widths live
+  in a single `IPanelLayout` owned by one composable (`usePanelLayout`).
+  App.vue's per-panel refs become writable computeds over it, so "is this
+  panel showing" has one answer and a reset cannot clear part of it.
+- **The Object Browser's store mirror is derived.** The audit listed
+  `App.vue`'s `annotationPanel` ref against `store.isAnnotationPanelOpen` as
+  two sources that disagree in embed mode. The mirror follows the panel's
+  _visible_ state, and a refused open puts the store back.
+- **Local state outlives the login session.** Logout now reloads the page,
+  which discards every store, but `localStorage` survives the reload. The
+  audit's rule is "dropped at logout, or keyed by user"; a layout should
+  survive, so every `nimbus.ui.` key is scoped by user id (`anonymous` when
+  logged out). The next account at the same browser gets its own layout.
+- **Restore is a claimed token, not an equality check.** Restore runs once per
+  configuration id, and a late-arriving configuration must not overwrite a
+  panel the user toggled in the meantime (the audit's "equality skip reads
+  committed state" finding).
+- **Every gesture needs a cancel exit.** Column resize and stack reorder are
+  drags: each holds its state as one `null | {...}` object and ends on
+  pointer-up, pointer-cancel, lost capture, and Escape (which reverts).
+- **No remount to hide.** Minimizing and hide-all change visibility only. A
+  `:key` or `v-if` would discard the panel's in-flight flags.
+- **No second source for "why is it open" until one is needed.** The
+  user/context distinction below is a rule for the first context-opened
+  registry panel. Until one exists, nothing tracks it.
+
 ## Why the layout is not saved in the configuration
 
 The earlier spec added `panelLayout` to the configuration and saved it,

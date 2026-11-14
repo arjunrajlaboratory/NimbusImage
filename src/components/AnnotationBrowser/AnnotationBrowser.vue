@@ -48,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, watch } from "vue";
 import AnnotationList from "@/components/AnnotationBrowser/AnnotationList.vue";
 import ConnectionList from "@/components/AnnotationBrowser/ConnectionList.vue";
 import MeasurementsTab from "@/components/AnnotationBrowser/MeasurementsTab.vue";
@@ -56,6 +56,7 @@ import store from "@/store";
 import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
 import { TAnnotationBrowserTab } from "@/store/model";
+import { usePersistedUiState } from "@/utils/uiState";
 
 // Whether the palette is open. Its content stays mounted while closed
 // (display: none), so the server-backed Objects list uses this to skip
@@ -83,6 +84,38 @@ const connectionCount = computed(
 function clickedTag(tag: string) {
   filterStore.addTagToTagFilter(tag);
 }
+
+// The tab is remembered per user between visits. The store stays the one
+// live value: this only seeds it (at mount, and for a user who logs in) and
+// records what it becomes, whoever changes it.
+const BROWSER_TABS: readonly TAnnotationBrowserTab[] = [
+  "objects",
+  "measurements",
+  "connections",
+];
+const rememberedTab = usePersistedUiState<TAnnotationBrowserTab>(
+  "objectBrowser.tab",
+  () => store.annotationBrowserTab,
+  (raw) =>
+    BROWSER_TABS.includes(raw as TAnnotationBrowserTab)
+      ? (raw as TAnnotationBrowserTab)
+      : null,
+);
+watch(
+  rememberedTab,
+  (tab) => {
+    if (tab !== store.annotationBrowserTab) {
+      store.setAnnotationBrowserTab(tab);
+    }
+  },
+  { immediate: true },
+);
+watch(
+  () => store.annotationBrowserTab,
+  (tab) => {
+    rememberedTab.value = tab;
+  },
+);
 
 defineExpose({ clickedTag, activeTab, connectionCount, objectCount });
 </script>

@@ -1,0 +1,399 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { effectScope, reactive } from "vue";
+import { PanelId } from "./panelRegistry";
+import {
+  MAX_REMEMBERED_CONFIGURATIONS,
+  usePanelLayout,
+} from "./usePanelLayout";
+import { setUiStateScope } from "./uiState";
+
+const DEFAULT_OPEN: PanelId[] = ["navigatorPanel", "layersPanel", "toolsPanel"];
+
+function stored(key: string, scope = "anonymous"): unknown {
+  const raw = window.localStorage.getItem(`nimbus.ui.${scope}.${key}`);
+  return raw === null ? null : JSON.parse(raw);
+}
+
+describe("usePanelLayout", () => {
+  let scopes: ReturnType<typeof effectScope>[];
+  let env: {
+    inViewer: boolean;
+    configurationId: string | null;
+    collectionDefault: unknown;
+    unavailable: PanelId[];
+  };
+
+  function mount() {
+    const scope = effectScope();
+    scopes.push(scope);
+    return scope.run(() =>
+      usePanelLayout({
+        inViewer: () => env.inViewer,
+        configurationId: () => env.configurationId,
+        collectionDefault: () => env.collectionDefault,
+        isAvailable: (id) => !env.unavailable.includes(id),
+      }),
+    )!;
+  }
+
+  // A fresh page load: every composable from before is gone.
+  function reload() {
+    for (const scope of scopes.splice(0)) {
+      scope.stop();
+    }
+    return mount();
+  }
+
+  function shown(panels: ReturnType<typeof mount>): PanelId[] {
+    return (Object.keys(panels.visible) as PanelId[])
+      .filter((id) => panels.visible[id].value)
+      .sort();
+  }
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    setUiStateScope(null);
+    scopes = [];
+    env = reactive({
+      inViewer: true,
+      configurationId: "config-a" as string | null,
+      collectionDefault: null as unknown,
+      unavailable: [] as PanelId[],
+    });
+  });
+
+  afterEach(() => {
+    for (const scope of scopes.splice(0)) {
+      scope.stop();
+    }
+  });
+
+  describe("restore order", () => {
+    it("falls back to the registry defaults when nothing is stored", () => {
+      expect(shown(mount())).toEqual([...DEFAULT_OPEN].sort());
+    });
+
+    it("uses my last layout in a collection I have not visited", () => {
+      const first = mount();
+      first.toggle("layersPanel");
+      first.open("snapshotPanel");
+
+      env.configurationId = "config-b";
+      expect(shown(reload())).toEqual([
+        "navigatorPanel",
+        "snapshotPanel",
+        "toolsPanel",
+      ]);
+    });
+
+    it("prefers the collection default over my last layout", () => {
+      mount().open("snapshotPanel");
+
+      env.configurationId = "config-b";
+      env.collectionDefault = { version: 1, open: ["annotationPanel"] };
+      expect(shown(reload())).toEqual(["annotationPanel"]);
+    });
+
+    it("prefers my own layout for the collection over its default", () => {
+      env.collectionDefault = { version: 1, open: ["annotationPanel"] };
+      const first = mount();
+      first.open("settingsPanel");
+
+      expect(shown(reload())).toEqual(["settingsPanel"]);
+    });
+
+    it("ignores an invalid collection default", () => {
+      env.collectionDefault = { open: "everything" };
+      expect(shown(mount())).toEqual([...DEFAULT_OPEN].sort());
+    });
+
+    it("keeps each collection's layout apart", () => {
+      const panels = mount();
+      panels.open("annotationPanel");
+      env.configurationId = "config-b";
+      panels.open("settingsPanel");
+
+      env.configurationId = "config-a";
+      expect(panels.visible.annotationPanel.value).toBe(true);
+      expect(panels.visible.settingsPanel.value).toBe(false);
+      env.configurationId = "config-b";
+      expect(panels.visible.settingsPanel.value).toBe(true);
+    });
+  });
+
+  describe("a collection that arrives after the route", () => {
+    it("shows my last layout first, then the collection's own", () => {
+      mount().open("snapshotPanel"); // config-a's layout, and my last
+      env.configurationId = "config-b";
+      const other = reload();
+      other.open("settingsPanel"); // config-b's layout, and now my last
+
+      env.configurationId = null;
+      const panels = reload();
+      expect(panels.visible.settingsPanel.value).toBe(true);
+      env.configurationId = "config-a";
+      expect(panels.visible.snapshotPanel.value).toBe(true);
+      expect(panels.visible.settingsPanel.value).toBe(false);
+    });
+
+    it("keeps a change I made while it was loading, and stores it for the collection", () => {
+      mount().open("snapshotPanel");
+
+      env.configurationId = null;
+      const panels = reload();
+      panels.open("analysisPanel");
+      env.configurationId = "config-a";
+      expect(panels.visible.analysisPanel.value).toBe(true);
+      expect(panels.visible.snapshotPanel.value).toBe(false);
+
+      expect(reload().visible.analysisPanel.value).toBe(true);
+    });
+
+    it("does not restore again when the same collection is re-read", () => {
+      env.collectionDefault = { version: 1, open: ["annotationPanel"] };
+      const panels = mount();
+      panels.close("annotationPanel");
+      // A sync replaces the configuration object: same id, new default.
+      env.collectionDefault = { version: 1, open: ["annotationPanel"] };
+      expect(panels.visible.annotationPanel.value).toBe(false);
+    });
+  });
+
+  describe("saving", () => {
+    it("restoring writes nothing", () => {
+      mount();
+      expect(window.localStorage.length).toBe(0);
+      env.collectionDefault = { version: 1, open: ["annotationPanel"] };
+      env.configurationId = "config-b";
+      expect(window.localStorage.length).toBe(0);
+    });
+
+    it("a change is stored at once, as my last layout and the collection's", () => {
+      const panels = mount();
+      panels.open("filtersPanel");
+      const layout = {
+        version: 1,
+        open: [...DEFAULT_OPEN, "filtersPanel"],
+        minimized: [],
+      };
+      expect(stored("layout.last")).toEqual(layout);
+      expect(stored("layout.byConfiguration")).toEqual([["config-a", layout]]);
+    });
+
+    it("leaving the viewer hides every panel and stores nothing", () => {
+      const panels = mount();
+      panels.open("annotationPanel");
+      const before = stored("layout.last");
+
+      env.inViewer = false;
+      expect(shown(panels)).toEqual([]);
+      expect(stored("layout.last")).toEqual(before);
+
+      env.inViewer = true;
+      expect(panels.visible.annotationPanel.value).toBe(true);
+    });
+
+    it("refuses to open or apply a layout outside the viewer", () => {
+      env.inViewer = false;
+      const panels = mount();
+      panels.open("annotationPanel");
+      panels.toggle("settingsPanel");
+      panels.applyOpenSet(["snapshotPanel"]);
+      panels.reset();
+      expect(panels.layout.value.open).toEqual([]);
+      expect(window.localStorage.length).toBe(0);
+    });
+
+    it("keeps only the most recent collections", () => {
+      const panels = mount();
+      for (let i = 0; i < MAX_REMEMBERED_CONFIGURATIONS + 5; i++) {
+        env.configurationId = `config-${i}`;
+        panels.toggle("layersPanel");
+      }
+      const ids = (stored("layout.byConfiguration") as [string, unknown][]).map(
+        ([id]) => id,
+      );
+      expect(ids).toHaveLength(MAX_REMEMBERED_CONFIGURATIONS);
+      expect(ids[0]).toBe("config-5");
+      expect(ids[ids.length - 1]).toBe(
+        `config-${MAX_REMEMBERED_CONFIGURATIONS + 4}`,
+      );
+    });
+
+    it("moves a revisited collection to most recent instead of repeating it", () => {
+      const panels = mount();
+      panels.toggle("layersPanel");
+      env.configurationId = "config-b";
+      panels.toggle("layersPanel");
+      env.configurationId = "config-a";
+      panels.toggle("toolsPanel");
+      expect(
+        (stored("layout.byConfiguration") as [string, unknown][]).map(
+          ([id]) => id,
+        ),
+      ).toEqual(["config-b", "config-a"]);
+    });
+
+    it("survives a corrupt stored list", () => {
+      window.localStorage.setItem(
+        "nimbus.ui.anonymous.layout.byConfiguration",
+        '{"config-a": 3}',
+      );
+      window.localStorage.setItem("nimbus.ui.anonymous.layout.last", "nope");
+      const panels = mount();
+      expect(shown(panels)).toEqual([...DEFAULT_OPEN].sort());
+      panels.open("snapshotPanel");
+      expect(reload().visible.snapshotPanel.value).toBe(true);
+    });
+  });
+
+  describe("users", () => {
+    it("keeps each user's layout apart, and restores when the user changes", () => {
+      const panels = mount();
+      panels.open("annotationPanel");
+
+      setUiStateScope("user-1");
+      expect(panels.visible.annotationPanel.value).toBe(false);
+      panels.open("settingsPanel");
+      expect(stored("layout.last", "user-1")).not.toBeNull();
+
+      setUiStateScope(null);
+      expect(panels.visible.annotationPanel.value).toBe(true);
+      expect(panels.visible.settingsPanel.value).toBe(false);
+    });
+  });
+
+  describe("visibility", () => {
+    it("toggle closes a shown panel and opens a closed one by the placement rules", () => {
+      const panels = mount();
+      panels.toggle("annotationPanel");
+      panels.toggle("settingsPanel");
+      expect(panels.visible.settingsPanel.value).toBe(true);
+      expect(panels.visible.annotationPanel.value).toBe(false);
+      panels.toggle("settingsPanel");
+      expect(panels.visible.settingsPanel.value).toBe(false);
+    });
+
+    it("writing a panel's ref adds or closes just that panel", () => {
+      const panels = mount();
+      panels.visible.annotationPanel.value = true;
+      panels.visible.settingsPanel.value = true;
+      expect(panels.visible.annotationPanel.value).toBe(true);
+      panels.visible.annotationPanel.value = false;
+      expect(panels.layout.value.open).not.toContain("annotationPanel");
+    });
+
+    it("a minimized panel is open but not shown, and toggling brings it back", () => {
+      const panels = mount();
+      panels.open("annotationPanel");
+      panels.minimize("annotationPanel");
+      expect(panels.visible.annotationPanel.value).toBe(false);
+      expect(panels.isOpen("annotationPanel")).toBe(true);
+      expect(panels.minimizedPanels.value.map((panel) => panel.id)).toEqual([
+        "annotationPanel",
+      ]);
+
+      panels.toggle("annotationPanel");
+      expect(panels.visible.annotationPanel.value).toBe(true);
+      expect(panels.minimizedPanels.value).toEqual([]);
+    });
+
+    it("remembers a minimized panel", () => {
+      const panels = mount();
+      panels.minimize("toolsPanel");
+      expect(reload().minimizedPanels.value.map((panel) => panel.id)).toEqual([
+        "toolsPanel",
+      ]);
+    });
+
+    it("hides an unavailable panel without changing or rewriting the layout", () => {
+      const panels = mount();
+      panels.open("transcriptsPanel");
+      const before = stored("layout.last");
+
+      env.unavailable = ["transcriptsPanel"];
+      expect(panels.visible.transcriptsPanel.value).toBe(false);
+      expect(stored("layout.last")).toEqual(before);
+
+      env.unavailable = [];
+      expect(panels.visible.transcriptsPanel.value).toBe(true);
+    });
+
+    it("hide-all hides every panel, restores the same set, and is not stored", () => {
+      const panels = mount();
+      panels.open("annotationPanel");
+      panels.minimize("toolsPanel");
+      const before = shown(panels);
+      const storedBefore = stored("layout.last");
+
+      panels.toggleChromeHidden();
+      expect(shown(panels)).toEqual([]);
+      expect(panels.minimizedPanels.value).toEqual([]);
+      expect(stored("layout.last")).toEqual(storedBefore);
+      expect(shown(reload())).toEqual(before);
+    });
+
+    it("hide-all a second time, or opening a panel, shows the panels again", () => {
+      const panels = mount();
+      const before = shown(panels);
+      panels.toggleChromeHidden();
+      panels.toggleChromeHidden();
+      expect(shown(panels)).toEqual(before);
+
+      panels.toggleChromeHidden();
+      panels.open("snapshotPanel");
+      expect(shown(panels)).toEqual([...before, "snapshotPanel"].sort());
+    });
+
+    it("hide-all does not carry into the next visit", () => {
+      const panels = mount();
+      panels.toggleChromeHidden();
+      env.inViewer = false;
+      env.inViewer = true;
+      expect(shown(panels)).toEqual([...DEFAULT_OPEN].sort());
+    });
+  });
+
+  describe("presets", () => {
+    it("applying an open set shows exactly it, by the placement rules", () => {
+      const panels = mount();
+      panels.minimize("toolsPanel");
+      panels.applyOpenSet(["layersPanel", "annotationPanel", "filtersPanel"]);
+      expect(shown(panels)).toEqual([
+        "annotationPanel",
+        "filtersPanel",
+        "layersPanel",
+      ]);
+      expect(panels.minimizedPanels.value).toEqual([]);
+    });
+
+    it("reset returns to the collection default, or the app's without one", () => {
+      const panels = mount();
+      panels.open("settingsPanel");
+      panels.reset();
+      expect(shown(panels)).toEqual([...DEFAULT_OPEN].sort());
+
+      env.collectionDefault = { version: 1, open: ["snapshotPanel"] };
+      panels.reset();
+      expect(shown(panels)).toEqual(["snapshotPanel"]);
+    });
+  });
+
+  describe("arrangement", () => {
+    it("remembers zone widths and the left order across collections", () => {
+      const panels = mount();
+      panels.setZoneWidth("right", 611.6);
+      panels.setLeftOrder(["toolsPanel", "navigatorPanel"]);
+
+      env.configurationId = "config-b";
+      const next = reload();
+      expect(next.arrangement.value).toEqual({
+        version: 1,
+        leftOrder: ["toolsPanel", "navigatorPanel", "layersPanel"],
+        widths: { right: 612 },
+      });
+      next.setZoneWidth("right", null);
+      expect(reload().arrangement.value.widths).toEqual({});
+    });
+  });
+});
