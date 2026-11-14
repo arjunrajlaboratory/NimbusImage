@@ -31,7 +31,9 @@ import {
 import {
   getBaseURLFromDownloadParameters,
   getLayersDownloadUrls,
+  LayerSelectionError,
 } from "@/utils/screenshot";
+import { logError } from "@/utils/log";
 
 interface ICorner {
   top: boolean;
@@ -166,7 +168,19 @@ const urlPromise = computed(() => {
     dataset.value,
     store.currentLocation,
     store.api,
-  ).then((urls) => urls[0].url);
+  )
+    .then((urls): URL | string | null => urls[0].url)
+    .catch((error) => {
+      // No image for these layers here: either the layer has no plane at
+      // this position, or a dataset switch is half done (the layers still
+      // belong to the previous configuration). Show no overview image rather
+      // than reject, since most of these promises are never awaited (the
+      // update below is debounced).
+      if (!(error instanceof LayerSelectionError)) {
+        logError("Failed to build the overview image URL", error);
+      }
+      return null;
+    });
 });
 /* eslint-enable vue/no-async-in-computed-properties */
 
@@ -313,12 +327,13 @@ async function onUrlChanged() {
   if (!osmLayer.value) {
     return;
   }
-  if (urlPromise.value) {
-    const url = await urlPromise.value;
-    osmLayer.value.url(url.toString());
-  } else {
-    osmLayer.value.url("");
+  const promise = urlPromise.value;
+  const url = promise ? await promise : null;
+  // A newer URL was computed while this one resolved: it will apply itself
+  if (urlPromise.value !== promise || !osmLayer.value) {
+    return;
   }
+  osmLayer.value.url(url ? url.toString() : "");
 }
 
 // Refreshing the overview image re-renders the whole image region on the

@@ -221,6 +221,7 @@ import Snapshots from "./Snapshots.vue";
 import { snapshotLoadRequest } from "@/commands/requests";
 import type { ISnapshot } from "@/store/model";
 import { flushPromises } from "@vue/test-utils";
+import { markRaw, nextTick, reactive } from "vue";
 
 // Snapshots watches a module-level load request, so a mount left over from an
 // earlier test would answer this test's request instead.
@@ -1242,7 +1243,11 @@ describe("Snapshots.vue", () => {
       const snapshot = makeSnapshot({ datasetViewId: "differentView" });
       const loadedView = (store as any).datasetView;
       (store.setDatasetViewId as any).mockImplementationOnce(async () => {
-        (store as any).datasetView = { id: "differentView" };
+        (store as any).datasetView = {
+          id: "differentView",
+          datasetId: "dataset1",
+          configurationId: (store as any).configuration.id,
+        };
       });
       try {
         await (wrapper.vm as any).loadSnapshot(new Event("click"), {
@@ -1255,6 +1260,64 @@ describe("Snapshots.vue", () => {
           },
         });
         expect(store.setXY).toHaveBeenCalledWith(2);
+      } finally {
+        (store as any).datasetView = loadedView;
+      }
+    });
+
+    it("stops when its view landed but the view's dataset is not loaded", async () => {
+      const snapshot = makeSnapshot({ datasetViewId: "differentView" });
+      const loadedView = (store as any).datasetView;
+      // The view switched, but its dataset (another one) is not the one in.
+      (store.setDatasetViewId as any).mockImplementationOnce(async () => {
+        (store as any).datasetView = {
+          id: "differentView",
+          datasetId: "otherDataset",
+          configurationId: (store as any).configuration.id,
+        };
+      });
+      try {
+        await (wrapper.vm as any).loadSnapshot(new Event("click"), {
+          item: {
+            record: snapshot,
+            name: snapshot.name,
+            datasetName: "",
+            key: "",
+            modified: "",
+          },
+        });
+        expect(store.loadSnapshotLayers).not.toHaveBeenCalled();
+        expect(store.setConfigurationLayers).not.toHaveBeenCalled();
+        expect(store.setXY).not.toHaveBeenCalled();
+      } finally {
+        (store as any).datasetView = loadedView;
+      }
+    });
+
+    it("stops when its view landed but the view's configuration is not loaded", async () => {
+      const snapshot = makeSnapshot({ datasetViewId: "differentView" });
+      const loadedView = (store as any).datasetView;
+      // The view and its dataset are in; its configuration (another one) is not.
+      (store.setDatasetViewId as any).mockImplementationOnce(async () => {
+        (store as any).datasetView = {
+          id: "differentView",
+          datasetId: "dataset1",
+          configurationId: "otherConfiguration",
+        };
+      });
+      try {
+        await (wrapper.vm as any).loadSnapshot(new Event("click"), {
+          item: {
+            record: snapshot,
+            name: snapshot.name,
+            datasetName: "",
+            key: "",
+            modified: "",
+          },
+        });
+        expect(store.loadSnapshotLayers).not.toHaveBeenCalled();
+        expect(store.setConfigurationLayers).not.toHaveBeenCalled();
+        expect(store.setXY).not.toHaveBeenCalled();
       } finally {
         (store as any).datasetView = loadedView;
       }
@@ -1416,6 +1479,25 @@ describe("Snapshots.vue", () => {
       expect((wrapper.vm as any).bboxLayer).toBeNull();
       expect((wrapper.vm as any).bboxAnnotation).toBeNull();
       expect((wrapper.vm as any).scalebarAnnotation).toBeNull();
+    });
+
+    it("hides the box without throwing once the dataset is gone", () => {
+      const vm = wrapper.vm as any;
+      vm.showSnapshot(true);
+      vm.bboxAnnotation.coordinates = vi.fn(() => [
+        { x: 10, y: 10 },
+        { x: 50, y: 10 },
+        { x: 50, y: 40 },
+        { x: 10, y: 40 },
+      ]);
+      const dataset = (store as any).dataset;
+      (store as any).dataset = null;
+      try {
+        expect(() => vm.showSnapshot(false)).not.toThrow();
+        expect(vm.bboxLayer).toBeNull();
+      } finally {
+        (store as any).dataset = dataset;
+      }
     });
 
     it("showSnapshot(false) is no-op when no layer", () => {
@@ -2956,6 +3038,274 @@ describe("Snapshots.vue", () => {
       // ...but different denominators, so the drawn pixel length differs.
       expect(a.datasetPixelWidth).toBe(1000);
       expect(b.datasetPixelWidth).toBe(2000);
+    });
+  });
+  // =========================================================================
+  // Download flow lifecycle (one `downloading` flag shared by three flows)
+  // =========================================================================
+  describe("download flow lifecycle", () => {
+    const movieParams = {
+      startTime: 0,
+      endTime: 1,
+      fps: 10,
+      format: MovieFormat.ZIP,
+      shouldAddTimeStamp: false,
+      initialTimeStampTime: 0,
+      timeStampStep: 1,
+      timeStampUnits: "s",
+    };
+
+    beforeEach(() => {
+      wrapper = mountComponent();
+    });
+
+    it("ignores a movie download while another download is running", async () => {
+      const vm = wrapper.vm as any;
+      vm.downloading = true;
+      await vm.handleMovieDownload(movieParams);
+      expect(mockedGetLayersDownloadUrls).not.toHaveBeenCalled();
+      expect(vm.downloading).toBe(true);
+    });
+
+    it("shows a movie download failure in the panel", async () => {
+      const vm = wrapper.vm as any;
+      mockedGetLayersDownloadUrls.mockRejectedValueOnce(new Error("offline"));
+      await vm.handleMovieDownload(movieParams);
+      expect(vm.downloadError).toBe("Movie download failed: offline");
+      expect(vm.downloading).toBe(false);
+    });
+
+    it("clears downloading when the batch progress cannot be created", async () => {
+      const vm = wrapper.vm as any;
+      mockedProgress.create.mockRejectedValueOnce(new Error("no progress"));
+      await vm
+        .downloadImagesForSetOfSnapshots([
+          {
+            name: "s",
+            datasetViewId: "view1",
+            xy: 0,
+            z: 0,
+            time: 0,
+            layers: store.layers,
+            screenshot: { bbox: { left: 0, top: 0, right: 10, bottom: 10 } },
+          },
+        ])
+        .catch(() => {});
+      expect(vm.downloading).toBe(false);
+      expect(vm.downloadError).toContain("no progress");
+    });
+  });
+
+  describe("annotated movie capture restores the time point", () => {
+    let captureMap: Record<string, any>;
+    let getContextSpy: ReturnType<typeof vi.spyOn>;
+    let toDataURLSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      captureMap = {
+        // Rendering "finishes" as soon as capture listens for it.
+        geoOn: vi.fn((_event: string, handler: () => void) => handler()),
+        geoOff: vi.fn(),
+        layers: vi.fn(() => []),
+        screenshot: vi.fn().mockResolvedValue("data:image/png;base64,abc"),
+        gcsToDisplay: vi.fn((pt: any) => pt),
+        rotation: vi.fn(() => 0),
+      };
+      (store as any).maps = [{ map: captureMap }];
+      (store as any).time = 3;
+      getContextSpy = vi
+        .spyOn(HTMLCanvasElement.prototype, "getContext")
+        .mockReturnValue({ drawImage: vi.fn() } as any);
+      toDataURLSpy = vi
+        .spyOn(HTMLCanvasElement.prototype, "toDataURL")
+        .mockReturnValue("data:image/png;base64,frame");
+      class MockImage {
+        onload: (() => void) | null = null;
+        set src(_value: string) {
+          setTimeout(() => this.onload?.(), 0);
+        }
+      }
+      vi.stubGlobal("Image", MockImage);
+      wrapper = mountComponent();
+      (wrapper.vm as any).addScalebar = false;
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      getContextSpy.mockRestore();
+      toDataURLSpy.mockRestore();
+      vi.unstubAllGlobals();
+      (store as any).maps = [];
+      (store as any).time = 0;
+    });
+
+    async function capture() {
+      const result = (wrapper.vm as any)
+        .getUrlsForMovieWithAnnotations([0, 1], "dataset1")
+        .then(
+          (urls: string[]) => ({ urls }),
+          (error: Error) => ({ error }),
+        );
+      await vi.advanceTimersByTimeAsync(20000);
+      return result;
+    }
+
+    it("returns to the original time point after capturing every frame", async () => {
+      const { urls } = await capture();
+      expect(urls).toHaveLength(2);
+      expect(vi.mocked(store.setTime).mock.calls.map((c) => c[0])).toEqual([
+        0, 1, 3,
+      ]);
+    });
+
+    it("returns to the original time point when a frame capture fails", async () => {
+      captureMap.screenshot.mockRejectedValueOnce(new Error("lost context"));
+      const { error } = await capture();
+      expect(error?.message).toBe("lost context");
+      expect(vi.mocked(store.setTime).mock.calls.at(-1)?.[0]).toBe(3);
+    });
+
+    it("stops stepping the time once another view has opened", async () => {
+      const originalView = (store as any).datasetView;
+      // The old map still answers its screenshot after the navigation.
+      captureMap.screenshot.mockImplementationOnce(async () => {
+        (store as any).datasetView = { id: "view2", datasetId: "dataset2" };
+        return "data:image/png;base64,abc";
+      });
+      try {
+        const { error } = await capture();
+        expect(error?.message).toBe("the view changed during the capture");
+        // Frame 0 only: frame 1 and the restore belong to the view it left.
+        expect(vi.mocked(store.setTime).mock.calls.map((c) => c[0])).toEqual([
+          0,
+        ]);
+      } finally {
+        (store as any).datasetView = originalView;
+      }
+    });
+
+    // Same view, new map: leaving and coming back within one render wait.
+    it("stops capturing once the map has been replaced", async () => {
+      // Reactive, so replacing the entry recomputes firstMap as the real
+      // store's maps array does.
+      const maps = reactive([{ map: markRaw(captureMap) }]);
+      (store as any).maps = maps;
+      wrapper = mountComponent();
+      (wrapper.vm as any).addScalebar = false;
+      captureMap.screenshot.mockImplementationOnce(async () => {
+        maps.splice(0, 1, { map: markRaw({ ...captureMap }) });
+        return "data:image/png;base64,abc";
+      });
+      const { error } = await capture();
+      expect(error?.message).toBe("the view changed during the capture");
+      // Frame 0, then the restore: the view is still the one it started in.
+      expect(vi.mocked(store.setTime).mock.calls.map((c) => c[0])).toEqual([
+        0, 3,
+      ]);
+    });
+
+    it("leaves the time alone when another view opened during the capture", async () => {
+      const originalView = (store as any).datasetView;
+      captureMap.screenshot.mockImplementationOnce(async () => {
+        (store as any).datasetView = { id: "view2", datasetId: "dataset2" };
+        throw new Error("map destroyed");
+      });
+      try {
+        const { error } = await capture();
+        expect(error?.message).toBe("map destroyed");
+        // Only the capture's own step: time 3 belongs to the view it left.
+        expect(vi.mocked(store.setTime).mock.calls.map((c) => c[0])).toEqual([
+          0,
+        ]);
+      } finally {
+        (store as any).datasetView = originalView;
+      }
+    });
+  });
+
+  describe("bounding-box overlay when the map goes away", () => {
+    function makeMap() {
+      const layers: any[] = [];
+      const map: Record<string, any> = {
+        displayToGcs: vi.fn((pt: any) => pt),
+        gcsToDisplay: vi.fn((pts: any) =>
+          Array.isArray(pts) ? pts : { x: pts.x, y: pts.y },
+        ),
+        size: vi.fn(() => ({ width: 800, height: 600 })),
+        rotation: vi.fn(() => 0),
+        bounds: vi.fn(() => ({ left: 0, top: 0, right: 1000, bottom: 800 })),
+        createLayer: vi.fn(() => {
+          const layer = {
+            addAnnotation: vi.fn(),
+            draw: vi.fn(),
+            visible: vi.fn(),
+            mode: vi.fn(),
+            modes: { edit: "edit" },
+            currentAnnotation: null,
+            map: vi.fn(() => ({ interactor: vi.fn(() => true) })),
+          };
+          layers.push(layer);
+          return layer;
+        }),
+        deleteLayer: vi.fn(),
+        draw: vi.fn(),
+        geoOn: vi.fn(),
+        geoOff: vi.fn(),
+        ingcs: vi.fn(() => "EPSG:4326"),
+        gcs: vi.fn(() => "EPSG:3857"),
+        layers: vi.fn(() => layers),
+        // GeoJS exit() deletes every layer of the map.
+        exit: () => layers.splice(0),
+      };
+      return markRaw(map);
+    }
+
+    afterEach(() => {
+      (store as any).maps = [];
+    });
+
+    it("drops the overlay refs when the map is destroyed", async () => {
+      const mapA = makeMap();
+      // Reactive, so replacing the entry recomputes firstMap as the real
+      // store's maps array does.
+      const maps = reactive([{ map: mapA }]);
+      (store as any).maps = maps;
+      wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.showSnapshot(true);
+      expect(vm.bboxLayer).toBeTruthy();
+
+      mapA.exit();
+      maps.splice(0, 1);
+      await nextTick();
+
+      expect(vm.bboxLayer).toBeNull();
+      expect(vm.bboxAnnotation).toBeNull();
+      expect(vm.scalebarAnnotation).toBeNull();
+    });
+
+    it("does not act on the old map's layer through a replacement map", async () => {
+      const mapA = makeMap();
+      const mapB = makeMap();
+      const maps = reactive([{ map: mapA }]);
+      (store as any).maps = maps;
+      wrapper = mountComponent({ snapshotVisible: true });
+      const vm = wrapper.vm as any;
+      vm.showSnapshot(true);
+      const oldLayer = vm.bboxLayer;
+      expect(mapA.createLayer).toHaveBeenCalled();
+
+      mapA.exit();
+      maps.splice(0, 1, { map: mapB });
+      await nextTick();
+
+      expect(mapB.deleteLayer).not.toHaveBeenCalled();
+      expect(mapA.deleteLayer).not.toHaveBeenCalled();
+      expect(oldLayer.mode).not.toHaveBeenCalled();
+      // The overlay is rebuilt on the new map.
+      expect(mapB.createLayer).toHaveBeenCalled();
+      expect(vm.bboxLayer).not.toBe(oldLayer);
     });
   });
 });

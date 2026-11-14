@@ -1288,6 +1288,11 @@ export class Filters extends VuexModule {
         // be applied" up while the retained gates were visibly filtering.
         this.setAnalysisGateError(null);
       }
+      if (this.analysisLoading) {
+        // This refresh holds the newest token, so it owns the loading flag: a
+        // request it superseded left the flag set for it to clear.
+        this.setAnalysisLoading(false);
+      }
       return;
     }
     this.setAnalysisGateIds(keptIds);

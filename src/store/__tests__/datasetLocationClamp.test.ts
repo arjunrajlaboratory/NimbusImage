@@ -280,11 +280,13 @@ describe("dataset location clamp", () => {
     await vi.waitFor(() => expect(pending).toHaveLength(2));
     expect(pending.map((p) => p.unrollZ)).toEqual([true, false]);
 
-    // The unrolled response lands after the flag is already off.
+    // The unrolled response lands after the flag is already off. Its refresh
+    // was superseded by a reload of the same dataset, so it resolves only
+    // once that reload has landed.
     pending[0].resolve();
-    await unrolled;
+    await vi.advanceTimersByTimeAsync(0);
     pending[1].resolve();
-    await rolledUp;
+    await Promise.all([unrolled, rolledUp]);
 
     expect(main.z).toBe(5);
   });

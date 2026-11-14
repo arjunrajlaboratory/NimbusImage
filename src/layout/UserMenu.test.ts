@@ -124,6 +124,12 @@ describe("UserMenu", () => {
     expect(wrapper.vm.userMenu).toBe(true);
   });
 
+  it("does not open the login on the page a logout reloaded", async () => {
+    (store as any).hasUserLoggedOut = true;
+    const wrapper = await mountComponent("root");
+    expect(wrapper.vm.userMenu).toBe(false);
+  });
+
   it("userMenu initializes to false on non-root route", async () => {
     const wrapper = await mountComponent("dataset");
     expect(wrapper.vm.userMenu).toBe(false);

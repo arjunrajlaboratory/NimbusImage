@@ -4,6 +4,24 @@
 
     <!-- Main menu -->
     <v-card-text v-if="samState && datasetId">
+      <!-- A failed node otherwise looks exactly like "no prompts" -->
+      <v-alert
+        v-if="failure"
+        type="error"
+        density="compact"
+        class="mb-2 sam-failure"
+      >
+        <div>{{ failureTitle }}: {{ failure.message }}</div>
+        <v-btn
+          v-if="failure.canRetry"
+          variant="text"
+          size="small"
+          class="mt-1"
+          @click="retryLoad"
+        >
+          Retry
+        </v-btn>
+      </v-alert>
       <v-checkbox label="Turbo mode" v-model="turboMode" />
       <div v-if="!turboMode">
         <div>
@@ -123,6 +141,18 @@ const loadingMessages = computed(() => {
   return samState.value?.loadingMessages ?? [];
 });
 
+const failure = computed(() => samState.value?.failure ?? null);
+
+const failureTitle = computed(() =>
+  failure.value?.stage === "load"
+    ? "Could not load the SAM model"
+    : "SAM could not segment the image",
+);
+
+function retryLoad() {
+  samState.value?.nodes.retryLoad();
+}
+
 const simplificationToleranceNode = computed(() => {
   return samState.value?.nodes.input.simplificationTolerance ?? null;
 });
@@ -141,11 +171,10 @@ const promptNode = computed(() => {
   return samState.value?.nodes.input.mainPrompt ?? null;
 });
 
+// Read from the reactive mirror: the node's own output is on a markRaw'd
+// pipeline node, so a computed reading it never updates.
 const prompts = computed({
-  get: () => {
-    const promptsVal = promptNode.value?.output;
-    return promptsVal && promptsVal !== NoOutput ? promptsVal : [];
-  },
+  get: (): TSamPrompt[] => samState.value?.prompts ?? [],
   set: (promptsVal: TSamPrompt[]) => {
     promptNode.value?.setValue(promptsVal.length === 0 ? NoOutput : promptsVal);
   },
@@ -220,14 +249,16 @@ watch(outputCoordinates, () => {
   }
 });
 
+// Both build a new list: the mirror is a snapshot, and the pipeline only
+// sees a change through setValue.
 function undo() {
-  const removedPrompt = prompts.value.pop();
+  const currentPrompts = prompts.value;
+  const removedPrompt = currentPrompts[currentPrompts.length - 1];
   if (!removedPrompt) {
     return;
   }
   promptHistory.value.push(removedPrompt);
-  // Update the prompts in the pipeline (call setValue)
-  prompts.value = prompts.value;
+  prompts.value = currentPrompts.slice(0, -1);
 }
 
 function redo() {
@@ -235,10 +266,7 @@ function redo() {
   if (!newPrompt) {
     return;
   }
-  prompts.value.push(newPrompt);
-  prompts.value = prompts.value;
-  // Update the prompts in the pipeline (call setValue)
-  prompts.value = prompts.value;
+  prompts.value = [...prompts.value, newPrompt];
 }
 
 function resetPrompts() {
@@ -250,13 +278,17 @@ function submit() {
   const coordinates = outputCoordinates.value;
   const dsId = datasetId.value;
   const toolConfiguration = props.toolConfiguration;
-  if (coordinates && dsId) {
-    annotationStore.addAnnotationFromTool({
-      coordinates,
-      datasetId: dsId,
-      toolConfiguration,
-    });
+  // Nothing to submit (no mask yet, or a recompute just cleared it): keep the
+  // prompts. In turbo mode the output watcher calls this on every change,
+  // including the reset to null at the start of each decode.
+  if (!coordinates || !dsId) {
+    return;
   }
+  annotationStore.addAnnotationFromTool({
+    coordinates,
+    datasetId: dsId,
+    toolConfiguration,
+  });
   resetPrompts();
 }
 
@@ -274,6 +306,8 @@ defineExpose({
   errorState,
   samState,
   loadingMessages,
+  failure,
+  retryLoad,
   simplificationToleranceNode,
   simplificationTolerance,
   promptNode,

@@ -112,7 +112,15 @@
             </v-list-item-title>
           </v-list-item>
         </template>
-        <v-dialog :model-value="!!moveFolderToAssetstorResolve">
+        <!-- Dismissing (Escape, outside click) is a cancel: otherwise the
+             dialog closes with the request pending, and the next one leaves
+             the model at true, so it never opens again. -->
+        <v-dialog
+          :model-value="!!moveFolderToAssetstorResolve"
+          @update:model-value="
+            (open: boolean) => !open && moveFolderToAssetstorResolve?.(false)
+          "
+        >
           <v-card>
             <v-card-title>
               Move folder content to a different assetstore?

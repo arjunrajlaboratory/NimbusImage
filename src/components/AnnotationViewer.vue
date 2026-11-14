@@ -55,7 +55,7 @@ import connectionListStore from "@/store/connectionList";
 import timelapseStore from "@/store/timelapse";
 import propertiesStore from "@/store/properties";
 import filterStore from "@/store/filters";
-import lineScanStore from "@/store/lineScan";
+import lineScanStore, { newLineScanViewerId } from "@/store/lineScan";
 
 import geojs from "geojs";
 import { snapCoordinates } from "@/utils/itk";
@@ -272,14 +272,25 @@ const emit = defineEmits<{
 
 // ---- Refs (data fields) ----
 
-const isDragging = ref(false);
+// Alt-drag move: idle (null) → dragging → saving → idle. One object, so a
+// reset can never clear only part of it; resetDrag() is the only way back to
+// idle. The ghost is required (no ghost, no drag) and remembers the layer it
+// was added to, so a layer swap removes it from the right one. shallowRef:
+// the ghost is a heavy GeoJS object that must not be Proxy-wrapped.
+interface IAltDragState {
+  phase: "dragging" | "saving";
+  start: IGeoJSPosition;
+  annotation: IAnnotation;
+  originalCoordinates: IGeoJSPosition[];
+  ghost: IGeoJSAnnotation;
+  ghostLayer: IGeoJSAnnotationLayer;
+}
+const dragState = shallowRef<IAltDragState | null>(null);
+const isDragging = computed(() => dragState.value !== null);
 const rasterActive = ref(false);
-const dragStartPosition = ref<IGeoJSPosition | null>(null);
-const draggedAnnotation = ref<IAnnotation | null>(null);
 // IGeoJSAnnotation instances are heavy native objects whose internals must
 // not be Proxy-wrapped — shallowRef tracks identity (so swap/clear
 // triggers reactivity) but skips deep-walking the object graph.
-const dragGhostAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const pendingAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const selectionAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 const samPromptAnnotations = shallowRef<IGeoJSAnnotation[]>([]);
@@ -300,14 +311,14 @@ const cursorAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
 // Line displayed on the interaction layer for the linescan tool (segment
 // preview and completed scans)
 const lineScanAnnotation = shallowRef<IGeoJSAnnotation | null>(null);
+// This viewer's identity in the shared linescan store (unroll mode mounts
+// several viewers): it marks the lines this viewer published
+const lineScanViewerId = newLineScanViewerId();
 // First click of a segment linescan, waiting for the second click
 const lineScanSegmentStart = ref<IGeoJSPosition | null>(null);
 // Interaction layer option value to restore when the freehand linescan tool
 // releases its continuousCloseProximity override (null = no override active)
 const lineScanSavedCloseProximity = ref<number | boolean | null>(null);
-// Plain coordinate array, fully replaced on each set — shallowRef purely
-// because nothing reads its inner mutations, not because it's heavy.
-const dragOriginalCoordinates = shallowRef<IGeoJSPosition[] | null>(null);
 const lastCursorPosition = ref<{ x: number; y: number }>({ x: 0, y: 0 });
 const handlingPrimaryChange = ref(false);
 const showContextMenu = ref(false);
@@ -456,10 +467,9 @@ const samToolState = computed((): ISamAnnotationToolState | null => {
   return state;
 });
 
-const samPrompts = computed((): TSamPrompt[] => {
-  const prompts = samToolState.value?.nodes.input.mainPrompt.output;
-  return prompts === undefined || prompts === NoOutput ? [] : prompts;
-});
+const samPrompts = computed(
+  (): TSamPrompt[] => samToolState.value?.prompts ?? [],
+);
 
 const objectSegmentationToolState = computed(
   (): IObjectSegmentationToolState | null => {
@@ -3158,8 +3168,16 @@ async function handleAnnotationConnections(selectAnnotation: IGeoJSAnnotation) {
   props.interactionLayer.removeAnnotation(selectAnnotation);
 }
 
+// True while a combine request is in flight: clicks during it are dropped
+// rather than starting a second combine on the same tool state.
+let combineInFlight = false;
+
 async function handleAnnotationCombine(selectAnnotation: IGeoJSAnnotation) {
   if (!selectAnnotation || !selectedToolConfiguration.value) {
+    return;
+  }
+  if (combineInFlight) {
+    props.interactionLayer.removeAnnotation(selectAnnotation);
     return;
   }
 
@@ -3187,13 +3205,13 @@ async function handleAnnotationCombine(selectAnnotation: IGeoJSAnnotation) {
     return;
   }
 
+  const toolState = selectedToolState.value;
   if (
     clickedAnnotation &&
-    selectedToolState.value?.type === CombineToolStateSymbol &&
-    (selectedToolState.value as any).selectedAnnotationId
+    toolState?.type === CombineToolStateSymbol &&
+    toolState.selectedAnnotationId
   ) {
-    const firstAnnotationId = (selectedToolState.value as any)
-      .selectedAnnotationId;
+    const firstAnnotationId = toolState.selectedAnnotationId;
     const secondAnnotationId = clickedAnnotation.id;
 
     if (firstAnnotationId !== secondAnnotationId) {
@@ -3201,7 +3219,7 @@ async function handleAnnotationCombine(selectAnnotation: IGeoJSAnnotation) {
       // between the two clicks; combine still needs its geometry.
       if (!annotationStore.getHydratedAnnotation(firstAnnotationId)) {
         notifyGeometryNotLoaded();
-        (selectedToolState.value as any).selectedAnnotationId = null;
+        toolState.selectedAnnotationId = null;
         props.interactionLayer.removeAnnotation(selectAnnotation);
         return;
       }
@@ -3209,24 +3227,28 @@ async function handleAnnotationCombine(selectAnnotation: IGeoJSAnnotation) {
         selectedToolConfiguration.value.values?.tolerance ?? "2",
       );
 
-      const success = await annotationStore.combineAnnotations({
-        firstAnnotationId,
-        secondAnnotationId,
-        tolerance: isNaN(tolerance) ? 2 : tolerance,
-      });
-
-      if (!success) {
-        logWarning("Failed to combine annotations");
+      combineInFlight = true;
+      try {
+        const success = await annotationStore.combineAnnotations({
+          firstAnnotationId,
+          secondAnnotationId,
+          tolerance: isNaN(tolerance) ? 2 : tolerance,
+        });
+        if (!success) {
+          logWarning("Failed to combine annotations");
+        }
+      } finally {
+        combineInFlight = false;
       }
     }
 
-    (selectedToolState.value as any).selectedAnnotationId = null;
-  } else if (
-    clickedAnnotation &&
-    selectedToolState.value?.type === CombineToolStateSymbol
-  ) {
-    (selectedToolState.value as any).selectedAnnotationId =
-      clickedAnnotation.id;
+    // The tool may have been switched or re-selected during the combine:
+    // only clear the selection of the tool that started it
+    if (selectedToolState.value === toolState) {
+      toolState.selectedAnnotationId = null;
+    }
+  } else if (clickedAnnotation && toolState?.type === CombineToolStateSymbol) {
+    toolState.selectedAnnotationId = clickedAnnotation.id;
   }
 
   props.interactionLayer.removeAnnotation(selectAnnotation);
@@ -3283,11 +3305,12 @@ async function addAnnotationFromSnapping(annotation: IGeoJSAnnotation) {
   const mapentry = props.maps[0];
   const coordinates = annotation.coordinates();
   props.interactionLayer.removeAnnotation(annotation);
-  if (!selectedToolConfiguration.value) {
+  // The tool the user drew with: the selection can change during the awaits
+  const toolConfiguration = selectedToolConfiguration.value;
+  if (!toolConfiguration) {
     return;
   }
-  const location =
-    selectedToolConfiguration.value.values.annotation.coordinateAssignments;
+  const location = toolConfiguration.values.annotation.coordinateAssignments;
   if (!location) {
     logError("Invalid snapping tool, annotation was not configured properly");
     return;
@@ -3310,17 +3333,14 @@ async function addAnnotationFromSnapping(annotation: IGeoJSAnnotation) {
   const snappedCoordinates = await snapCoordinates(
     coordinates,
     array,
-    selectedToolConfiguration.value,
+    toolConfiguration,
     mapentry.map,
   );
   if (!snappedCoordinates || !snappedCoordinates.length) {
     logError("Failed to compute new coordinates for the snapping tool");
     return;
   }
-  await createAnnotationFromTool(
-    snappedCoordinates,
-    selectedToolConfiguration.value,
-  );
+  await createAnnotationFromTool(snappedCoordinates, toolConfiguration);
 }
 
 // SAM-prompt example capture (samClick / samBox selection modes): called
@@ -3431,6 +3451,7 @@ function updateLineScanLine(
   lineScanStore.setLine({
     points: coordinates.map(({ x, y }) => ({ x, y })),
     isComplete,
+    ownerViewerId: lineScanViewerId,
   });
 }
 
@@ -3463,6 +3484,7 @@ const handleLineScanMouseMove = throttle(
       lineScanStore.setLine({
         points: coordinates.map(({ x, y }) => ({ x, y })),
         isComplete: false,
+        ownerViewerId: lineScanViewerId,
       });
     }
   },
@@ -3499,7 +3521,11 @@ function handleLineScanAnnotationDone(annotation: IGeoJSAnnotation) {
       // completed scan so its graph doesn't linger. Keep a single-point line
       // (not null) so the points watcher doesn't reset the segment start we
       // just set.
-      lineScanStore.setLine({ points: [coordinates[0]], isComplete: false });
+      lineScanStore.setLine({
+        points: [coordinates[0]],
+        isComplete: false,
+        ownerViewerId: lineScanViewerId,
+      });
     } else {
       updateLineScanLine([lineScanSegmentStart.value, coordinates[0]], true);
       lineScanSegmentStart.value = null;
@@ -4170,10 +4196,10 @@ function watchTool() {
   refreshAnnotationMode();
 }
 
+// Both directions: setting the empty ROI filter arms polygon drawing, and
+// clearing it (drawn, or dismissed) must leave that mode for the tool's.
 function watchFilter() {
-  if (roiFilter.value) {
-    refreshAnnotationMode();
-  }
+  refreshAnnotationMode();
 }
 
 function pendingAnnotationChanged() {
@@ -4399,11 +4425,9 @@ function onMousePathChanged(
   newState: IMouseState | null,
   oldState: IMouseState | null,
 ) {
-  if (
-    newState === null &&
-    oldState !== null &&
-    !oldState.isMouseMovePreviewState
-  ) {
+  // Only an explicit commit is consumed. A capture that ended any other way
+  // (cancelled, or its map entry replaced) only clears the preview.
+  if (newState === null && oldState?.outcome === "commit") {
     consumeMouseState(oldState);
   } else {
     previewMouseState(newState);
@@ -4527,9 +4551,10 @@ function bindInteractionEvents(
   layer.geoOn(geojs.event.annotation.add, handleInteractionAnnotationChange);
   layer.geoOn(geojs.event.annotation.update, handleInteractionAnnotationChange);
   layer.geoOn(geojs.event.annotation.state, handleInteractionAnnotationChange);
-  if (selectedToolConfiguration.value?.type === "tagging") {
-    layer.geoOn(geojs.event.mouseclick, handleTaggingClick);
-  }
+  // Tagging clicks need no mouseclick handler of their own: the tool arms
+  // point (or polygon) mode, and the finished interaction annotation reaches
+  // handleAnnotationTagging through the state event above. A separate click
+  // handler tagged every click a second time (and every polygon vertex).
   refreshAnnotationMode();
 }
 
@@ -4542,10 +4567,8 @@ function unbindInteractionEvents(layer: IGeoJSAnnotationLayer | undefined) {
     handleInteractionAnnotationChange,
   );
   layer.geoOff(geojs.event.annotation.state, handleInteractionAnnotationChange);
-  // handleTaggingClick and handleLineScanMouseMove are conditionally bound
-  // based on tool type; geoOff is a no-op when nothing matches, so
-  // always-detach is safe.
-  layer.geoOff(geojs.event.mouseclick, handleTaggingClick);
+  // handleLineScanMouseMove is conditionally bound based on tool type;
+  // geoOff is a no-op when nothing matches, so always-detach is safe.
   layer.geoOff(geojs.event.mousemove, handleLineScanMouseMove);
   layer.geoOff(geojs.event.actionmove, handleLineScanMouseMove);
 }
@@ -4665,32 +4688,6 @@ async function handleAnnotationTagging(annotation: IGeoJSAnnotation) {
   props.interactionLayer.removeAnnotation(annotation);
 }
 
-function handleTaggingClick(evt: any) {
-  if (
-    !selectedToolConfiguration.value ||
-    selectedToolConfiguration.value.type !== "tagging" ||
-    !evt?.geo
-  ) {
-    return;
-  }
-  const selectedAnns = getSelectedAnnotationsFromAnnotation({
-    type: () => AnnotationShape.Point,
-    coordinates: () => [evt.geo],
-  } as IGeoJSAnnotation);
-
-  if (selectedAnns.length === 1) {
-    const selectedAnnotation = selectedAnns[0];
-    const action = selectedToolConfiguration.value.values.action.value;
-    const tags = selectedToolConfiguration.value.values.tags || [];
-    const removeExisting =
-      selectedToolConfiguration.value?.values?.removeExisting || false;
-
-    updateAnnotationTags([selectedAnnotation.id], action, tags, removeExisting);
-
-    annotationStore.setHoveredAnnotationId(selectedAnnotation.id);
-  }
-}
-
 async function updateAnnotationTags(
   annotationIds: string[],
   action: string,
@@ -4806,7 +4803,25 @@ function handleColorSubmit({
   });
 }
 
+// Back to idle from any phase, removing the ghost from the layer it was added
+// to. Called on drag end, layer swap, tool change and unmount.
+function resetDrag() {
+  const drag = dragState.value;
+  if (!drag) {
+    return;
+  }
+  dragState.value = null;
+  drag.ghostLayer.removeAnnotation(drag.ghost);
+}
+
 function handleDragStart(evt: IGeoJSMouseState) {
+  // No re-entry while the previous move is being saved
+  if (dragState.value?.phase === "saving") {
+    return;
+  }
+  // A drag still "dragging" at a mousedown lost its mouseup (a backstop for
+  // handleWindowMouseUp/handleWindowBlur): drop it rather than orphan its ghost
+  resetDrag();
   if (!evt?.geo || !evt.modifiers?.alt) {
     return;
   }
@@ -4831,11 +4846,6 @@ function handleDragStart(evt: IGeoJSMouseState) {
       unitsPerPixel,
     );
     if (shouldSelect) {
-      isDragging.value = true;
-      dragStartPosition.value = evt.geo;
-      draggedAnnotation.value = annotation;
-      dragOriginalCoordinates.value = [...annotation.coordinates];
-
       const style = {
         fillOpacity: 0.25,
         strokeOpacity: 0.5,
@@ -4849,73 +4859,135 @@ function handleDragStart(evt: IGeoJSMouseState) {
         [...annotation.coordinates],
         { style },
       );
-      dragGhostAnnotation.value = ghost ? markRaw(ghost) : null;
-
-      if (dragGhostAnnotation.value) {
-        dragGhostAnnotation.value.options("specialAnnotation", true);
-        props.interactionLayer.addAnnotation(dragGhostAnnotation.value);
+      // Without a ghost there is nothing to move: stay idle
+      if (!ghost) {
+        return;
       }
+      ghost.options("specialAnnotation", true);
+      props.interactionLayer.addAnnotation(ghost);
+      dragState.value = {
+        phase: "dragging",
+        start: evt.geo,
+        annotation,
+        originalCoordinates: [...annotation.coordinates],
+        ghost: markRaw(ghost),
+        ghostLayer: props.interactionLayer,
+      };
       break;
     }
   }
 }
 
 function handleDragMove(evt: IGeoJSMouseState) {
-  if (
-    !isDragging.value ||
-    !dragStartPosition.value ||
-    !draggedAnnotation.value ||
-    !dragGhostAnnotation.value ||
-    !evt?.geo
-  ) {
+  const drag = dragState.value;
+  if (drag?.phase !== "dragging" || !evt?.geo) {
     return;
   }
 
-  const dx = evt.geo.x - dragStartPosition.value.x;
-  const dy = evt.geo.y - dragStartPosition.value.y;
+  const dx = evt.geo.x - drag.start.x;
+  const dy = evt.geo.y - drag.start.y;
 
-  const newCoordinates = dragOriginalCoordinates.value!.map((coord) => {
+  const newCoordinates = drag.originalCoordinates.map((coord) => {
     return {
       x: coord.x + dx,
       y: -(coord.y + dy),
     };
   });
 
-  dragGhostAnnotation.value._coordinates(newCoordinates);
-  dragGhostAnnotation.value.draw();
+  drag.ghost._coordinates(newCoordinates);
+  drag.ghost.draw();
 }
 
 async function handleDragEnd(evt: IGeoJSMouseState) {
-  if (
-    !isDragging.value ||
-    !dragStartPosition.value ||
-    !draggedAnnotation.value ||
-    !dragGhostAnnotation.value ||
-    !evt?.geo
-  ) {
+  const drag = dragState.value;
+  if (drag?.phase !== "dragging") {
+    return;
+  }
+  if (!evt?.geo) {
+    resetDrag();
     return;
   }
 
-  const dx = evt.geo.x - dragStartPosition.value.x;
-  const dy = evt.geo.y - dragStartPosition.value.y;
+  const dx = evt.geo.x - drag.start.x;
+  const dy = evt.geo.y - drag.start.y;
+  const saving: IAltDragState = { ...drag, phase: "saving" };
+  dragState.value = saving;
 
-  await annotationStore.updateAnnotationsPerId({
-    annotationIds: [draggedAnnotation.value.id],
-    editFunction: (ann: IAnnotation) => {
-      ann.coordinates = dragOriginalCoordinates.value!.map((coord) => ({
-        x: coord.x + dx,
-        y: coord.y + dy,
-        z: coord.z,
-      }));
-    },
-  });
+  try {
+    await annotationStore.updateAnnotationsPerId({
+      annotationIds: [drag.annotation.id],
+      editFunction: (ann: IAnnotation) => {
+        ann.coordinates = drag.originalCoordinates.map((coord) => ({
+          x: coord.x + dx,
+          y: coord.y + dy,
+          z: coord.z,
+        }));
+      },
+    });
+  } catch (error) {
+    logError("Failed to move annotation", error);
+  } finally {
+    // Unless something else (layer swap, tool change, unmount) already reset
+    if (dragState.value === saving) {
+      resetDrag();
+    }
+  }
+}
 
-  props.interactionLayer.removeAnnotation(dragGhostAnnotation.value);
-  isDragging.value = false;
-  dragStartPosition.value = null;
-  draggedAnnotation.value = null;
-  dragGhostAnnotation.value = null;
-  dragOriginalCoordinates.value = null;
+// A release the map never sees (outside the map or the window) would leave the
+// drag and its ghost until the next mousedown. Registered on the window in the
+// capture phase, so it hears every release; the check waits until the event
+// has finished dispatching, because a release over the map reaches
+// handleDragEnd after this listener and must still commit. A drag still
+// "dragging" by then lost its release: cancel it (there is no map coordinate
+// to save). A drag already saving is left to its save.
+function handleWindowMouseUp() {
+  const drag = dragState.value;
+  if (drag?.phase !== "dragging") {
+    return;
+  }
+  setTimeout(() => {
+    if (dragState.value === drag) {
+      resetDrag();
+    }
+  }, 0);
+}
+
+// Losing focus mid-drag (alt-tab, a dialog) never delivers the mouseup
+function handleWindowBlur() {
+  if (dragState.value?.phase === "dragging") {
+    resetDrag();
+  }
+}
+
+// Escape leaves a pending ROI selection (an empty region filter waiting for
+// its polygon); the roiFilter watcher then restores the tool's mode. Not an
+// Escape something else handled: one typed in a field, or one closing a
+// menu or dialog (Vuetify overlays do not preventDefault, so check where the
+// key went). A menu opened by a click leaves the focus on its activator,
+// outside the overlay, so an open menu or dialog also counts (not every
+// overlay: a tooltip is one too, and Escape does not close it).
+function handleWindowKeyDown(evt: KeyboardEvent) {
+  if (evt.key !== "Escape" || !roiFilter.value || evt.defaultPrevented) {
+    return;
+  }
+  const target = evt.target;
+  if (
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
+      target.closest(".v-overlay__content"))
+  ) {
+    return;
+  }
+  if (
+    document.querySelector(
+      ".v-menu.v-overlay--active, .v-dialog.v-overlay--active",
+    )
+  ) {
+    return;
+  }
+  filterStore.cancelROISelection();
 }
 
 // ---- Watchers ----
@@ -5058,7 +5130,17 @@ watch([() => props.unrollH, () => props.unrollW], () => {
 });
 
 // Tool configuration
-watch(selectedToolConfiguration, () => {
+watch(selectedToolConfiguration, (newConfiguration, oldConfiguration) => {
+  // Only a different tool ends an alt-drag: saving the selected tool's
+  // settings replaces its configuration object without changing the tool
+  if (newConfiguration?.id !== oldConfiguration?.id) {
+    resetDrag();
+  }
+  // Picking a tool leaves a pending ROI selection. Without this,
+  // setNewAnnotationMode would deselect the tool again to keep drawing the ROI
+  if (newConfiguration && roiFilter.value) {
+    filterStore.cancelROISelection();
+  }
   watchTool();
 });
 
@@ -5263,7 +5345,7 @@ watch(
 
 // Linescan tool selection: publish the tool state the panel needs (channel
 // layer, line type) and drop any ongoing scan when switching to another tool
-watch(selectedToolConfiguration, (toolConfiguration) => {
+watch(selectedToolConfiguration, (toolConfiguration, previousConfiguration) => {
   if (toolConfiguration?.type === "linescan") {
     lineScanStore.setToolLayerId(toolConfiguration.values.layer ?? null);
     lineScanStore.setToolLineType(
@@ -5271,9 +5353,17 @@ watch(selectedToolConfiguration, (toolConfiguration) => {
         ? "segment"
         : "freehand",
     );
-    // A segment started with the previously selected tool can't be finished
-    lineScanSegmentStart.value = null;
-    lineScanStore.setSegmentStartPlaced(false);
+    if (toolConfiguration.id !== previousConfiguration?.id) {
+      // Switching from another linescan tool: its scan (points, graph and
+      // displayed line) belongs to that tool's layer and line type
+      lineScanStore.clearLine();
+      clearLineScanState();
+    } else {
+      // Same tool, configuration replaced: a half-placed segment can't be
+      // finished, but a completed scan stays
+      lineScanSegmentStart.value = null;
+      lineScanStore.setSegmentStartPlaced(false);
+    }
   } else {
     lineScanStore.setToolLineType(null);
     lineScanStore.clearLine();
@@ -5395,6 +5485,7 @@ watch(
     // The retained features belong to the old layer instance; drop them so a
     // rebuilt layer (e.g. dataset reset) never re-adds dead feature objects.
     clearRetainedFeatureCache();
+    resetDrag();
     unbindAnnotationEvents(oldLayer);
     bindAnnotationEvents(newLayer);
     addHoverCallback();
@@ -5410,6 +5501,7 @@ watch([() => props.annotationLayer, valueOnHover], () => {
 watch(
   () => props.interactionLayer,
   (newLayer, oldLayer) => {
+    resetDrag();
     unbindInteractionEvents(oldLayer);
     bindInteractionEvents(newLayer);
   },
@@ -5427,6 +5519,10 @@ watch(
 // ---- Lifecycle ----
 
 onMounted(() => {
+  lineScanStore.viewerMounted();
+  window.addEventListener("mouseup", handleWindowMouseUp, true);
+  window.addEventListener("blur", handleWindowBlur);
+  window.addEventListener("keydown", handleWindowKeyDown);
   bindAnnotationEvents();
   bindTimelapseEvents();
   bindInteractionEvents();
@@ -5439,6 +5535,10 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("mouseup", handleWindowMouseUp, true);
+  window.removeEventListener("blur", handleWindowBlur);
+  window.removeEventListener("keydown", handleWindowKeyDown);
+  resetDrag();
   unbindAnnotationEvents(props.annotationLayer);
   unbindInteractionEvents(props.interactionLayer);
   unbindTimelapseEvents(props.timelapseLayer);
@@ -5456,8 +5556,8 @@ onBeforeUnmount(() => {
   drawTooltips.cancel();
   handleValueOnMouseMoveDebounce.cancel();
   handleLineScanMouseMove.cancel();
-  lineScanStore.setToolLineType(null);
-  lineScanStore.clearLine();
+  // Other viewers may still be showing the linescan tool and this line
+  lineScanStore.viewerUnmounted(lineScanViewerId);
   if (spatialIndexRequestId !== null) {
     cancelIdleCallback(spatialIndexRequestId);
   }
@@ -5479,11 +5579,9 @@ defineExpose({
   filterStore,
   // Refs
   isDragging,
+  dragState,
+  resetDrag,
   rasterActive,
-  dragStartPosition,
-  draggedAnnotation,
-  dragGhostAnnotation,
-  dragOriginalCoordinates,
   pendingAnnotation,
   selectionAnnotation,
   samPromptAnnotations,
@@ -5653,7 +5751,6 @@ defineExpose({
   handleValueOnMouseMoveDebounce,
   addHoverCallback,
   handleAnnotationTagging,
-  handleTaggingClick,
   updateAnnotationTags,
   handleAnnotationRightClick,
   handleContextMenuCancel,

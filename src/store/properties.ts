@@ -6,7 +6,7 @@ import {
   VuexModule,
 } from "vuex-module-decorators";
 import store from "./root";
-import { markRaw } from "vue";
+import { markRaw, toRaw } from "vue";
 
 type TimeoutHandle = ReturnType<typeof setTimeout>;
 
@@ -28,9 +28,10 @@ import {
   MessageType,
   NotificationType,
   SPATIAL_PROPERTY_ID,
+  IComputeJob,
 } from "./model";
 
-import main, { adoptServerConfirmedPropertyId } from "./index";
+import main, { adoptServerConfirmedPropertyId, shownDatasetId } from "./index";
 
 import { canComputeAnnotationProperty } from "@/utils/annotation";
 import {
@@ -42,6 +43,7 @@ import {
 } from "@/utils/propertyValues";
 import { createSequenceGuard } from "@/utils/sequenceGuard";
 import annotations from "./annotation";
+import { sessionEndedSignal } from "./batchRuns";
 import jobs, {
   createProgressEventCallback,
   createErrorEventCallback,
@@ -174,8 +176,36 @@ function addComputeError(
   }
 }
 
+// The refusal recorded when a run is asked for while the property already
+// runs (no toast: nothing failed, and the running run reports its own end).
+const ALREADY_COMPUTING_TITLE = "Property is already computing";
+
+function addAlreadyComputingError(
+  errorInfo: IErrorInfoList,
+  property: IAnnotationProperty,
+) {
+  addComputeError(
+    errorInfo,
+    ALREADY_COMPUTING_TITLE,
+    `${property.name} is already computing; wait for that run to finish.`,
+    false,
+  );
+}
+
+// A refusal belongs to the run it was refused for: once that run ends, it no
+// longer describes anything, so it is dropped rather than left on the row.
+function dropAlreadyComputingErrors(errorInfo: IErrorInfoList) {
+  errorInfo.errors = errorInfo.errors.filter(
+    ({ title }) => title !== ALREADY_COMPUTING_TITLE,
+  );
+}
+
 interface IPropertyRun {
   property: IAnnotationProperty;
+  // The dataset the run computes on
+  datasetId: string;
+  // True once a logout has ended the session the run started in
+  sessionEnded: () => boolean;
   status: IPropertyStatus;
   errorInfo: IErrorInfoList;
   progressId: string;
@@ -186,6 +216,16 @@ function finishPropertyRun(
   success: boolean,
   error?: { title: string; value: unknown; notify?: boolean },
 ) {
+  // Logout settles the tracked job as not successful (retireTrackedJobs),
+  // but the job did not fail: it is still running server-side. Release the
+  // run without reporting a failure to whoever logs in next.
+  if (run.sessionEnded()) {
+    progress.complete(run.progressId);
+    run.status.running = false;
+    run.status.progressInfo = {};
+    return;
+  }
+  dropAlreadyComputingErrors(run.errorInfo);
   if (error) {
     addComputeError(
       run.errorInfo,
@@ -202,9 +242,18 @@ function finishPropertyRun(
   }
   progress.complete(run.progressId);
   run.status.running = false;
-  run.status.previousRun = success && !error;
   run.status.progressInfo = {};
-  run.status.errorInfo = run.errorInfo;
+  // The status is kept across navigation while the run is in flight (see
+  // resetPropertyStateImpl), so the dataset on screen may be another one of
+  // the same collection. The lock is released there, but the outcome is not
+  // shown: it would read as that dataset's own failed or finished run.
+  if (shownDatasetId() === run.datasetId) {
+    run.status.previousRun = success && !error;
+    run.status.errorInfo = run.errorInfo;
+  } else {
+    run.status.previousRun = null;
+    run.status.errorInfo = { errors: [] };
+  }
 }
 
 async function finishPropertyRuns(
@@ -248,6 +297,15 @@ async function finishPropertyRuns(
       finishPropertyRun(run, success);
     }
   }
+}
+
+// Track a submitted job, unless the session it was submitted in has ended.
+// The submit request can still be unanswered when logout retires the tracked
+// jobs; tracked after that, the job would be the previous account's, held
+// "running" for the next account on a shared dataset (which cannot read it).
+// Resolves false, as a retired job does: the waiter releases its run.
+function trackJob(job: IComputeJob, sessionEnded: () => boolean) {
+  return sessionEnded() ? Promise.resolve(false) : jobs.addJob(job);
 }
 
 @Module({ dynamic: true, store, name: "properties" })
@@ -400,13 +458,31 @@ export class Properties extends VuexModule {
     }
   }
 
+  // The previous session's runs. Logout settles their tracked jobs, which
+  // releases most of them; one whose job was not tracked yet would stay
+  // "running" and block the property for good.
+  @Mutation
+  clearPropertyRunStatuses() {
+    this.propertyStatuses = {};
+  }
+
   @Mutation
   protected resetPropertyStateImpl() {
     propertyValuesGeneration++;
     propertyDatasetGeneration++;
     visiblePropertyValuesGuard.next();
     this.propertyValues = markRaw({});
-    this.propertyStatuses = {};
+    // A run still in flight keeps its status: it is the only "already
+    // computing" guard for UI runs, and a batch is meant to survive
+    // navigation. The run holds this same object and keeps writing to it.
+    // Settled entries belong to the previous dataset and are dropped.
+    const inFlightStatuses: { [propertyId: string]: IPropertyStatus } = {};
+    for (const [propertyId, status] of Object.entries(this.propertyStatuses)) {
+      if (status.running) {
+        inFlightStatuses[propertyId] = toRaw(status);
+      }
+    }
+    this.propertyStatuses = inFlightStatuses;
     this.workerPreviews = {};
     // Property paths reference the previous dataset's property IDs and are
     // not meaningful in the new dataset. updateDisplayedFromComputedProperties
@@ -853,10 +929,24 @@ export class Properties extends VuexModule {
     const propertyId = property.id;
     const datasetId = main.dataset.id;
     const scales = main.scales;
+    const sessionEnded = sessionEndedSignal();
 
-    const status =
-      this.propertyStatuses[propertyId] ??
-      (this.propertyStatuses[propertyId] = defaultStatus());
+    // One run of a property at a time: `running` is a flag, so a second run
+    // would let the first to finish clear it while the other still runs, and
+    // would replace the first's progress and errors.
+    if (this.propertyStatuses[propertyId]?.running) {
+      if (errorInfo) {
+        addAlreadyComputingError(errorInfo, property);
+      }
+      return null;
+    }
+
+    // Read back through the store: the assignment expression itself yields
+    // the raw object, and writes to that never reach the UI.
+    if (!this.propertyStatuses[propertyId]) {
+      this.propertyStatuses[propertyId] = defaultStatus();
+    }
+    const status = this.propertyStatuses[propertyId];
     status.running = true;
     status.previousRun = null;
     status.progressInfo = {};
@@ -882,6 +972,8 @@ export class Properties extends VuexModule {
     }
     const run: IPropertyRun = {
       property,
+      datasetId,
+      sessionEnded,
       status,
       errorInfo: activeErrorInfo,
       progressId,
@@ -931,7 +1023,7 @@ export class Properties extends VuexModule {
       errorCallback: createErrorEventCallback(activeErrorInfo),
     };
 
-    const completion = jobs.addJob(computeJob);
+    const completion = trackJob(computeJob, sessionEnded);
     void finishPropertyRuns([{ run, completion }], async () => {
       await this.fetchPropertyValues();
       await (await import("./filters")).default.updateHistograms();
@@ -948,6 +1040,7 @@ export class Properties extends VuexModule {
       return [];
     }
     const datasetId = main.dataset.id;
+    const sessionEnded = sessionEndedSignal();
     const eligibleProperties = requestedProperties
       .filter((property) => !this.propertyStatuses[property.id]?.running)
       .slice(0, MAX_PROPERTY_COMPUTE_BATCH);
@@ -958,9 +1051,11 @@ export class Properties extends VuexModule {
     const runs: IPropertyRun[] = [];
     for (const property of eligibleProperties) {
       const errorInfo: IErrorInfoList = { errors: [] };
-      const status =
-        this.propertyStatuses[property.id] ??
-        (this.propertyStatuses[property.id] = defaultStatus());
+      // Read back through the store, as in computeProperty
+      if (!this.propertyStatuses[property.id]) {
+        this.propertyStatuses[property.id] = defaultStatus();
+      }
+      const status = this.propertyStatuses[property.id];
       status.running = true;
       status.previousRun = null;
       status.progressInfo = {};
@@ -970,7 +1065,14 @@ export class Properties extends VuexModule {
           type: ProgressType.PROPERTY_COMPUTE,
           title: `Computing ${property.name}`,
         });
-        runs.push({ property, status, errorInfo, progressId });
+        runs.push({
+          property,
+          datasetId,
+          sessionEnded,
+          status,
+          errorInfo,
+          progressId,
+        });
       } catch (error) {
         addComputeError(errorInfo, "Property progress tracking failed", error);
         status.running = false;
@@ -1035,7 +1137,11 @@ export class Properties extends VuexModule {
         },
         errorCallback: createErrorEventCallback(run.errorInfo),
       };
-      tracked.push({ run, job, completion: jobs.addJob(job) });
+      tracked.push({
+        run,
+        job,
+        completion: trackJob(job, sessionEnded),
+      });
     }
 
     void finishPropertyRuns(tracked, async () => {
@@ -1068,6 +1174,7 @@ export class Properties extends VuexModule {
     if (!main.isLoggedIn) {
       return null;
     }
+    const sessionEnded = sessionEndedSignal();
     const response = await this.propertiesAPI.computeProperty(
       property.id,
       datasetId,
@@ -1087,7 +1194,7 @@ export class Properties extends VuexModule {
     };
     // Capture the completion promise immediately (a fast job can be removed
     // from the job map before we could look it up later).
-    const completionPromise = jobs.addJob(computeJob);
+    const completionPromise = trackJob(computeJob, sessionEnded);
     return { job: computeJob, completionPromise };
   }
 
@@ -1117,11 +1224,27 @@ export class Properties extends VuexModule {
       failed: number;
       cancelled: number;
     }) => void;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const propertyId = property.id;
     const scales = main.scales;
     const submittedJobIds: string[] = [];
     let isCancelled = false;
+    const sessionEnded = sessionEndedSignal();
+
+    // Refuse while the property runs anywhere (a single run or another
+    // batch), as computeProperty does; returns false without calling any
+    // callback. Checked and claimed before the first await. The refusal is
+    // recorded on the property's status, where its row shows errors, until
+    // the running run ends.
+    const runningStatus = this.propertyStatuses[propertyId];
+    if (runningStatus?.running) {
+      if (!runningStatus.errorInfo) {
+        runningStatus.errorInfo = { errors: [] };
+      }
+      // Read back through the store, as in computeProperty
+      addAlreadyComputingError(runningStatus.errorInfo, property);
+      return false;
+    }
 
     // Create the cancel function and notify the caller immediately
     const cancel = () => {
@@ -1132,164 +1255,176 @@ export class Properties extends VuexModule {
     };
     onCancel(cancel);
 
-    // Get all dataset views for this configuration
-    const datasetViews: IDatasetView[] = await main.api.findDatasetViews({
-      configurationId,
-    });
-    const datasetIds = [...new Set(datasetViews.map((v) => v.datasetId))];
-    const total = datasetIds.length;
-
-    if (total === 0) {
-      onComplete({ succeeded: 0, failed: 0, cancelled: 0 });
-      return;
-    }
-
-    // Get dataset names for progress display
-    const datasetInfo = await main.api.batchResources({
-      folder: datasetIds,
-    });
-    const datasetNames: { [id: string]: string } = {};
-    for (const id of datasetIds) {
-      datasetNames[id] = datasetInfo.folder?.[id]?.name || "Unknown dataset";
-    }
-
-    // Create overall batch progress entry
-    const batchProgressId = await progress.create({
-      type: ProgressType.BATCH_PROPERTY_COMPUTE,
-      title: `Batch: ${property.name}`,
-    });
-    progress.update({
-      id: batchProgressId,
-      progress: 0,
-      total,
-    });
-
-    // Set property status to running
+    // Set property status to running before anything is awaited, and release
+    // it in the finally: a rejection outside the per-dataset try (listing
+    // the datasets, a progress entry) used to leave it running for good.
     if (!this.propertyStatuses[propertyId]) {
       this.propertyStatuses[propertyId] = defaultStatus();
     }
     const status = this.propertyStatuses[propertyId];
     status.running = true;
     status.previousRun = null;
+    status.errorInfo = { errors: [] };
+    // What the run reports when it ends; stays false if anything throws.
+    let previousRun: boolean | null = false;
 
-    let completed = 0;
-    let failed = 0;
-    let cancelled = 0;
+    try {
+      // Get all dataset views for this configuration
+      const datasetViews: IDatasetView[] = await main.api.findDatasetViews({
+        configurationId,
+      });
+      const datasetIds = [...new Set(datasetViews.map((v) => v.datasetId))];
+      const total = datasetIds.length;
 
-    for (const datasetId of datasetIds) {
-      if (isCancelled) {
-        cancelled++;
+      if (total === 0) {
+        previousRun = null;
+        onComplete({ succeeded: 0, failed: 0, cancelled: 0 });
+        return true;
+      }
+
+      // Get dataset names for progress display
+      const datasetInfo = await main.api.batchResources({
+        folder: datasetIds,
+      });
+      const datasetNames: { [id: string]: string } = {};
+      for (const id of datasetIds) {
+        datasetNames[id] = datasetInfo.folder?.[id]?.name || "Unknown dataset";
+      }
+
+      // Create overall batch progress entry
+      const batchProgressId = await progress.create({
+        type: ProgressType.BATCH_PROPERTY_COMPUTE,
+        title: `Batch: ${property.name}`,
+      });
+      progress.update({
+        id: batchProgressId,
+        progress: 0,
+        total,
+      });
+
+      let completed = 0;
+      let failed = 0;
+      let cancelled = 0;
+
+      for (const datasetId of datasetIds) {
+        if (isCancelled || sessionEnded()) {
+          cancelled++;
+          onBatchProgress({
+            total,
+            completed,
+            failed,
+            cancelled,
+            currentDatasetName: datasetNames[datasetId],
+          });
+          continue;
+        }
+
+        const datasetName = datasetNames[datasetId];
         onBatchProgress({
           total,
           completed,
           failed,
           cancelled,
-          currentDatasetName: datasetNames[datasetId],
+          currentDatasetName: datasetName,
         });
-        continue;
-      }
 
-      const datasetName = datasetNames[datasetId];
-      onBatchProgress({
-        total,
-        completed,
-        failed,
-        cancelled,
-        currentDatasetName: datasetName,
-      });
+        let datasetProgressId: string | undefined;
+        try {
+          // Create per-dataset progress entry
+          datasetProgressId = await progress.create({
+            type: ProgressType.PROPERTY_COMPUTE,
+            title: `${property.name}: ${datasetName}`,
+          });
+          const jobProgressId = datasetProgressId;
 
-      // Create per-dataset progress entry
-      const datasetProgressId = await progress.create({
-        type: ProgressType.PROPERTY_COMPUTE,
-        title: `${property.name}: ${datasetName}`,
-      });
-
-      try {
-        const response = await this.propertiesAPI.computeProperty(
-          propertyId,
-          datasetId,
-          property,
-          scales,
-        );
-
-        const jobId = response.data[0]?._id;
-        if (!jobId) {
-          failed++;
-          progress.complete(datasetProgressId);
-        } else {
-          submittedJobIds.push(jobId);
-
-          const computeJob: IPropertyComputeJob = {
+          const response = await this.propertiesAPI.computeProperty(
             propertyId,
-            jobId,
             datasetId,
-            eventCallback: (jobData: IJobEventData) => {
-              progress.handleJobProgress({
-                jobData,
-                progressId: datasetProgressId,
-                defaultTitle: `${property.name}: ${datasetName}`,
-              });
-            },
-          };
+            property,
+            scales,
+          );
 
-          // Capture the completion promise immediately
-          const completionPromise = jobs.addJob(computeJob);
-
-          const success = await completionPromise;
-
-          if (isCancelled) {
-            cancelled++;
-          } else if (success) {
-            completed++;
-          } else {
+          const jobId = response.data[0]?._id;
+          if (!jobId) {
             failed++;
+          } else {
+            submittedJobIds.push(jobId);
+
+            const computeJob: IPropertyComputeJob = {
+              propertyId,
+              jobId,
+              datasetId,
+              eventCallback: (jobData: IJobEventData) => {
+                progress.handleJobProgress({
+                  jobData,
+                  progressId: jobProgressId,
+                  defaultTitle: `${property.name}: ${datasetName}`,
+                });
+              },
+            };
+
+            const success = await trackJob(computeJob, sessionEnded);
+
+            if (isCancelled || sessionEnded()) {
+              cancelled++;
+            } else if (success) {
+              completed++;
+            } else {
+              failed++;
+            }
           }
-          progress.complete(datasetProgressId);
+        } catch (error) {
+          logError(`Failed to compute property for ${datasetName}: ${error}`);
+          failed++;
+        } finally {
+          if (datasetProgressId) {
+            progress.complete(datasetProgressId);
+          }
         }
-      } catch (error) {
-        logError(`Failed to compute property for ${datasetName}: ${error}`);
-        failed++;
-        progress.complete(datasetProgressId);
+
+        // Update batch progress
+        progress.update({
+          id: batchProgressId,
+          progress: completed + failed + cancelled,
+          total,
+        });
+        onBatchProgress({
+          total,
+          completed,
+          failed,
+          cancelled,
+          currentDatasetName: datasetName,
+        });
       }
 
-      // Update batch progress
-      progress.update({
-        id: batchProgressId,
-        progress: completed + failed + cancelled,
-        total,
-      });
-      onBatchProgress({
-        total,
-        completed,
-        failed,
-        cancelled,
-        currentDatasetName: datasetName,
-      });
+      // Complete batch progress
+      progress.complete(batchProgressId);
+
+      // Refresh property values for the current dataset. Job completion and
+      // client refresh are separate success conditions: a failed refresh must
+      // still release the running state and remain visible to the user.
+      let refreshSucceeded = true;
+      try {
+        await this.fetchPropertyValues();
+        await (await import("./filters")).default.updateHistograms();
+      } catch (error) {
+        refreshSucceeded = false;
+        const errorInfo = status.errorInfo ?? { errors: [] };
+        status.errorInfo = errorInfo;
+        addComputeError(errorInfo, "Property refresh failed", error);
+      }
+
+      previousRun = completed > 0 && failed === 0 && refreshSucceeded;
+      onComplete({ succeeded: completed, failed, cancelled });
+      return true;
+    } finally {
+      if (status.errorInfo) {
+        dropAlreadyComputingErrors(status.errorInfo);
+      }
+      status.running = false;
+      status.previousRun = previousRun;
+      status.progressInfo = {};
     }
-
-    // Complete batch progress
-    progress.complete(batchProgressId);
-
-    // Refresh property values for the current dataset. Job completion and
-    // client refresh are separate success conditions: a failed refresh must
-    // still release the running state and remain visible to the user.
-    let refreshSucceeded = true;
-    try {
-      await this.fetchPropertyValues();
-      await (await import("./filters")).default.updateHistograms();
-    } catch (error) {
-      refreshSucceeded = false;
-      const errorInfo = status.errorInfo ?? { errors: [] };
-      status.errorInfo = errorInfo;
-      addComputeError(errorInfo, "Property refresh failed", error);
-    }
-
-    // Update property status
-    status.running = false;
-    status.previousRun = completed > 0 && failed === 0 && refreshSucceeded;
-    status.progressInfo = {};
-
-    onComplete({ succeeded: completed, failed, cancelled });
   }
 
   @Mutation

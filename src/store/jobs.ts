@@ -5,6 +5,8 @@ import {
   Mutation,
   VuexModule,
 } from "vuex-module-decorators";
+import { toRaw } from "vue";
+import { isAxiosError } from "axios";
 import store from "./root";
 import {
   IComputeJob,
@@ -18,7 +20,7 @@ import {
 
 import main from "./index";
 
-import { logError } from "@/utils/log";
+import { logError, logWarning } from "@/utils/log";
 import { quotaExceededMessage } from "@/utils/quota";
 import { jobStates } from "./jobConstants";
 
@@ -104,11 +106,62 @@ export function createErrorEventCallback(errorObject: IErrorInfoList) {
   };
 }
 
+const FINISHED_JOB_STATUSES: number[] = [
+  jobStates.cancelled,
+  jobStates.success,
+  jobStates.error,
+];
+
+const GIVEN_UP_POLL_MS = 15000;
+let givenUpPollTimer: ReturnType<typeof setTimeout> | null = null;
+
+// A stream counts as working once it has stayed open this long. Resetting
+// the error count on open alone would let a server that accepts and then
+// closes at once (Girder with its pub/sub down) be retried forever.
+const STABLE_OPEN_MS = 10000;
+let stableOpenTimer: ReturnType<typeof setTimeout> | null = null;
+
+// The server has no record of the job (deleted, or never existed).
+const JOB_MISSING = "missing";
+
+// The job's status, JOB_MISSING when the server answered that it has no such
+// job, or null when the status could not be read. Girder answers an unknown
+// job id with 400 ("Invalid job id"), not 404. Only an answer from the server
+// says the job is gone: a network failure (no response) or an auth failure
+// says nothing about the job.
+async function readJobStatus(
+  jobId: string,
+): Promise<number | typeof JOB_MISSING | null> {
+  try {
+    const response = await main.girderRest.get(`job/${jobId}`);
+    return response.data.status;
+  } catch (error) {
+    logError(`Failed to get status for job ${jobId}`);
+    if (
+      isAxiosError(error) &&
+      (error.response?.status === 400 || error.response?.status === 404)
+    ) {
+      return JOB_MISSING;
+    }
+    return null;
+  }
+}
+
 interface IJobInfo {
   listeners: IComputeJob[];
   successPromise: Promise<boolean>;
   successResolve: (success: boolean) => void;
   log: string;
+}
+
+// Scoped by user: this module outlives logout, and a run the previous
+// account started must not lock the tool for the next one.
+export function toolRunKey(
+  userId: string | undefined,
+  datasetId: string | null,
+  toolId: string,
+) {
+  return [userId, datasetId, toolId].join(":");
 }
 
 @Module({ dynamic: true, store, name: "jobs" })
@@ -134,6 +187,20 @@ export class Jobs extends VuexModule {
     [toolId: string]: { scope: string; success: boolean };
   } = {};
 
+  // Single tool runs in flight, from the moment the run is requested until
+  // it settles, counted per user, dataset and tool. A job is only tracked
+  // (jobIdForToolInDataset) once its submission returns, and the tool's menu
+  // is replaced when another tool is selected, so until then nothing else
+  // records that the run exists.
+  toolRunsInFlight: { [key: string]: number } = {};
+
+  get isToolRunInFlight() {
+    return (toolId: string, datasetId: string | null): boolean =>
+      (this.toolRunsInFlight[
+        toolRunKey(main.girderUser?._id, datasetId, toolId)
+      ] ?? 0) > 0;
+  }
+
   // The completion promise for a tracked job, or undefined if the job is not
   // tracked — either it was never registered with addJob, or it already
   // settled (handleJobEventImp drops the entry once it resolves). Callers must
@@ -143,18 +210,24 @@ export class Jobs extends VuexModule {
       this.jobInfoMap[jobId]?.successPromise;
   }
 
-  get jobIdForToolId() {
-    const jobsPerToolId: { [tooldId: string]: string } = {};
-    for (const jobId in this.jobInfoMap) {
-      const listeners = this.jobInfoMap[jobId].listeners;
-      for (const listener of listeners) {
-        if ("toolId" in listener) {
-          jobsPerToolId[listener.toolId] = jobId;
-          continue;
+  // The tracked job for a tool on one dataset. Tool ids are shared by every
+  // dataset of a collection, so a per-tool lookup alone would report another
+  // dataset's run.
+  get jobIdForToolInDataset() {
+    return (toolId: string, datasetId: string | null): string | null => {
+      for (const jobId in this.jobInfoMap) {
+        for (const listener of this.jobInfoMap[jobId].listeners) {
+          if (
+            "toolId" in listener &&
+            listener.toolId === toolId &&
+            listener.datasetId === datasetId
+          ) {
+            return jobId;
+          }
         }
       }
-    }
-    return jobsPerToolId;
+      return null;
+    };
   }
 
   get toolJobScope() {
@@ -173,18 +246,24 @@ export class Jobs extends VuexModule {
     };
   }
 
-  get jobIdForPropertyId() {
-    const jobsPerPropertyId: { [propertyId: string]: string } = {};
-    for (const jobId in this.jobInfoMap) {
-      const listeners = this.jobInfoMap[jobId].listeners;
-      for (const listener of listeners) {
-        if ("propertyId" in listener) {
-          jobsPerPropertyId[listener.propertyId] = jobId;
-          continue;
+  // The tracked job for a property on one dataset. Property ids live in a
+  // configuration shared by every dataset of a collection, so, as for tools,
+  // a per-property lookup alone would report another dataset's run.
+  get jobIdForPropertyInDataset() {
+    return (propertyId: string, datasetId: string | null): string | null => {
+      for (const jobId in this.jobInfoMap) {
+        for (const listener of this.jobInfoMap[jobId].listeners) {
+          if (
+            "propertyId" in listener &&
+            listener.propertyId === propertyId &&
+            listener.datasetId === datasetId
+          ) {
+            return jobId;
+          }
         }
       }
-    }
-    return jobsPerPropertyId;
+      return null;
+    };
   }
 
   get getJobLog() {
@@ -196,13 +275,8 @@ export class Jobs extends VuexModule {
   // be mistaken for a failed job.
   @Action
   async fetchJobStatus(jobId: string): Promise<number | null> {
-    try {
-      const response = await main.girderRest.get(`job/${jobId}`);
-      return response.data.status;
-    } catch {
-      logError(`Failed to get status for job ${jobId}`);
-      return null;
-    }
+    const status = await readJobStatus(jobId);
+    return status === JOB_MISSING ? null : status;
   }
 
   @Mutation
@@ -227,13 +301,14 @@ export class Jobs extends VuexModule {
 
   @Action
   async addJob(job: IComputeJob) {
-    if (
+    const subscribing =
       !this.notificationSource ||
       this.notificationSource.readyState == WebSocket.CLOSED ||
-      this.notificationSource.readyState == WebSocket.CLOSING
-    ) {
+      this.notificationSource.readyState == WebSocket.CLOSING;
+    if (subscribing) {
       await this.initializeNotificationSubscription();
     }
+    const alreadyTracked = job.jobId in this.jobInfoMap;
     this.rawAddJob(job);
     // Save promise reference before replaying buffered events, since replay
     // of a terminal event will remove the entry from jobInfoMap.
@@ -245,7 +320,38 @@ export class Jobs extends VuexModule {
       }
       this.clearStoredMessages(job.jobId);
     }
+    // A job that ended before it was tracked had its terminal event go by
+    // unbuffered (or before this page loaded), so on an open stream nothing
+    // would settle it until the next reconnect. A stream that is still
+    // connecting reconciles every tracked job when it opens, so read only on
+    // one already open. A job tracked before was read when it was added.
+    // Not awaited: the caller waits on this action before it gets the
+    // completion, so a slow read would hold back an outcome the stream has
+    // already delivered. (readJobStatus does not reject.)
+    if (
+      !subscribing &&
+      !alreadyTracked &&
+      this.notificationSource?.readyState === WebSocket.OPEN &&
+      job.jobId in this.jobInfoMap
+    ) {
+      void this.reconcileJobs([job.jobId]);
+    }
     return successPromise;
+  }
+
+  @Mutation
+  toolRunStarted(key: string) {
+    this.toolRunsInFlight[key] = (this.toolRunsInFlight[key] ?? 0) + 1;
+  }
+
+  @Mutation
+  toolRunEnded(key: string) {
+    const remaining = (this.toolRunsInFlight[key] ?? 0) - 1;
+    if (remaining > 0) {
+      this.toolRunsInFlight[key] = remaining;
+    } else {
+      delete this.toolRunsInFlight[key];
+    }
   }
 
   @Mutation
@@ -340,12 +446,7 @@ export class Jobs extends VuexModule {
       listener.errorCallback?.(jobEvent);
     }
     const status = jobEvent.status;
-    if (
-      !status ||
-      ![jobStates.cancelled, jobStates.success, jobStates.error].includes(
-        status,
-      )
-    ) {
+    if (!status || !FINISHED_JOB_STATUSES.includes(status)) {
       return;
     }
 
@@ -393,26 +494,164 @@ export class Jobs extends VuexModule {
     }
   }
 
+  // Settles every tracked job the server reports finished. The stream can
+  // miss a job's terminal event while it is down (between a close and the
+  // reconnect, or after giving up), and that event is the only other thing
+  // that settles a job's promise. Girder's job list cannot filter by id, so
+  // each tracked job is read on its own; only a handful are tracked at once.
+  @Action
+  async reconcileTrackedJobs() {
+    await this.reconcileJobs(Object.keys(this.jobInfoMap));
+  }
+
+  // Reads each job's status and settles those that finished. A job the
+  // server has no record of fails and stops being tracked: otherwise the
+  // given-up poll would read it every 15 s for as long as the page is open.
+  @Action
+  async reconcileJobs(jobIds: string[]) {
+    const statuses = await Promise.all(jobIds.map(readJobStatus));
+    for (const [index, jobId] of jobIds.entries()) {
+      const status = statuses[index];
+      if (status === JOB_MISSING) {
+        this.settleMissingJob(jobId);
+      } else if (status != null && FINISHED_JOB_STATUSES.includes(status)) {
+        // null: unreadable, so leave the job tracked rather than fail it
+        await this.handleJobEventImp({ _id: jobId, status });
+      }
+    }
+  }
+
+  // Not routed through handleJobEventImp: there is no log to show and the
+  // job did not fail, so its "Job Failed" notification would mislead. Its
+  // listeners still get a terminal (error) event: some end their state from
+  // the event (a progress entry) rather than from the promise.
+  @Action
+  settleMissingJob(jobId: string) {
+    const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
+    if (!jobInfo) return;
+    logWarning(`Job ${jobId} no longer exists on the server`);
+    this.endTrackingWithoutOutcome(jobId);
+  }
+
+  // Stops tracking a job whose outcome will never be known here. Its promise
+  // resolves false, which is what releases the waiters' progress entries and
+  // run locks; listeners get an ended event. A waiter that reports failures
+  // must tell this from one (sessionEndedSignal at logout).
+  @Action
+  endTrackingWithoutOutcome(jobId: string) {
+    const jobInfo: IJobInfo | undefined = this.jobInfoMap[jobId];
+    if (!jobInfo) return;
+    const jobEvent: IJobEventData = { _id: jobId, status: jobStates.error };
+    for (const listener of jobInfo.listeners) {
+      listener.eventCallback?.(jobEvent);
+    }
+    jobInfo.successResolve(false);
+    this.removeJobInfo(jobId);
+  }
+
+  // At logout. This module outlives the session, and tracked jobs are looked
+  // up by dataset and tool or property alone: left tracked, the previous
+  // account's job would hold the next account's tool "running" on a shared
+  // dataset for as long as its status cannot be read (403). The jobs
+  // themselves keep running server-side.
+  @Action
+  retireTrackedJobs() {
+    for (const jobId of Object.keys(this.jobInfoMap)) {
+      this.endTrackingWithoutOutcome(jobId);
+    }
+  }
+
+  // While the stream has given up, read tracked jobs' statuses periodically
+  // so their promises still settle. Stops once nothing is tracked or a
+  // stream exists again (whose open event reconciles instead).
+  @Action
+  async pollTrackedJobsWhileDisconnected() {
+    if (givenUpPollTimer !== null) {
+      clearTimeout(givenUpPollTimer);
+      givenUpPollTimer = null;
+    }
+    if (
+      this.notificationSource ||
+      !main.isLoggedIn ||
+      !Object.keys(this.jobInfoMap).length
+    ) {
+      return;
+    }
+    givenUpPollTimer = setTimeout(async () => {
+      givenUpPollTimer = null;
+      if (jobsModule.notificationSource) {
+        return;
+      }
+      try {
+        await jobsModule.reconcileTrackedJobs();
+      } catch (error) {
+        logError("[jobs] Could not read tracked job statuses", error);
+      }
+      await jobsModule.pollTrackedJobsWhileDisconnected();
+    }, GIVEN_UP_POLL_MS);
+  }
+
+  // Shared by a socket error and an unexpected close: reconnect up to three
+  // times, then give up and fall back to reading job statuses.
+  @Action
+  async retryNotificationSubscription() {
+    this.setConnectionErrors(this.connectionErrors + 1);
+    if (this.connectionErrors <= 3) {
+      await this.initializeNotificationSubscription();
+      return;
+    }
+    logError("Can't connect to girder notification stream");
+    await this.closeNotificationSubscription();
+    // The next subscription (the next addJob) gets fresh attempts, rather
+    // than giving up on its first error.
+    this.setConnectionErrors(0);
+    await this.reconcileTrackedJobs();
+    await this.pollTrackedJobsWhileDisconnected();
+  }
+
   @Action
   async handleError(event: Event) {
+    // Closing a socket that is still connecting (a resubscribe) makes it
+    // emit an error; that socket is already replaced and is not a failure.
+    if (event.target && event.target !== toRaw(this.notificationSource)) {
+      return;
+    }
     logError(
       "[jobs] WebSocket error, attempt:",
       this.connectionErrors + 1,
       event,
     );
-    this.setConnectionErrors(this.connectionErrors + 1);
-    if (this.connectionErrors <= 3) {
-      await this.initializeNotificationSubscription();
-    } else {
-      // Can't connect after 3 attempts
-      logError("Can't connect to girder notification stream");
-      await this.closeNotificationSubscription();
+    await this.retryNotificationSubscription();
+  }
+
+  // An error is followed by a close of the same socket, and closing a socket
+  // ourselves also emits one; both have already replaced (or dropped) the
+  // current socket, so only a close of the current one is unexpected (a
+  // server restart, a proxy timeout). Before this handler existed such a
+  // close was never noticed until the next addJob.
+  @Action
+  async handleClose(event: CloseEvent) {
+    // toRaw: state holds a reactive proxy of the socket, never === target
+    if (!event.target || event.target !== toRaw(this.notificationSource)) {
+      return;
     }
+    await this.retryNotificationSubscription();
   }
 
   @Action
   async handleOpen() {
-    this.setConnectionErrors(0);
+    const openedSocket = toRaw(this.notificationSource);
+    if (stableOpenTimer !== null) {
+      clearTimeout(stableOpenTimer);
+    }
+    stableOpenTimer = setTimeout(() => {
+      stableOpenTimer = null;
+      if (toRaw(jobsModule.notificationSource) === openedSocket) {
+        jobsModule.setConnectionErrors(0);
+      }
+    }, STABLE_OPEN_MS);
+    // Terminal events sent while the stream was down are lost
+    await this.reconcileTrackedJobs();
   }
 
   @Action
@@ -431,6 +670,7 @@ export class Jobs extends VuexModule {
     notificationSource.onmessage = this.handleJobEvent;
     notificationSource.onerror = this.handleError;
     notificationSource.onopen = this.handleOpen;
+    notificationSource.onclose = this.handleClose;
     this.setNotificationSource(notificationSource);
   }
 
@@ -443,7 +683,8 @@ export class Jobs extends VuexModule {
   }
 }
 
-export default getModule(Jobs);
+const jobsModule = getModule(Jobs);
+export default jobsModule;
 
 // Self-accept HMR to prevent vuex-module-decorators from re-registering
 // the dynamic module (which causes duplicate getters and state overwrites).

@@ -183,8 +183,11 @@ function canRun(pipeline: IPipeline): boolean {
 
 // Quick-run straight from the list. Editing/running the same pipeline in the
 // editor uses save-then-run; from the list the saved pipeline runs as-is.
+// Not awaited by the click handler, so a failed run is logged here.
 function runPipeline(pipeline: IPipeline) {
-  controller.run(pipeline, { allowBatch: false });
+  controller.run(pipeline, { allowBatch: false }).catch((error) => {
+    logError(`Pipeline "${pipeline.name}" failed to run:`, error);
+  });
 }
 
 async function duplicate(pipelineId: string) {

@@ -1042,6 +1042,106 @@ cut 708,983 to 72,925.
   read that one list; a new narrowing filter that skips it is invisible on
   all three. See `codebaseDocumentation/ACTIVE_CONSTRAINT_CUES.md`.
 
+## State flags: four shapes that leave the UI stuck
+
+A flag that tracks "what is this doing right now" (`running`, `loading`,
+`configuring`, `isDragging`) is an implicit state machine. An audit of the
+whole UI found about 25 of them; nearly every bug was one of four shapes. See
+`codebaseDocumentation/IMPLICIT_STATE_MACHINES.md` for the list and its
+regression checklist.
+
+1. **Reset after an `await` with no `try/finally`.** Set the flag, await, reset
+   on the next line: a rejection skips the reset and the spinner never stops.
+   Reset in `finally`. Check every `await` between the set and the `try`, too
+   (`progress.create` before the `try` was a repeat offender).
+2. **A boolean where overlapping requests need a count or a token.** The first
+   request to finish clears the flag for the one still running, or an older
+   response overwrites a newer one. Count in-flight requests, or claim a
+   sequence token **before any early return** and let only the newest write.
+   `sync.setSaving` / `sync.setLoading` are counts: every `true` needs its
+   `false` in a `finally`, or the indicator sticks forever.
+3. **One question, several sources.** If "is this tool running" can be read
+   from a component ref and from the jobs store, they will disagree. Derive
+   one from the other. Scope store lookups fully: tool ids are shared by every
+   dataset in a collection, so "the tool's job" must also match the dataset.
+4. **Partial reset.** One reset function, clearing everything the state uses;
+   prefer one state object (`null | {phase, ...}`) over five refs so a reset
+   cannot clear only part of it.
+
+Also: a gesture needs a **cancel** exit as well as a commit (a mouseup that
+never arrives, a blur, the target going away), and state holds reactive
+proxies, so compare a stored socket, map or layer with an event target through
+`toRaw`, never `===`.
+
+An assignment expression yields the raw right-hand side, not the store's
+proxy. `const status = state[id] ?? (state[id] = defaultStatus())` leaves
+every later `status.running = ...` invisible to the UI on the first run, so a
+spinner never clears while the store reads correct. Assign, then read back
+through the store. Check the rendered component too, not only store state.
+
+Two more, both found by review or live testing of code that already used
+sequence tokens:
+
+- Claiming a token makes the older request unable to clear the flag it set.
+  The newest claimant must leave that flag right on every exit, early returns
+  included (`if (!file) { isLoading = false; return; }`).
+- An equality skip ("the URL value equals the store's, nothing to do") reads
+  committed state. While another change is in flight, that state is about to
+  be replaced, and the skipped request is the one that should have overtaken
+  it: view S, open T, back to S within 10 ms ended on T. Give the skip a
+  "nothing of mine pending" condition (`pendingSets` in `useRouteMapper.ts`
+  tracks the mapper's own unsettled `set` calls). Scope it to the caller's
+  own requests: "anything pending anywhere" let an unrelated URL write
+  cancel a view switch started by a snapshot.
+
+More of the same kind, found by reviews of fixes that were each correct alone:
+
+- Adding a `:key` (or `v-if`) so a component's state does not carry over
+  also throws away its in-flight flags. Before remounting, move every
+  "request sent, no answer yet" flag into a store: the worker menu's
+  `localRunning` was the only record of a submission until the job was
+  tracked, so selecting another tool and coming back allowed a second run
+  (`toolRunsInFlight` in `jobs.ts`).
+- State deliberately kept across navigation (a run's status, a batch) must
+  still be dropped at logout, or keyed by user: the next account cannot read
+  the old job or hear it finish, so the lock never releases. Check every store
+  that holds such state, not only the one the finding named: the property
+  statuses were cleared one round before the tracked-job map beside them.
+  The Logout button now reloads the page (`utils/logoutRestart.ts`), which
+  discards every store at once; the per-store resets in `store.logout()`
+  cover only the time until the reload. Two things must be done before a
+  reload because it cuts async work short: await any cleanup of persisted
+  data (the AI conversation in IndexedDB), and carry anything the next page
+  load needs to know in `sessionStorage`, read once (the "follows a logout"
+  marker that keeps the login dialog closed).
+- Settling a promise to release a lock also resumes every loop awaiting it.
+  Retiring tracked jobs at logout resolved them as "not successful", and the
+  batch loops took that for a failed dataset and submitted the next one. Stop
+  the loop first (`sessionEndedSignal` in `batchRuns.ts`), then settle. Then
+  read every other waiter on that promise: a single property run raised a
+  "computation failed" toast for a job that was still running. And a reset
+  that empties a map does not cover a request still in flight, which adds
+  its entry afterwards: check the session before adding (`trackJob`).
+- A status kept across navigation is shown on whatever dataset is open when
+  the run ends. Release the lock there, but show the outcome only on the
+  dataset the run was for (`finishPropertyRun`). "The dataset open" is the
+  one being loaded, not `store.dataset`, which is the old one until the load
+  lands (`shownDatasetId` in `store/index.ts`).
+- When a parent holds a phase for a flow that a third-party child component
+  runs, list the child's own buttons: each one is a transition the parent
+  did not write. The Girder uploader's "Resume Upload" restarted the upload
+  past `submit()`, leaving the parent's failure state set (`NewDataset.vue`
+  watches the uploader's `uploading` flag).
+- "Was it cancelled?" cannot be read from a count of cancelled items: a
+  cancel that arrives after the last item ended cancels nothing. Record the
+  request itself (`cancelRequested` from `runBatch`).
+- Never assign a nullable lookup straight into the ref a child's `v-if`
+  hangs on: `path.value = await getFolder(id)` unmounted the uploader when
+  the read failed (`getFolder` returns null, it does not reject).
+- A `finally` that restores a value (a time point, a selection) restores it
+  only if the view it was captured in is still current, and "the job to
+  cancel" is the one in flight, not one a ref still remembers.
+
 ## Logging
 
 **Never use `console.log`, `console.warn`, or `console.error`** — eslint will reject them. `no-console` is an error only when `NODE_ENV=production`, which is how CI lints, so a plain local `pnpm lint:ci` won't flag them.
