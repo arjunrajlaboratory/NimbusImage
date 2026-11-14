@@ -384,6 +384,151 @@ describe("App", () => {
     wrapper.unmount();
   });
 
+  // -- Minimize, hide-all, resize and reorder --
+  describe("rearranging palettes", () => {
+    function mountViewer() {
+      (store as any).dataset = { id: "ds1", name: "Dataset" };
+      return mountComponent({}, renderAppBarStubs);
+    }
+
+    function paletteStub(
+      wrapper: ReturnType<typeof mountViewer>,
+      title: string,
+    ) {
+      const stub = wrapper
+        .findAllComponents({ name: "FloatingPalette" })
+        .find((palette) => palette.props("title") === title);
+      expect(stub, `${title} palette`).toBeDefined();
+      return stub!;
+    }
+
+    function storedArrangement() {
+      return JSON.parse(
+        window.localStorage.getItem("nimbus.ui.anonymous.layout.arrangement")!,
+      );
+    }
+
+    it("a minimized palette becomes a chip in its zone that restores it", async () => {
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      paletteStub(wrapper, "Tools").vm.$emit("minimize");
+      await nextTick();
+      expect(vm.toolsPanel).toBe(false);
+      expect(vm.paletteChips.left.map((chip: any) => chip.title)).toEqual([
+        "Tools",
+      ]);
+      expect(vm.paletteChips.right).toEqual([]);
+
+      await wrapper.get('[aria-label="Restore Tools"]').trigger("click");
+      expect(vm.toolsPanel).toBe(true);
+      expect(wrapper.find('[aria-label="Restore Tools"]').exists()).toBe(false);
+    });
+
+    it("the palettes of a zone start below its chip row, the other zone does not move", async () => {
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      const leftTop = vm.leftStack.navigatorPanel.top;
+      const rightTop = vm.rightColumnTop;
+      vm.togglePalette("annotationPanel");
+      paletteStub(wrapper, "Object Browser").vm.$emit("minimize");
+      await nextTick();
+      expect(vm.rightColumnTop).toBeGreaterThan(rightTop);
+      expect(paletteStub(wrapper, "Filters").props("top")).toBe(
+        vm.rightColumnTop,
+      );
+      expect(vm.leftStack.navigatorPanel.top).toBe(leftTop);
+    });
+
+    it("the hide-all hotkey hides every palette and leaves one chip to bring them back", async () => {
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      vm.togglePalette("annotationPanel");
+      const hotkey = vm.appHotkeys.find((entry: any) => entry.bind === "mod+.");
+      hotkey.handler(document.body, new KeyboardEvent("keydown"));
+      await nextTick();
+      for (const id of ["annotationPanel", "navigatorPanel", "toolsPanel"]) {
+        expect(vm[id]).toBe(false);
+      }
+      expect(vm.paletteChips.left.map((chip: any) => chip.label)).toEqual([
+        "Show all panels",
+      ]);
+
+      await wrapper.get('[aria-label="Show all panels"]').trigger("click");
+      expect(vm.annotationPanel).toBe(true);
+      expect(vm.navigatorPanel).toBe(true);
+      expect(vm.paletteChips.left).toEqual([]);
+    });
+
+    it("dragging a zone's edge resizes every palette in it, clamped to the viewport", async () => {
+      const wrapper = mountViewer();
+      const settings = () => paletteStub(wrapper, "Settings");
+      const defaultWidth = settings().props("width");
+      const defaultSnapshots = paletteStub(wrapper, "Snapshots").props("width");
+
+      // The test window is 1024 wide; a zone may take 45% of it.
+      settings().vm.$emit("resize", 5000);
+      await nextTick();
+      expect(settings().props("width")).toBe(460);
+      expect(paletteStub(wrapper, "Snapshots").props("width")).toBe(460);
+      // The left zone is untouched.
+      expect(paletteStub(wrapper, "Layers").props("width")).toBe(420);
+
+      settings().vm.$emit("resize-cancel");
+      await nextTick();
+      expect(settings().props("width")).toBe(defaultWidth);
+      expect(
+        window.localStorage.getItem("nimbus.ui.anonymous.layout.arrangement"),
+      ).toBeNull();
+
+      settings().vm.$emit("resize", 430);
+      settings().vm.$emit("resize-end", 440);
+      await nextTick();
+      expect(settings().props("width")).toBe(440);
+      expect(storedArrangement().widths).toEqual({ right: 440 });
+
+      settings().vm.$emit("resize-reset");
+      await nextTick();
+      expect(settings().props("width")).toBe(defaultWidth);
+      expect(paletteStub(wrapper, "Snapshots").props("width")).toBe(
+        defaultSnapshots,
+      );
+      expect(storedArrangement().widths).toEqual({});
+    });
+
+    it("a resized left column moves the surfaces that clear it", async () => {
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      const timelapseLeft = paletteStub(wrapper, "Time Lapse").props("left");
+      paletteStub(wrapper, "Layers").vm.$emit("resize-end", 340);
+      await nextTick();
+      expect(vm.leftColumn).toBe(340);
+      for (const title of ["Navigator", "Layers", "Tools"]) {
+        expect(paletteStub(wrapper, title).props("width")).toBe(340);
+      }
+      expect(paletteStub(wrapper, "Time Lapse").props("left")).toBe(
+        timelapseLeft - 80,
+      );
+    });
+
+    it("dropping a left palette lower moves it down the stack and is remembered", async () => {
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      // Nothing is laid out here, so every palette's center is its top.
+      paletteStub(wrapper, "Navigator").vm.$emit("reorder-end", 100);
+      await nextTick();
+      expect(storedArrangement().leftOrder).toEqual([
+        "layersPanel",
+        "toolsPanel",
+        "navigatorPanel",
+      ]);
+      expect(Object.keys(vm.leftStack)).toEqual([
+        "layersPanel",
+        "toolsPanel",
+        "navigatorPanel",
+      ]);
+    });
+  });
+
   it("remembers the layout for the next page load", () => {
     const first = mountComponent();
     (first.vm as any).togglePalette("snapshotPanel");

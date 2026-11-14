@@ -526,26 +526,56 @@
       <analyze-annotations :visible="analyzePanel" />
     </v-navigation-drawer>
 
+    <!-- Minimized palettes, as a row of chips at the top of their zone. The
+         palettes below start beneath the row. -->
+    <div
+      v-for="zone in PANEL_ZONES"
+      v-show="paletteChips[zone].length > 0"
+      :key="zone"
+      class="palette-chips"
+      :class="`zone-${zone}`"
+      :style="[paletteChipRowStyle, { [zone]: `${PALETTE_INSET}px` }]"
+    >
+      <button
+        v-for="chip in paletteChips[zone]"
+        :key="chip.key"
+        type="button"
+        class="palette-chip"
+        :aria-label="chip.label"
+        @click.stop="chip.restore()"
+      >
+        <v-icon size="14">{{ chip.icon }}</v-icon>
+        <span>{{ chip.title }}</span>
+      </button>
+    </div>
+
     <floating-palette
       v-model="settingsPanel"
+      v-bind="paletteChrome.settingsPanel"
       :title="PANEL_BY_ID.settingsPanel.title"
-      :width="RIGHT_PALETTE_WIDTHS.settings"
+      :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.settings)"
+      :top="rightColumnTop"
+      :max-height="rightColumnMaxHeight"
     >
       <annotations-settings />
     </floating-palette>
 
     <floating-palette
       v-model="snapshotPanel"
+      v-bind="paletteChrome.snapshotPanel"
       :title="PANEL_BY_ID.snapshotPanel.title"
-      :width="RIGHT_PALETTE_WIDTHS.snapshots"
+      :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.snapshots)"
+      :top="rightColumnTop"
+      :max-height="rightColumnMaxHeight"
     >
       <snapshots :snapshotVisible="snapshotPanel" />
     </floating-palette>
 
     <floating-palette
       v-model="annotationPanel"
+      v-bind="paletteChrome.annotationPanel"
       :title="PANEL_BY_ID.annotationPanel.title"
-      :width="RIGHT_PALETTE_WIDTHS.objectBrowser"
+      :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.objectBrowser)"
       :top="stackedHostTop"
       :max-height="stackedHostMaxHeight"
     >
@@ -555,8 +585,10 @@
     <floating-palette
       ref="filtersPaletteRef"
       v-model="filtersPanel"
+      v-bind="paletteChrome.filtersPanel"
       :title="PANEL_BY_ID.filtersPanel.title"
-      :width="RIGHT_PALETTE_WIDTHS.filters"
+      :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.filters)"
+      :top="rightColumnTop"
       :max-height="filtersMaxHeight"
     >
       <filters-panel :visible="filtersPanel" />
@@ -564,8 +596,9 @@
 
     <floating-palette
       v-model="analysisPanel"
+      v-bind="paletteChrome.analysisPanel"
       :title="PANEL_BY_ID.analysisPanel.title"
-      :width="RIGHT_PALETTE_WIDTHS.analysis"
+      :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.analysis)"
       :top="stackedHostTop"
       :max-height="stackedHostMaxHeight"
     >
@@ -578,8 +611,11 @@
 
     <floating-palette
       v-model="transcriptsPanel"
+      v-bind="paletteChrome.transcriptsPanel"
       :title="PANEL_BY_ID.transcriptsPanel.title"
-      :width="RIGHT_PALETTE_WIDTHS.transcripts"
+      :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.transcripts)"
+      :top="rightColumnTop"
+      :max-height="rightColumnMaxHeight"
     >
       <transcripts-panel :visible="transcriptsPanel" />
     </floating-palette>
@@ -588,9 +624,12 @@
       <floating-palette
         ref="navigatorPaletteRef"
         v-model="navigatorPanel"
+        v-bind="paletteChrome.navigatorPanel"
         :title="PANEL_BY_ID.navigatorPanel.title"
         :left="PALETTE_INSET"
-        :width="LEFT_COLUMN_PALETTE_WIDTHS.navigator"
+        :width="leftPaletteWidth(LEFT_COLUMN_PALETTE_WIDTHS.navigator)"
+        :top="leftStack.navigatorPanel.top"
+        :max-height="leftStack.navigatorPanel.maxHeight"
       >
         <navigator-panel />
       </floating-palette>
@@ -603,7 +642,7 @@
         ref="timelapsePaletteRef"
         v-model="timelapsePanel"
         title="Time Lapse"
-        :left="RIGHT_OF_LEFT_COLUMN"
+        :left="rightOfLeftColumn(leftColumn)"
         :width="TIMELAPSE_PALETTE_WIDTH"
       >
         <timelapse-panel />
@@ -612,22 +651,25 @@
       <floating-palette
         ref="layersPaletteRef"
         v-model="layersPanel"
+        v-bind="paletteChrome.layersPanel"
         :title="PANEL_BY_ID.layersPanel.title"
         :left="PALETTE_INSET"
-        :width="LEFT_COLUMN_PALETTE_WIDTHS.layers"
-        :top="layersPanelTop"
-        :max-height="layersPanelMaxHeight"
+        :width="leftPaletteWidth(LEFT_COLUMN_PALETTE_WIDTHS.layers)"
+        :top="leftStack.layersPanel.top"
+        :max-height="leftStack.layersPanel.maxHeight"
       >
         <layers-panel />
       </floating-palette>
 
       <floating-palette
+        ref="toolsPaletteRef"
         v-model="toolsPanel"
+        v-bind="paletteChrome.toolsPanel"
         :title="PANEL_BY_ID.toolsPanel.title"
         :left="PALETTE_INSET"
-        :width="LEFT_COLUMN_PALETTE_WIDTHS.tools"
-        :top="toolsPanelTop"
-        :max-height="toolsPanelMaxHeight"
+        :width="leftPaletteWidth(LEFT_COLUMN_PALETTE_WIDTHS.tools)"
+        :top="leftStack.toolsPanel.top"
+        :max-height="leftStack.toolsPanel.maxHeight"
       >
         <toolset />
       </floating-palette>
@@ -696,16 +738,21 @@ import {
   ACTION_PANEL_TOP,
   AI_PANEL_WIDTH,
   LEFT_COLUMN_PALETTE_WIDTHS,
-  LEFT_PALETTE_CLEAR_X,
   PALETTE_GAP,
   PALETTE_INSET,
   RIGHT_EDGE_OVERLAY_INSETS,
-  RIGHT_OF_LEFT_COLUMN,
+  PALETTE_CHIP_ROW_HEIGHT,
   RIGHT_PALETTE_WIDTHS,
   STACKED_ACTION_PANEL_OFFSET,
   TIMELAPSE_PALETTE_WIDTH,
+  TPaletteZone,
   actionPanelClearsTimelapsePalette,
+  clampZoneWidth,
+  leftColumnWidth,
+  leftPaletteClearX,
+  paletteWidth,
   rightEdgeClearX,
+  rightOfLeftColumn,
 } from "@/utils/paletteGeometry";
 import AiPanel from "@/components/AiPanel.vue";
 import FloatingPalette from "@/components/FloatingPalette.vue";
@@ -715,7 +762,8 @@ import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
 import { useTour } from "@/utils/useTour";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
-import { PANEL_BY_ID, PanelId } from "@/utils/panelRegistry";
+import { PANELS, PANEL_BY_ID, PANEL_IDS, PanelId } from "@/utils/panelRegistry";
+import { leftOrderAfterDrop } from "@/utils/panelLayout";
 import { useCommand, useCommandProvider } from "@/commands/registry";
 import { panelCommands, tourCommands } from "@/commands/providers";
 import { aiPromptRequest } from "@/commands/requests";
@@ -861,15 +909,30 @@ const canUseAiPanel = computed(
 // at 444–744, i.e. straight back into the bug this whole mechanism fixes.
 const rightEdgeClearance = computed(() =>
   rightEdgeClearX([
-    { open: annotationPanel.value, width: RIGHT_PALETTE_WIDTHS.objectBrowser },
-    { open: filtersPanel.value, width: RIGHT_PALETTE_WIDTHS.filters },
-    { open: analysisPanel.value, width: RIGHT_PALETTE_WIDTHS.analysis },
+    {
+      open: annotationPanel.value,
+      width: rightPaletteWidth(RIGHT_PALETTE_WIDTHS.objectBrowser),
+    },
+    {
+      open: filtersPanel.value,
+      width: rightPaletteWidth(RIGHT_PALETTE_WIDTHS.filters),
+    },
+    {
+      open: analysisPanel.value,
+      width: rightPaletteWidth(RIGHT_PALETTE_WIDTHS.analysis),
+    },
     {
       open: transcriptsPanel.value,
-      width: RIGHT_PALETTE_WIDTHS.transcripts,
+      width: rightPaletteWidth(RIGHT_PALETTE_WIDTHS.transcripts),
     },
-    { open: settingsPanel.value, width: RIGHT_PALETTE_WIDTHS.settings },
-    { open: snapshotPanel.value, width: RIGHT_PALETTE_WIDTHS.snapshots },
+    {
+      open: settingsPanel.value,
+      width: rightPaletteWidth(RIGHT_PALETTE_WIDTHS.settings),
+    },
+    {
+      open: snapshotPanel.value,
+      width: rightPaletteWidth(RIGHT_PALETTE_WIDTHS.snapshots),
+    },
     {
       open: aiPanelOpen.value && canUseAiPanel.value,
       width: AI_PANEL_WIDTH,
@@ -897,6 +960,7 @@ const actionPanelTop = computed(() => {
     actionPanelClearsTimelapsePalette(
       windowWidth.value,
       rightEdgeClearance.value,
+      rightOfLeftColumn(leftColumn.value) + TIMELAPSE_PALETTE_WIDTH,
     )
   ) {
     return ACTION_PANEL_TOP;
@@ -910,7 +974,7 @@ const actionPanelTop = computed(() => {
 });
 
 const paletteGeometryVars = computed(() => ({
-  "--nimbus-left-palette-clear-x": `${LEFT_PALETTE_CLEAR_X}px`,
+  "--nimbus-left-palette-clear-x": `${leftPaletteClearX(leftColumn.value)}px`,
   "--nimbus-right-edge-clear-x": `${rightEdgeClearance.value}px`,
   "--nimbus-action-panel-top": `${actionPanelTop.value}px`,
   // The connection panel stacks a fixed distance below the object panel, so it
@@ -1002,6 +1066,8 @@ const commandPaletteOpen = ref(false);
 
 const DOCUMENTATION_URL = "https://docs.nimbusimage.com";
 const COMMAND_PALETTE_BINDING = "mod+k";
+const HIDE_PANELS_BINDING = "mod+.";
+const HIDE_PANELS_DESCRIPTION = "Hide or show all panels";
 const commandPaletteHotkey = formatHotkey(COMMAND_PALETTE_BINDING);
 
 // The Transcripts button and the viewer's overlay only appear for a dataset
@@ -1044,7 +1110,7 @@ type PaletteRefEl = ComponentPublicInstance & { rootEl?: HTMLElement };
 // non-DOM test environments. Returns a disconnect-able observer (or null).
 function observePaletteHeight(
   paletteRef: Ref<PaletteRefEl | undefined>,
-  heightRef: Ref<number>,
+  setHeight: (height: number) => void,
 ): ResizeObserver | null {
   if (typeof ResizeObserver === "undefined") {
     return null;
@@ -1060,7 +1126,7 @@ function observePaletteHeight(
     if (store.isLayerDragging) {
       return;
     }
-    heightRef.value = el.offsetHeight;
+    setHeight(el.offsetHeight);
   });
   observer.observe(el);
   return observer;
@@ -1085,8 +1151,8 @@ const filtersStacked = computed(
 // Top edge of whichever primary Filters is currently stacked above.
 const stackedHostTop = computed(() =>
   filtersStacked.value
-    ? PALETTE_TOP + filtersHeight.value + STACK_GAP
-    : PALETTE_TOP,
+    ? rightColumnTop.value + filtersHeight.value + STACK_GAP
+    : rightColumnTop.value,
 );
 
 const stackedHostMaxHeight = computed(
@@ -1097,17 +1163,30 @@ const stackedHostMaxHeight = computed(
 const filtersMaxHeight = computed(() =>
   filtersStacked.value
     ? `calc(100vh - ${
-        PALETTE_TOP + COLUMN_BOTTOM_INSET + MIN_BROWSER_HEIGHT + STACK_GAP
+        rightColumnTop.value +
+        COLUMN_BOTTOM_INSET +
+        MIN_BROWSER_HEIGHT +
+        STACK_GAP
       }px)`
-    : `calc(100vh - ${PALETTE_TOP + COLUMN_BOTTOM_INSET}px)`,
+    : rightColumnMaxHeight.value,
 );
 
-// Left zone: Navigator (top) -> Layers -> Tools stack, each flowing beneath
-// the open palettes above it. Navigator uses FloatingPalette defaults.
+// Left zone: Navigator, Layers and Tools stack in the user's order
+// (`arrangement.leftOrder`), each flowing beneath the shown palettes above it.
+const LEFT_PANEL_IDS = PANELS.filter((panel) => panel.zone === "left").map(
+  (panel) => panel.id,
+);
 const navigatorPaletteRef = ref<PaletteRefEl>();
 const layersPaletteRef = ref<PaletteRefEl>();
-const navigatorHeight = ref(0);
-const layersHeight = ref(0);
+const toolsPaletteRef = ref<PaletteRefEl>();
+const leftPaletteRefs: Partial<Record<PanelId, Ref<PaletteRefEl | undefined>>> =
+  {
+    navigatorPanel: navigatorPaletteRef,
+    layersPanel: layersPaletteRef,
+    toolsPanel: toolsPaletteRef,
+  };
+// Rendered height of each left palette, 0 until measured.
+const leftPaletteHeights = ref<Partial<Record<PanelId, number>>>({});
 // The Timelapse palette is not in the left stack, but its height is needed to
 // drop the selection action panels below it on a narrow viewport.
 const timelapsePaletteRef = ref<PaletteRefEl>();
@@ -1119,33 +1198,183 @@ const windowWidth = ref(typeof window === "undefined" ? 0 : window.innerWidth);
 function updateWindowWidth() {
   windowWidth.value = window.innerWidth;
 }
-let navigatorResizeObserver: ResizeObserver | null = null;
-let layersResizeObserver: ResizeObserver | null = null;
+let leftResizeObservers: ResizeObserver[] = [];
 let timelapseResizeObserver: ResizeObserver | null = null;
 
-const layersPanelTop = computed(
-  () =>
+// --- Minimized palettes ------------------------------------------------------
+//
+// A minimized palette is a chip in a row at the top of its zone, and the
+// zone's palettes start beneath the row. "Hide all panels" replaces both rows
+// with one chip that brings everything back, so a hidden interface always
+// shows how to undo it.
+const PANEL_ZONES: readonly TPaletteZone[] = ["left", "right"];
+
+interface IPaletteChip {
+  key: string;
+  title: string;
+  icon: string;
+  label: string;
+  restore: () => void;
+}
+
+const paletteChips = computed<Record<TPaletteZone, IPaletteChip[]>>(() => {
+  const chips: Record<TPaletteZone, IPaletteChip[]> = { left: [], right: [] };
+  if (panelLayout.chromeHidden.value) {
+    chips.left.push({
+      key: "chromeHidden",
+      title: "Show panels",
+      icon: "mdi-eye-outline",
+      label: "Show all panels",
+      restore: panelLayout.toggleChromeHidden,
+    });
+  }
+  for (const panel of panelLayout.minimizedPanels.value) {
+    chips[panel.zone].push({
+      key: panel.id,
+      title: panel.title,
+      icon: panel.icon,
+      label: `Restore ${panel.title}`,
+      restore: () => openPalette(panel.id),
+    });
+  }
+  return chips;
+});
+
+const paletteChipRowStyle = {
+  top: `${PALETTE_TOP}px`,
+  height: `${PALETTE_CHIP_ROW_HEIGHT}px`,
+};
+
+function columnTop(zone: TPaletteZone): number {
+  return (
     PALETTE_TOP +
-    (navigatorPanel.value && navigatorHeight.value
-      ? navigatorHeight.value + STACK_GAP
-      : 0),
+    (paletteChips.value[zone].length > 0
+      ? PALETTE_CHIP_ROW_HEIGHT + STACK_GAP
+      : 0)
+  );
+}
+
+function maxHeightBelow(top: number): string {
+  return `calc(100vh - ${top + COLUMN_BOTTOM_INSET}px)`;
+}
+
+const rightColumnTop = computed(() => columnTop("right"));
+const rightColumnMaxHeight = computed(() =>
+  maxHeightBelow(rightColumnTop.value),
 );
 
-const toolsPanelTop = computed(
-  () =>
-    layersPanelTop.value +
-    (layersPanel.value && layersHeight.value
-      ? layersHeight.value + STACK_GAP
-      : 0),
+// Where each left palette sits: below the chip row and the shown palettes
+// that come before it in the user's order.
+const leftStack = computed(() => {
+  const stack = {} as Record<PanelId, { top: number; maxHeight: string }>;
+  let top = columnTop("left");
+  for (const id of panelLayout.arrangement.value.leftOrder) {
+    stack[id] = { top, maxHeight: maxHeightBelow(top) };
+    const height = leftPaletteHeights.value[id];
+    if (panelLayout.isVisible(id) && height) {
+      top += height + STACK_GAP;
+    }
+  }
+  return stack;
+});
+
+// Dropping a dragged left palette: it takes the place its center was carried
+// to among the palettes that are showing.
+function onLeftPaletteDrop(draggedId: PanelId, offsetY: number) {
+  const center = (id: PanelId) =>
+    leftStack.value[id].top + (leftPaletteHeights.value[id] ?? 0) / 2;
+  panelLayout.setLeftOrder(
+    leftOrderAfterDrop(
+      panelLayout.arrangement.value.leftOrder,
+      draggedId,
+      center(draggedId) + offsetY,
+      LEFT_PANEL_IDS.filter((id) => panelLayout.isVisible(id)).map((id) => ({
+        id,
+        center: center(id),
+      })),
+    ),
+  );
+}
+
+// --- Zone widths -------------------------------------------------------------
+//
+// Dragging a zone's inner edge resizes every palette in it. The width in the
+// arrangement is the remembered one; `draggedZoneWidths` is the drag in
+// progress, shown but not stored until the drop, so cancelling leaves no
+// trace. Both are clamped to the viewport where they are used.
+const draggedZoneWidths = ref<Partial<Record<TPaletteZone, number>>>({});
+
+function zoneWidth(zone: TPaletteZone): number | undefined {
+  return (
+    draggedZoneWidths.value[zone] ?? panelLayout.arrangement.value.widths[zone]
+  );
+}
+
+function leftPaletteWidth(defaultWidth: number): number {
+  return paletteWidth(
+    "left",
+    defaultWidth,
+    zoneWidth("left"),
+    windowWidth.value,
+  );
+}
+
+function rightPaletteWidth(defaultWidth: number): number {
+  return paletteWidth(
+    "right",
+    defaultWidth,
+    zoneWidth("right"),
+    windowWidth.value,
+  );
+}
+
+const leftColumn = computed(() =>
+  leftColumnWidth(zoneWidth("left"), windowWidth.value),
 );
 
-const layersPanelMaxHeight = computed(
-  () => `calc(100vh - ${layersPanelTop.value + COLUMN_BOTTOM_INSET}px)`,
-);
+function endZoneDrag(zone: TPaletteZone) {
+  const widths = { ...draggedZoneWidths.value };
+  delete widths[zone];
+  draggedZoneWidths.value = widths;
+}
 
-const toolsPanelMaxHeight = computed(
-  () => `calc(100vh - ${toolsPanelTop.value + COLUMN_BOTTOM_INSET}px)`,
-);
+// The props and listeners every registry palette takes for minimizing,
+// resizing its zone and (on the left) reordering. Built once: an object made
+// in the template would be new on every render and re-render each palette.
+function paletteChromeFor(id: PanelId) {
+  const zone = PANEL_BY_ID[id].zone;
+  // The edge facing the canvas.
+  const resizeEdge: "left" | "right" = zone === "left" ? "right" : "left";
+  return {
+    minimizable: true,
+    resizeEdge,
+    reorderable: zone === "left",
+    onMinimize: () => panelLayout.minimize(id),
+    onResize: (width: number) => {
+      draggedZoneWidths.value = {
+        ...draggedZoneWidths.value,
+        [zone]: clampZoneWidth(zone, width, windowWidth.value),
+      };
+    },
+    onResizeEnd: (width: number) => {
+      panelLayout.setZoneWidth(
+        zone,
+        clampZoneWidth(zone, width, windowWidth.value),
+      );
+      endZoneDrag(zone);
+    },
+    onResizeCancel: () => endZoneDrag(zone),
+    onResizeReset: () => panelLayout.setZoneWidth(zone, null),
+    onReorderEnd: (offsetY: number) => onLeftPaletteDrop(id, offsetY),
+  };
+}
+const paletteChrome = {} as Record<
+  PanelId,
+  ReturnType<typeof paletteChromeFor>
+>;
+for (const id of PANEL_IDS) {
+  paletteChrome[id] = paletteChromeFor(id);
+}
 
 // The left palettes live inside a v-if, so attach their observers once they
 // mount (and tear down when leaving the dataset view).
@@ -1154,30 +1383,41 @@ const leftPalettesMounted = computed(
     !!store.dataset && routeName.value === "datasetview" && !embedMode.value,
 );
 
+function setLeftPaletteHeight(id: PanelId, height: number) {
+  leftPaletteHeights.value = { ...leftPaletteHeights.value, [id]: height };
+}
+
+function disconnectLeftPaletteObservers() {
+  for (const observer of leftResizeObservers) {
+    observer.disconnect();
+  }
+  leftResizeObservers = [];
+  timelapseResizeObserver?.disconnect();
+  timelapseResizeObserver = null;
+}
+
 function setupLeftPaletteObservers() {
-  navigatorResizeObserver?.disconnect();
-  layersResizeObserver?.disconnect();
-  navigatorResizeObserver = observePaletteHeight(
-    navigatorPaletteRef,
-    navigatorHeight,
-  );
-  layersResizeObserver = observePaletteHeight(layersPaletteRef, layersHeight);
+  disconnectLeftPaletteObservers();
+  for (const id of LEFT_PANEL_IDS) {
+    const observer = observePaletteHeight(leftPaletteRefs[id]!, (height) =>
+      setLeftPaletteHeight(id, height),
+    );
+    if (observer) {
+      leftResizeObservers.push(observer);
+    }
+  }
   timelapseResizeObserver = observePaletteHeight(
     timelapsePaletteRef,
-    timelapsePaletteHeight,
+    (height) => {
+      timelapsePaletteHeight.value = height;
+    },
   );
 }
 
 function teardownLeftPaletteObservers() {
-  navigatorResizeObserver?.disconnect();
-  layersResizeObserver?.disconnect();
-  timelapseResizeObserver?.disconnect();
-  navigatorResizeObserver = null;
-  layersResizeObserver = null;
-  timelapseResizeObserver = null;
+  disconnectLeftPaletteObservers();
   timelapsePaletteHeight.value = 0;
-  navigatorHeight.value = 0;
-  layersHeight.value = 0;
+  leftPaletteHeights.value = {};
 }
 
 function toggleHelpDialogUsingHotkey() {
@@ -1207,6 +1447,17 @@ const appHotkeys: IHotkey[] = [
     data: {
       section: "Global",
       description: "Command palette: search every command",
+    },
+  },
+  {
+    bind: HIDE_PANELS_BINDING,
+    handler: (_el: HTMLElement, event?: KeyboardEvent) => {
+      event?.preventDefault();
+      panelLayout.toggleChromeHidden();
+    },
+    data: {
+      section: "Global",
+      description: HIDE_PANELS_DESCRIPTION,
     },
   },
 ];
@@ -1467,6 +1718,27 @@ useCommand(() => [
     },
   },
   {
+    id: "panel.toggleAll",
+    title: panelLayout.chromeHidden.value
+      ? "Show all panels"
+      : "Hide all panels",
+    group: "Panels",
+    // The verb of what running it will do, as for a single panel.
+    keywords: [
+      "palettes",
+      "chrome",
+      "canvas",
+      "full image",
+      panelLayout.chromeHidden.value ? "show" : "hide",
+    ],
+    icon: panelLayout.chromeHidden.value
+      ? "mdi-eye-outline"
+      : "mdi-eye-off-outline",
+    hotkey: boundHotkey(HIDE_PANELS_BINDING, HIDE_PANELS_DESCRIPTION),
+    enabled: inViewer,
+    run: panelLayout.toggleChromeHidden,
+  },
+  {
     id: "ai.togglePanel",
     title: aiPanelOpen.value ? "Close Nimbus AI panel" : "Open Nimbus AI panel",
     group: "Actions",
@@ -1547,13 +1819,11 @@ watch(
       return;
     }
     await nextTick();
-    const navEl = navigatorPaletteRef.value?.rootEl;
-    const layEl = layersPaletteRef.value?.rootEl;
-    if (navEl) {
-      navigatorHeight.value = navEl.offsetHeight;
-    }
-    if (layEl) {
-      layersHeight.value = layEl.offsetHeight;
+    for (const id of LEFT_PANEL_IDS) {
+      const el = leftPaletteRefs[id]?.value?.rootEl;
+      if (el) {
+        setLeftPaletteHeight(id, el.offsetHeight);
+      }
     }
   },
 );
@@ -1565,10 +1835,9 @@ onMounted(() => {
   updateWindowWidth();
 
   // The Filters palette is always mounted, so observe it directly.
-  filtersResizeObserver = observePaletteHeight(
-    filtersPaletteRef,
-    filtersHeight,
-  );
+  filtersResizeObserver = observePaletteHeight(filtersPaletteRef, (height) => {
+    filtersHeight.value = height;
+  });
 });
 
 onBeforeUnmount(() => {
@@ -1611,6 +1880,10 @@ defineExpose({
   goHome,
   togglePalette,
   openPalette,
+  paletteChips,
+  leftStack,
+  rightColumnTop,
+  leftColumn,
   toggleHelpDialogUsingHotkey,
   handleTourStart,
   goToNewDataset,
@@ -1739,6 +2012,48 @@ $palette-cluster-tone: #0f1217;
    The ring reuses the cluster's own tone, opaque, so the count reads as
    separate from the icon glyph it overlaps. It stays within the cluster's 4px
    padding and its 2px inter-button gap, so it never covers a neighbour. */
+// Minimized palettes: a row of chips at the top of a zone, where the zone's
+// first palette would be.
+.palette-chips {
+  position: fixed;
+  z-index: 1006; // with the palettes, above the app bar
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+
+  &.zone-right {
+    flex-direction: row-reverse;
+  }
+}
+
+.palette-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.08));
+  border-radius: 14px;
+  background: var(--nimbus-glass-bg);
+  backdrop-filter: var(--nimbus-glass-filter);
+  -webkit-backdrop-filter: var(--nimbus-glass-filter);
+  color: var(--nimbus-text-secondary, #d0d6e0);
+  font-family: var(--nimbus-font);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+
+  &:hover {
+    background: rgba(var(--v-theme-primary), 0.18);
+    color: rgb(var(--v-theme-primary));
+  }
+}
+
 .palette-ibtn-badge {
   position: absolute;
   top: -1px;

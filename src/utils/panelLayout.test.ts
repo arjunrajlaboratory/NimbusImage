@@ -8,6 +8,7 @@ import {
   layoutWithMinimized,
   layoutWithOpen,
   layoutWithOpenSet,
+  leftOrderAfterDrop,
   validateArrangement,
   validateLayout,
 } from "./panelLayout";
@@ -130,6 +131,45 @@ describe("panelLayout", () => {
         "navigatorPanel",
         "layersPanel",
       ]);
+    });
+
+    describe("leftOrderAfterDrop", () => {
+      const order = ["navigatorPanel", "layersPanel", "toolsPanel"] as const;
+      const showing = [
+        { id: "navigatorPanel", center: 100 },
+        { id: "layersPanel", center: 300 },
+        { id: "toolsPanel", center: 500 },
+      ] as const;
+
+      it("moves a palette down past the ones its center passed", () => {
+        expect(
+          leftOrderAfterDrop(order, "navigatorPanel", 350, showing),
+        ).toEqual(["layersPanel", "navigatorPanel", "toolsPanel"]);
+        expect(
+          leftOrderAfterDrop(order, "navigatorPanel", 900, showing),
+        ).toEqual(["layersPanel", "toolsPanel", "navigatorPanel"]);
+      });
+
+      it("moves a palette up, and leaves it when it did not pass a neighbor", () => {
+        expect(leftOrderAfterDrop(order, "toolsPanel", 50, showing)).toEqual([
+          "toolsPanel",
+          "navigatorPanel",
+          "layersPanel",
+        ]);
+        expect(leftOrderAfterDrop(order, "layersPanel", 320, showing)).toEqual(
+          order,
+        );
+      });
+
+      it("places relative to the palettes that are showing only", () => {
+        // Layers is closed: dropping Navigator below Tools still ends last.
+        expect(
+          leftOrderAfterDrop(order, "navigatorPanel", 600, [
+            { id: "navigatorPanel", center: 100 },
+            { id: "toolsPanel", center: 500 },
+          ]),
+        ).toEqual(["layersPanel", "toolsPanel", "navigatorPanel"]);
+      });
     });
 
     it("validates widths and order, and rejects a non-object", () => {

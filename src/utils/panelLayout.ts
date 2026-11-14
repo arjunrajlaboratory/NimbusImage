@@ -183,3 +183,23 @@ export function validateArrangement(raw: unknown): IPanelArrangement | null {
     widths,
   };
 }
+
+/**
+ * The left order after `draggedId` is dropped with its center at
+ * `draggedCenter` (px from the top): it goes just before the first showing
+ * palette whose center is lower, or to the end when none is.
+ */
+export function leftOrderAfterDrop(
+  order: readonly PanelId[],
+  draggedId: PanelId,
+  draggedCenter: number,
+  showing: readonly { id: PanelId; center: number }[],
+): PanelId[] {
+  const others = completeLeftOrder(order).filter((id) => id !== draggedId);
+  const below = showing
+    .filter((panel) => panel.id !== draggedId && panel.center > draggedCenter)
+    .map((panel) => panel.id);
+  const index = others.findIndex((id) => below.includes(id));
+  const at = index === -1 ? others.length : index;
+  return [...others.slice(0, at), draggedId, ...others.slice(at)];
+}

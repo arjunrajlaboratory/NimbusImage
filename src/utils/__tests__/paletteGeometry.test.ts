@@ -12,7 +12,13 @@ import {
   PALETTE_GAP,
   TIMELAPSE_PALETTE_RIGHT,
   TIMELAPSE_PALETTE_WIDTH,
+  ZONE_MIN_WIDTH,
   actionPanelClearsTimelapsePalette,
+  clampZoneWidth,
+  leftColumnWidth,
+  leftPaletteClearX,
+  paletteWidth,
+  rightOfLeftColumn,
   overlayClearX,
   rightEdgeClearX,
 } from "@/utils/paletteGeometry";
@@ -180,5 +186,49 @@ describe("actionPanelClearsTimelapsePalette", () => {
       TIMELAPSE_PALETTE_RIGHT + PALETTE_GAP + ACTION_PANEL_MAX_WIDTH;
     expect(actionPanelClearsTimelapsePalette(justEnough, 0)).toBe(true);
     expect(actionPanelClearsTimelapsePalette(justEnough - 1, 0)).toBe(false);
+  });
+});
+
+describe("resizable zones", () => {
+  it("keeps each palette's own width until its zone is resized", () => {
+    expect(paletteWidth("right", 512, undefined, 1440)).toBe(512);
+    expect(paletteWidth("right", 512, 600, 1440)).toBe(600);
+    expect(paletteWidth("right", 400, 600, 1440)).toBe(600);
+  });
+
+  it("clamps a zone to its minimum and to a share of the viewport", () => {
+    expect(clampZoneWidth("left", 10, 1440)).toBe(ZONE_MIN_WIDTH.left);
+    expect(clampZoneWidth("right", 5000, 1440)).toBe(648);
+    expect(clampZoneWidth("right", 500.4, 1440)).toBe(500);
+  });
+
+  it("clamps a stored width when it is used, not only when it is dragged", () => {
+    // Saved on a wide monitor, opened on a laptop.
+    expect(paletteWidth("right", 512, 900, 1280)).toBe(576);
+    // A viewport too small for the fraction still gets the minimum.
+    expect(paletteWidth("left", 420, 900, 500)).toBe(ZONE_MIN_WIDTH.left);
+  });
+
+  it("matches the unresized constants when no width is set", () => {
+    const column = leftColumnWidth(undefined, 1440);
+    expect(column).toBe(LEFT_COLUMN_WIDTH);
+    expect(rightOfLeftColumn(column)).toBe(RIGHT_OF_LEFT_COLUMN);
+    expect(leftPaletteClearX(column)).toBe(LEFT_PALETTE_CLEAR_X);
+  });
+
+  it("moves both left clearances with a resized column", () => {
+    const column = leftColumnWidth(500, 1440);
+    expect(column).toBe(500);
+    expect(rightOfLeftColumn(column)).toBe(PALETTE_INSET + 500 + PALETTE_GAP);
+    expect(leftPaletteClearX(column)).toBeGreaterThan(PALETTE_INSET + 500);
+  });
+
+  it("asks whether the action panels clear the Timelapse palette where it now is", () => {
+    const narrowColumn = rightOfLeftColumn(320) + TIMELAPSE_PALETTE_WIDTH;
+    const wideColumn = rightOfLeftColumn(640) + TIMELAPSE_PALETTE_WIDTH;
+    expect(actionPanelClearsTimelapsePalette(1280, 16, narrowColumn)).toBe(
+      true,
+    );
+    expect(actionPanelClearsTimelapsePalette(1280, 16, wideColumn)).toBe(false);
   });
 });
