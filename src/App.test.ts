@@ -432,17 +432,22 @@ describe("App", () => {
     // the function this returns.
     function stubResizeObserver() {
       const callbacks: ((entries: { target: Element }[]) => void)[] = [];
+      const observed = new Set<Element>();
       vi.stubGlobal(
         "ResizeObserver",
         class {
-          observe = vi.fn();
+          observe = vi.fn((element: Element) => {
+            if (element.classList.contains("palette-chips")) {
+              observed.add(element);
+            }
+          });
           disconnect = vi.fn();
           constructor(callback: (entries: { target: Element }[]) => void) {
             callbacks.push(callback);
           }
         },
       );
-      return (element: Element, width: number, height: number) => {
+      const report = (element: Element, width: number, height: number) => {
         Object.defineProperty(element, "offsetWidth", {
           value: width,
           configurable: true,
@@ -455,6 +460,10 @@ describe("App", () => {
           callback([{ target: element }]);
         }
       };
+      // What was handed to an observer, so a test can tell the rows are
+      // really being watched and not only that the callback works.
+      report.observed = () => [...observed];
+      return report;
     }
 
     function storedArrangement() {
@@ -509,9 +518,18 @@ describe("App", () => {
     it("an unavailable panel has no chip", async () => {
       const wrapper = mountViewer();
       expect(chip(wrapper, "transcriptsPanel").exists()).toBe(false);
+      // Not while the dataset's first lookup runs: most datasets have no
+      // transcripts, and the chip would come and go on every load.
       (transcriptsStore as any).loading = true;
       await nextTick();
+      expect(chip(wrapper, "transcriptsPanel").exists()).toBe(false);
+      (transcriptsStore as any).loading = false;
+      (transcriptsStore as any).hasTranscripts = true;
+      await nextTick();
       expect(chip(wrapper, "transcriptsPanel").exists()).toBe(true);
+      (transcriptsStore as any).hasTranscripts = false;
+      await nextTick();
+      expect(chip(wrapper, "transcriptsPanel").exists()).toBe(false);
     });
 
     it("a chip carries its badge, and its label says what the count means", async () => {
@@ -746,70 +764,40 @@ describe("App", () => {
       expect(vm.navigatorPanel).toBe(true);
     });
 
-    it("a chip row holds its edge, so canvas surfaces clear it like a palette", async () => {
-      const wrapper = mountViewer();
-      const vm = wrapper.vm as any;
-      for (const title of ["Navigator", "Layers", "Tools"]) {
-        paletteStub(wrapper, title).vm.$emit("update:modelValue", false);
-      }
-      await nextTick();
-      // No left palette is showing, but the corner is not free.
-      expect(vm.navigatorPanel || vm.layersPanel || vm.toolsPanel).toBe(false);
-      expect(vm.leftEdgeOccupied).toBe(true);
-      // The right column is closed, and its chips hold the edge.
-      expect(vm.rightEdgeClearance).toBeGreaterThan(16);
-    });
-
-    it("canvas surfaces clear a chip row by its measured width", async () => {
+    it("surfaces at the top of the canvas start below the chip rows instead of beside them", async () => {
       const report = stubResizeObserver();
       try {
         const wrapper = mountViewer();
         const vm = wrapper.vm as any;
+        const cssVar = (name: string) =>
+          (wrapper.vm as any).$el.style.getPropertyValue(name);
+        const belowOneRow = `${72 + 28 + 8}px`;
+        expect(cssVar("--nimbus-below-chip-rows")).toBe(belowOneRow);
+        expect(cssVar("--nimbus-action-panel-top")).toBe(belowOneRow);
+
+        // The rows take no width from the canvas: a closed right column
+        // leaves the right edge clear, and chips alone on the left do not
+        // count as a palette there.
+        expect(vm.rightEdgeClearance).toBe(16);
         for (const title of ["Navigator", "Layers", "Tools"]) {
           paletteStub(wrapper, title).vm.$emit("update:modelValue", false);
         }
         await nextTick();
-        const rows = wrapper.findAll(".palette-chips");
-        expect(rows.map((row) => row.attributes("data-zone"))).toEqual([
-          "left",
-          "right",
-        ]);
-        report(rows[0].element, 200, 28);
-        report(rows[1].element, 150, 28);
-        await nextTick();
-        // Inset 16 + the row + the 10px canvas-surface gap.
-        expect(vm.leftEdgeClearX).toBe(226);
-        // Inset 16 + the row + inset 16.
-        expect(vm.rightEdgeClearance).toBe(182);
-
-        // With a left palette showing, the column's width, or the row's if
-        // it is wider.
-        vm.togglePalette("layersPanel");
-        await nextTick();
-        expect(vm.leftEdgeClearX).toBe(16 + 420 + 10);
-        report(rows[0].element, 500, 28);
-        await nextTick();
-        expect(vm.leftEdgeClearX).toBe(16 + 500 + 10);
-      } finally {
-        vi.unstubAllGlobals();
-      }
-    });
-
-    it("the hide-all chip also holds the left edge", async () => {
-      const report = stubResizeObserver();
-      try {
-        const wrapper = mountViewer();
-        const vm = wrapper.vm as any;
-        hideAll(vm);
-        await nextTick();
-        expect(vm.leftEdgeOccupied).toBe(true);
-        report(
-          wrapper.get('.palette-chips[data-zone="left"]').element,
-          120,
-          28,
+        expect((wrapper.vm as any).$el.classList).not.toContain(
+          "any-left-palette-open",
         );
+
+        // Both rows are measured, and a row that wraps moves the band's end.
+        const rows = wrapper.findAll(".palette-chips");
+        expect(report.observed()).toEqual(rows.map((row) => row.element));
+        report(rows[0].element, 300, 62);
         await nextTick();
-        expect(vm.leftEdgeClearX).toBe(16 + 120 + 10);
+        expect(cssVar("--nimbus-below-chip-rows")).toBe(`${72 + 62 + 8}px`);
+        expect(cssVar("--nimbus-action-panel-top")).toBe(`${72 + 62 + 8}px`);
+        // The connection panel stays its fixed distance below the object one.
+        expect(cssVar("--nimbus-stacked-action-panel-top")).toBe(
+          `${72 + 62 + 8 + 232}px`,
+        );
       } finally {
         vi.unstubAllGlobals();
       }
@@ -1062,23 +1050,78 @@ describe("App", () => {
       }
     });
 
-    it("a zone's palettes start below its chip row, and at the top without one", async () => {
+    it("both zones keep a row's height for their chips, so toggling a panel moves no other", async () => {
       const wrapper = mountViewer();
       const vm = wrapper.vm as any;
-      // Left: every panel open, so no chips. Right: all closed, so a row of
-      // one line until it is measured.
-      expect(vm.leftStack.navigatorPanel.top).toBe(72);
-      expect(vm.rightColumnTop).toBe(72 + 28 + 8);
+      const belowOneRow = 72 + 28 + 8;
+      // Left: every panel open, so no chips, and the space is kept anyway.
+      expect(vm.leftStack.navigatorPanel.top).toBe(belowOneRow);
+      expect(vm.rightColumnTop).toBe(belowOneRow);
       vm.togglePalette("annotationPanel");
       vm.togglePalette("filtersPanel");
       await nextTick();
-      expect(paletteStub(wrapper, "Filters").props("top")).toBe(
-        vm.rightColumnTop,
-      );
+      expect(paletteStub(wrapper, "Filters").props("top")).toBe(belowOneRow);
 
+      // The first left chip appears: Navigator does not move.
       paletteStub(wrapper, "Tools").vm.$emit("update:modelValue", false);
       await nextTick();
-      expect(vm.leftStack.navigatorPanel.top).toBe(72 + 28 + 8);
+      expect(vm.leftStack.navigatorPanel.top).toBe(belowOneRow);
+      expect(vm.rightColumnTop).toBe(belowOneRow);
+    });
+
+    it("the Timelapse palette starts below the taller chip row", async () => {
+      const report = stubResizeObserver();
+      try {
+        const wrapper = mountViewer();
+        const timelapseTop = () =>
+          paletteStub(wrapper, "Time Lapse").props("top");
+        expect(timelapseTop()).toBe(72 + 28 + 8);
+        report(
+          wrapper.get('.palette-chips[data-zone="right"]').element,
+          400,
+          62,
+        );
+        await nextTick();
+        expect(timelapseTop()).toBe(72 + 62 + 8);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("the right chip row is wide enough for all its chips, within the space beside the left column", async () => {
+      const wrapper = mountViewer();
+      const maxWidth = (zone: string) =>
+        (
+          wrapper.get(`.palette-chips[data-zone="${zone}"]`)
+            .element as HTMLElement
+        ).style.maxWidth;
+      expect(maxWidth("left")).toBe("420px");
+      // The test window is 1024 wide: what is left beside the 420px column.
+      expect(maxWidth("right")).toBe(`${1024 - (16 + 420 + 8) - 16}px`);
+    });
+
+    it("every chip's command id names a registered command", async () => {
+      const { allCommands } = await import("@/commands/registry");
+      const wrapper = mountViewer();
+      const ids = wrapper
+        .findAll(".palette-chip[data-command-id]")
+        .map((element) => element.attributes("data-command-id"));
+      expect(ids.length).toBeGreaterThanOrEqual(5);
+      const registered = new Set(
+        allCommands.value.map((command) => command.id),
+      );
+      expect(ids.filter((id) => !registered.has(id!))).toEqual([]);
+    });
+
+    it("starting a tour ends hide-all, so its steps have something to point at", async () => {
+      const wrapper = mountViewer();
+      const vm = wrapper.vm as any;
+      hideAll(vm);
+      await nextTick();
+      expect(vm.navigatorPanel).toBe(false);
+      vm.handleTourStart("anyTour");
+      await nextTick();
+      expect(vm.navigatorPanel).toBe(true);
     });
 
     it("a wrapped chip row pushes its zone's palettes and the overview down", async () => {
@@ -1122,7 +1165,6 @@ describe("App", () => {
       expect(
         wrapper.findAll(".palette-chip").map((element) => element.text()),
       ).toEqual(["Show panels"]);
-      expect(vm.rightColumnTop).toBe(72);
 
       await wrapper.get('[aria-label="Show all panels"]').trigger("click");
       expect(vm.annotationPanel).toBe(true);

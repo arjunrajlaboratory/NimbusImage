@@ -53,7 +53,7 @@ const template = readFileSync(join(__dirname, "App.vue"), "utf8").split(
 )[0];
 
 describe("App.vue command palette coverage", () => {
-  it("gives every app-bar palette toggle a data-command-id", () => {
+  it("gives every app-bar view toggle a data-command-id", () => {
     const toggles = template.match(/class="palette-ibtn"/g) ?? [];
     const toggleIds =
       template.match(

@@ -5,7 +5,7 @@
     :class="{
       'datasetview-mode': isDatasetView,
       'left-palettes-open': isDatasetView && allLeftPalettesOpen,
-      'any-left-palette-open': isDatasetView && leftEdgeOccupied,
+      'any-left-palette-open': isDatasetView && anyLeftPaletteOpen,
       // The Timelapse palette sits exactly where the selection action panels
       // slide to when a left palette is open, so they move to the top-right
       // while it is up. How far in they sit is `--nimbus-right-edge-clear-x`
@@ -509,6 +509,8 @@
         v-model="timelapsePaletteShown"
         title="Time Lapse"
         :left="rightOfLeftColumn(leftColumn)"
+        :top="belowChipRows"
+        :max-height="maxHeightBelow(belowChipRows)"
         :width="TIMELAPSE_PALETTE_WIDTH"
       >
         <timelapse-panel />
@@ -957,12 +959,6 @@ const rightEdgeClearance = computed(() =>
       width: AI_PANEL_WIDTH,
       inset: RIGHT_EDGE_OVERLAY_INSETS.aiPanel,
     },
-    // The row of closed-panel chips holds the top of the right edge at the
-    // palettes' z-index, exactly where these surfaces go in timelapse mode.
-    {
-      open: chipRowOccupied.value.right,
-      width: chipRowSizes.value.right.width,
-    },
   ]),
 );
 
@@ -979,7 +975,7 @@ const rightEdgeClearance = computed(() =>
  */
 const actionPanelTop = computed(() => {
   if (!timelapsePaletteShown.value || !isDatasetView.value || embedMode.value) {
-    return ACTION_PANEL_TOP;
+    return belowChipRows.value;
   }
   if (
     actionPanelClearsTimelapsePalette(
@@ -988,10 +984,10 @@ const actionPanelTop = computed(() => {
       rightOfLeftColumn(leftColumn.value) + TIMELAPSE_PALETTE_WIDTH,
     )
   ) {
-    return ACTION_PANEL_TOP;
+    return belowChipRows.value;
   }
   return (
-    PALETTE_TOP +
+    belowChipRows.value +
     (timelapsePaletteHeight.value
       ? timelapsePaletteHeight.value + STACK_GAP
       : 0)
@@ -999,7 +995,12 @@ const actionPanelTop = computed(() => {
 });
 
 const paletteGeometryVars = computed(() => ({
-  "--nimbus-left-palette-clear-x": `${leftEdgeClearX.value}px`,
+  "--nimbus-left-palette-clear-x": `${leftPaletteClearX(leftColumn.value)}px`,
+  // The band at the top of the canvas that the rows of panel chips occupy
+  // ends here. Surfaces that start at the top of the canvas (the selection
+  // panels, the montage, the Timelapse palette) start below it, and the AI
+  // panel stops short of it, so no chip is ever under one of them.
+  "--nimbus-below-chip-rows": `${belowChipRows.value}px`,
   "--nimbus-right-edge-clear-x": `${rightEdgeClearance.value}px`,
   "--nimbus-action-panel-top": `${actionPanelTop.value}px`,
   // The connection panel stacks a fixed distance below the object panel, so it
@@ -1074,26 +1075,6 @@ const allLeftPalettesOpen = computed(
 const anyLeftPaletteOpen = computed(
   () => navigatorPanel.value || layersPanel.value || toolsPanel.value,
 );
-
-// The left edge is also held by its chip row (the closed panels, or the one
-// that undoes "hide all panels"). It sits at the top-left corner at the
-// palettes' z-index, which is where the selection panels and the montage
-// start, so they clear it the same way they clear a palette: by its width.
-const leftEdgeOccupied = computed(
-  () => anyLeftPaletteOpen.value || chipRowOccupied.value.left,
-);
-const leftEdgeClearX = computed(() => {
-  const rowWidth = chipRowOccupied.value.left
-    ? chipRowSizes.value.left.width
-    : 0;
-  // With a palette showing (or nothing on the edge, when the value is not
-  // used) it is the column's width; with only chips, the row's.
-  return leftPaletteClearX(
-    anyLeftPaletteOpen.value || !chipRowOccupied.value.left
-      ? Math.max(leftColumn.value, rowWidth)
-      : rowWidth,
-  );
-});
 
 // The Measure dialog is mounted once here but can be opened from several
 // places (app-bar ruler, Object Browser), so its open state lives in the
@@ -1339,7 +1320,9 @@ const panelChips = computed<Record<TPaletteZone, IPanelChip[]>>(() => {
     return { left: [], right: [] };
   }
   const closed = (id: PanelId) =>
-    !panelLayout.isVisible(id) && isPanelAvailable(id);
+    !panelLayout.isVisible(id) &&
+    isPanelAvailable(id) &&
+    (id !== "transcriptsPanel" || transcriptsChipOffered.value);
   return {
     left: panelLayout.arrangement.value.leftOrder.filter(closed).map(panelChip),
     right: PANELS.filter((panel) => panel.zone === "right")
@@ -1349,32 +1332,51 @@ const panelChips = computed<Record<TPaletteZone, IPanelChip[]>>(() => {
   };
 });
 
+// Whether the Transcripts chip is offered. Not during a dataset's first
+// lookup: most datasets have no transcripts, and a chip that came and went
+// on every dataset load would shift the others in its row. Once the lookup
+// has answered with a store or an error it stays through a retry, so the
+// panel can be reopened while one is running.
+const transcriptsChipOffered = ref(false);
+watch(
+  [
+    () => store.dataset?.id,
+    () => transcriptsStore.hasTranscripts || !!transcriptsStore.error,
+    () => transcriptsStore.loading,
+  ],
+  ([datasetId, answered, loading], [previousDatasetId]) => {
+    if (answered) {
+      transcriptsChipOffered.value = true;
+    } else if (!loading || datasetId !== previousDatasetId) {
+      transcriptsChipOffered.value = false;
+    }
+  },
+  { immediate: true },
+);
+
+// Wide enough for the right zone's six chips with their badges on one line,
+// so a count appearing (or the Transcripts chip) does not wrap the row and
+// move the column.
+const RIGHT_CHIP_ROW_MAX_WIDTH = 640;
+
 const chipRowOccupied = computed<Record<TPaletteZone, boolean>>(() => ({
   left: panelChips.value.left.length > 0 || panelsHidden.value,
   right: panelChips.value.right.length > 0,
 }));
 
-// Rendered size of each row: its chips' text and how many lines it wraps to
-// are not known ahead of time.
-const chipRowSizes = ref<
-  Record<TPaletteZone, { width: number; height: number }>
->({
-  left: { width: 0, height: 0 },
-  right: { width: 0, height: 0 },
-});
+// Rendered height of each row: how many lines it wraps to is not known ahead
+// of time.
+const chipRowHeights = ref<Record<TPaletteZone, number>>({ left: 0, right: 0 });
 const chipRowObserver =
   typeof ResizeObserver === "undefined"
     ? null
     : new ResizeObserver((entries) => {
-        const sizes = { ...chipRowSizes.value };
+        const heights = { ...chipRowHeights.value };
         for (const entry of entries) {
           const row = entry.target as HTMLElement;
-          sizes[row.dataset.zone as TPaletteZone] = {
-            width: row.offsetWidth,
-            height: row.offsetHeight,
-          };
+          heights[row.dataset.zone as TPaletteZone] = row.offsetHeight;
         }
-        chipRowSizes.value = sizes;
+        chipRowHeights.value = heights;
       });
 // A template ref function: called with each row's element (observing one
 // twice is a no-op) and with null when it goes away.
@@ -1384,19 +1386,20 @@ function observeChipRow(row: unknown) {
   }
 }
 
-// Until a row is measured (and where nothing can measure it) it is taken to
-// be one line of chips.
+// The height kept for a zone's row. A row with no chips keeps one line's
+// worth, so opening or closing a panel never moves the others and the two
+// columns start at the same height; so does a row not yet measured (or one
+// nothing can measure).
 function chipRowHeight(zone: TPaletteZone): number {
-  if (!chipRowOccupied.value[zone]) {
-    return 0;
-  }
-  return chipRowSizes.value[zone].height || PALETTE_CHIP_HEIGHT;
+  return (
+    (chipRowOccupied.value[zone] && chipRowHeights.value[zone]) ||
+    PALETTE_CHIP_HEIGHT
+  );
 }
 
 // Wrapped, not run across the canvas: the left row as wide as the column it
-// sits over, the right as the Object Browser, its usual primary (or the
-// column's width once resized). Not the widest palette showing, which
-// would re-wrap the row whenever a panel opens.
+// sits over, the right as wide as the space beside the left column allows,
+// up to a width that holds all its chips on one line.
 const chipRowStyles = computed(() => ({
   left: {
     top: `${PALETTE_TOP}px`,
@@ -1406,14 +1409,29 @@ const chipRowStyles = computed(() => ({
   right: {
     top: `${PALETTE_TOP}px`,
     right: `${PALETTE_INSET}px`,
-    maxWidth: `${rightPaletteWidth(RIGHT_PALETTE_WIDTHS.objectBrowser)}px`,
+    maxWidth: `${Math.max(
+      ZONE_MIN_WIDTH.right,
+      Math.min(
+        RIGHT_CHIP_ROW_MAX_WIDTH,
+        windowWidth.value - rightOfLeftColumn(leftColumn.value) - PALETTE_INSET,
+      ),
+    )}px`,
   },
 }));
 
+// Where a zone's palettes start: below its row of chips, whether or not the
+// row has any just now.
 function columnTop(zone: TPaletteZone): number {
-  const rowHeight = chipRowHeight(zone);
-  return PALETTE_TOP + (rowHeight ? rowHeight + STACK_GAP : 0);
+  return PALETTE_TOP + chipRowHeight(zone) + STACK_GAP;
 }
+
+// Where the band the chip rows occupy ends: below whichever row is taller.
+// Everything that starts at the top of the canvas between or under the rows
+// (the Timelapse palette, the selection panels, the montage) starts here,
+// because on a narrow window either row can reach over it.
+const belowChipRows = computed(() =>
+  Math.max(columnTop("left"), columnTop("right")),
+);
 
 function maxHeightBelow(top: number): string {
   return `calc(100vh - ${top + COLUMN_BOTTOM_INSET}px)`;
@@ -1790,6 +1808,9 @@ const filteredToursByCategory = computed(
 );
 
 function handleTourStart(tourId: string) {
+  // A tour points at panels and their chips; under "hide all panels" there
+  // is neither to point at.
+  showPanels();
   const tour = availableTours.value[tourId];
   if (tour && tour.entryPoint !== routeName.value) {
     router.push({ name: tour.entryPoint });
@@ -2138,8 +2159,7 @@ defineExpose({
   togglePalette,
   openPalette,
   panelChips,
-  leftEdgeOccupied,
-  leftEdgeClearX,
+  belowChipRows,
   rightEdgeClearance,
   timelapsePaletteShown,
   leftStack,

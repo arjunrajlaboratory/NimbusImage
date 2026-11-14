@@ -1,6 +1,6 @@
 // Everything that narrows the visible object set, in ONE place.
 //
-// Three surfaces report this: the app-bar Filters badge, the app-bar Analysis
+// Three surfaces report this: the Filters chip's badge, the Analysis chip's
 // badge, and the render-coverage HUD ("Showing 826 of 826 in view (1 filter
 // applied)"). They used to be counted independently, which is how a saved
 // lasso gate could narrow 708,983 annotations to 72,925 while the HUD read

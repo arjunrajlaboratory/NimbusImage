@@ -330,26 +330,42 @@ accessible label that includes the count and the accent,
 `data-command-id="panel.toggle.<id>"`, and the tour anchors and triggers
 for the four panels tours point at.
 
-**Chip rows wrap, and the palettes start below them.** A row has a
-max-width (the left column's width in use; on the right the Object
-Browser's width, or the zone's width once resized, rather than the widest
-palette showing, which would re-wrap the row whenever a panel opens) and
-wraps. Each row's width and height are measured
-(`chipRowSizes`, a `ResizeObserver`); a zone's palettes start below its
-row's height plus `STACK_GAP`, or at `PALETTE_TOP` when the row has no
-chips. Unmeasured (and where there is no `ResizeObserver`), a row with chips
-counts as one line, `PALETTE_CHIP_HEIGHT`. With the default layout (left
-stack open, right column closed) the right column's palettes therefore
-start below the right row.
+**Chip rows wrap, and both zones always keep a row's height for them.** A
+row has a max-width and wraps: the left column's width in use; on the right
+the Object Browser's width (or the zone's width once resized), not the widest
+palette showing, which would re-wrap the row whenever a panel opens. Each
+row's width and height are measured (`chipRowSizes`, a `ResizeObserver`).
 
-**Chip rows hold their edge.** A chip row sits at the top corner of its zone
-at the palettes' z-index, which is where the selection panels and the montage
-start. The rows count in the clearances by their measured width: the left
-row sets `any-left-palette-open` and feeds `--nimbus-left-palette-clear-x`
-(the column's width when a left palette shows, or the row's if wider; the
-row's alone when only chips are there), the right row is an entry in the
-`rightEdgeClearX` list. The image overview (minimap), whose default corner
-is the top right, starts below the right row through `--nimbus-overview-top`.
+A zone's palettes start below `PALETTE_TOP` + the row's height + `STACK_GAP`
+**whether or not the row has chips just now** (one line,
+`PALETTE_CHIP_HEIGHT`, for an empty or unmeasured row). The first version
+gave the space back when a row emptied, so closing one left panel moved the
+other two down and reopening it moved them back, and the two columns started
+at different heights. Keeping the space costs 36px and nothing moves.
+
+The Timelapse palette sits between the columns, in the rows' band, so it
+starts below whichever row is taller.
+
+**The rows are a band, and everything else starts below it.** The rows sit
+at the top of the canvas at the palettes' z-index, which is where the
+selection panels, the montage and the Timelapse palette used to start.
+Those now start below the band (`belowChipRows` in App.vue: below whichever
+row is taller), through `--nimbus-action-panel-top` and
+`--nimbus-below-chip-rows`; the image overview starts below the right row
+(`--nimbus-overview-top`); and the AI panel, which is anchored to the bottom
+and 680px tall, is capped so it stops short of the band on a short window.
+
+The first version cleared the rows sideways instead, by their measured
+width, the way surfaces clear a palette. That cost the canvas the rows'
+whole width for 28px of height: with the right column closed (the default)
+the montage lost about 520px. Clearing by height costs 36px.
+
+The right row may be up to 640px wide (within the space beside the left
+column), enough for its six chips and their badges on one line, so a count
+appearing does not wrap the row and move the column. The Transcripts chip is
+not offered during a dataset's first lookup (`transcriptsChipOffered`): most
+datasets have none, and a chip that came and went on every load would shift
+its neighbors. Once the lookup has answered it stays through a retry.
 
 **Resizable zones.** Drag a zone's inner edge; double-click resets. A zone
 keeps each palette's own default width until it is resized, then every
@@ -677,7 +693,8 @@ Run `pnpm test src/utils src/plugins src/components/FloatingPalette.test.ts src/
 - [ ] **Hide-all leaves a way back and covers the non-registry panels.** — _"the hide-all hotkey hides every palette and leaves one chip to bring them back"_, _"hide-all also hides the Timelapse palette and the Analyze drawer, and brings them back"_
 - [ ] **A chip carries its badge, capped, and says what it counts.** — _"a chip carries its badge, and its label says what the count means"_, _"caps the badge at 9+ so it stays small"_, _"keeps the two badges independent"_, _"a chip's tooltip says what its panel is for, and what its count means"_
 - [ ] **A tour step's palette is opened for it.** — _"a tour step inside a palette that is not showing gets it opened"_
-- [ ] **A "click here to open it" step moves on when the panel is already open, and only then.** — _"is done when the anchor is gone and its palette is open"_, _"is not done while the anchor is there to click"_, _"is not done for a step that does not wait for a click"_, _"is not done when the palette that would show it is not displayed"_, _"is not done for another anchor's palette"_
+- [ ] **A "click here to open it" step moves on when the panel is already open, and only then.** — _"is done when the anchor is gone and its palette is open"_, _"is not done while the anchor is there to click"_, _"is not done for a step that does not wait for a click"_, _"is not done when the palette that would show it is not displayed"_, _"is not done for another anchor's palette"_, _"skips a click-to-open step whose panel is already open"_, _"shows a click-to-open step whose chip is there"_
+- [ ] **A step whose anchor is missing asks for the panels back before waiting.** — _"asks for the panels back before waiting for an anchor that is not there"_, _"asks for nothing when the anchor is there"_
 - [ ] **The chips carry the tour anchors and the palettes the matching done marker.** — _"the chips the tours point at carry their anchors"_, _"names the tour step it completes when given an anchor"_, _"announces nothing without a trigger"_
 - [ ] **A remembered tab does no work in a closed palette.** — _"a remembered tab does no work while the palette is closed"_
 
@@ -687,8 +704,11 @@ Run `pnpm test src/utils src/plugins src/components/FloatingPalette.test.ts src/
 - [ ] **A zone cannot go narrower than its panels were laid out for.** — _"never lets a zone go narrower than its palettes were laid out for"_
 - [ ] **Unresized, the functions equal the constants.** — _"matches the unresized constants when no width is set"_
 - [ ] **Everything that clears the left column follows its width.** — _"a resized left column moves the surfaces that clear it"_, _"moves both left clearances with a resized column"_
-- [ ] **A chip row holds its edge.** — _"a chip row holds its edge, so canvas surfaces clear it like a palette"_, _"the hide-all chip also holds the left edge"_
-- [ ] **A zone's palettes start below its chip row's measured height, and at the top without one; the minimap follows the right row.** — _"a zone's palettes start below its chip row, and at the top without one"_, _"a wrapped chip row pushes its zone's palettes and the overview down"_
+- [ ] **Surfaces at the top of the canvas start below the chip rows; the rows take no width from it; both rows are measured.** — _"surfaces at the top of the canvas start below the chip rows instead of beside them"_
+- [ ] **Both zones keep a row's height for their chips, so toggling a panel moves no other; a wrapped row pushes its zone and the minimap down.** — _"both zones keep a row's height for their chips, so toggling a panel moves no other"_, _"a wrapped chip row pushes its zone's palettes and the overview down"_
+- [ ] **The right row holds all its chips on one line where there is room, and the Timelapse palette stays below the rows.** — _"the right chip row is wide enough for all its chips, within the space beside the left column"_, _"the Timelapse palette starts below the taller chip row"_
+- [ ] **Every chip's command exists.** — _"every chip's command id names a registered command"_
+- [ ] **Starting a tour ends hide-all.** — _"starting a tour ends hide-all, so its steps have something to point at"_
 - [ ] **A cancelled resize leaves no trace; a drop is stored; reset clears it.** — _"dragging a zone's edge resizes every palette in it, clamped to the viewport"_
 
 ### Gestures
@@ -706,7 +726,6 @@ Run `pnpm test src/utils src/plugins src/components/FloatingPalette.test.ts src/
 - [ ] **A request that changes nothing is not a change.** — _"a request that changes nothing while the collection loads does not override its layout"_
 - [ ] **After a reset the user follows the collection default.** — _"after a reset I follow the collection default, including one changed later"_
 - [ ] **Opening a masked panel ends hide-all.** — _"opening a panel that hide-all masks ends hide-all"_, _"the AI button shows a masked AI panel instead of closing it"_
-- [ ] **Chip rows are cleared by their measured width.** — _"canvas surfaces clear a chip row by its measured width"_
 - [ ] **A tour anchor hidden any way is revealed.** — _"names the palette that holds a hidden anchor"_, _"asks for the panels back when the anchor is hidden outside any palette"_, _"a tour step hidden only by hide-all gets the panels back"_
 - [ ] **A plot follows its palette's width.** — _"redraws at the new width when its palette's column is resized"_
 - [ ] **A stored value from a later format reads as nothing.** — _"reads a later format as nothing stored"_

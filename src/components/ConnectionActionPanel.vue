@@ -97,7 +97,8 @@ defineExpose({ selectedCount, deleteSelected, onKeydown });
    `.stacked` drops this one below the object panel. */
 .connection-action-panel {
   position: absolute;
-  top: 72px;
+  /* Below the band the panel chips occupy; App.vue sets the variables. */
+  top: var(--nimbus-action-panel-top, 72px);
   left: 16px;
   width: max-content;
   min-width: 140px;
@@ -124,7 +125,7 @@ defineExpose({ selectedCount, deleteSelected, onKeydown });
    deterministic rather than content-driven — a constant offset is safe here.
    Measured live: that panel occupies 72–295px, so this clears it with a gap. */
 .connection-action-panel.stacked {
-  top: 304px;
+  top: var(--nimbus-stacked-action-panel-top, 304px);
 }
 
 .selected-count {

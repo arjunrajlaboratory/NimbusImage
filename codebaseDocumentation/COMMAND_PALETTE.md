@@ -427,7 +427,7 @@ Run `pnpm test src/commands src/actions src/components/CommandPalette.test.ts sr
 - [ ] **A newly registered worker image becomes a command with no reload.** The store _replaces_ `workerImageList`; the provider must re-derive. — _"picks up a newly registered worker image without a reload"_
 - [ ] **A provider's reactive inputs re-derive the list; a registration goes away with its component.** — _"re-derives a getter registration when its reactive input changes"_, _"useCommand registers for the component's lifetime"_
 - [ ] **Commands are hidden while `enabled()` is false**, reactively. — _"hides commands whose enabled() is false, reactively"_, _"is disabled outside the viewer and when logged out"_
-- [ ] **Every app-bar control names a registered command.** — _"registers a command for every data-command-id in the template"_, _"gives every app-bar palette toggle a data-command-id"_, _"name a command registered by the same component"_
+- [ ] **Every app-bar control names a registered command.** — _"registers a command for every data-command-id in the template"_, _"gives every app-bar view toggle a data-command-id"_, _"name a command registered by the same component"_
 
 ### Matching
 

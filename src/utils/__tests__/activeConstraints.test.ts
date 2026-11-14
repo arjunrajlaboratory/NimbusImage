@@ -1,6 +1,6 @@
 /**
  * The one list every "something is narrowing your objects" surface counts: the
- * app-bar Filters badge, the app-bar Analysis badge, and the render-coverage
+ * Filters chip's badge, the Analysis chip's badge, and the render-coverage
  * HUD suffix. The counting used to live in the store getters alone, so the HUD
  * had nothing to read and a restored gate could shrink the HUD's numbers with
  * no cue anywhere near them.

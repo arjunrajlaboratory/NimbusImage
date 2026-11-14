@@ -175,6 +175,12 @@ export class TourManager {
     if (tourStepAlreadyDone(step)) {
       return this.advance();
     }
+    // An anchor that is not there may only be hidden with every other panel
+    // ("hide all panels", turned on mid-tour): ask for the panels back before
+    // waiting for it. A no-op when they are not hidden.
+    if (step.element && !this.resolveTarget(step.element)) {
+      tourBus.emit(TOUR_REVEAL_PANEL_EVENT, undefined);
+    }
     let target: Element | null = null;
     if (step.element) {
       try {
