@@ -86,8 +86,10 @@ import {
 
 const router = useRouter();
 router.isReady().then(() => {
-  // Only auto-open the login dialog, not the profile menu
-  userMenu.value = route.name === "root" && !store.isLoggedIn;
+  // Only auto-open the login dialog, not the profile menu; and not on the
+  // page load that follows a logout.
+  userMenu.value =
+    route.name === "root" && !store.isLoggedIn && !store.hasUserLoggedOut;
 });
 
 const route = useRoute();

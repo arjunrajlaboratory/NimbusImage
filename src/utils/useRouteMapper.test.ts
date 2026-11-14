@@ -21,7 +21,7 @@ vi.mock("@/store/properties", () => ({
 }));
 
 import { routeProvider, routerProvider } from "@/test/helpers";
-import { useRouteMapper } from "./useRouteMapper";
+import { removeQueryKeys, useRouteMapper } from "./useRouteMapper";
 
 describe("useRouteMapper", () => {
   let mockRouter: any;
@@ -248,5 +248,319 @@ describe("useRouteMapper", () => {
     // The skipped sync should have been replayed and the store updated to
     // match the current URL value.
     expect(setter).toHaveBeenCalledWith("v3");
+  });
+
+  it("removes query keys after a mapper write in flight, keeping its value", async () => {
+    // Both writers share one lock and read the route when they run: the
+    // removal must neither cancel the z write nor put back what it changed.
+    const storeZ = ref("1");
+    const route = reactive({
+      name: "root",
+      params: {},
+      query: { z: "1", x: "5", y: "6" } as Record<string, string>,
+      path: "/",
+      hash: "",
+      fullPath: "/?z=1&x=5&y=6",
+      matched: [],
+      meta: {},
+      redirectedFrom: undefined,
+    });
+    const replaced: any[] = [];
+    let resolveFirst: () => void = () => {};
+    mockRouter.replace = vi.fn((location: any) => {
+      replaced.push(location.query);
+      return new Promise<void>((resolve) => {
+        const done = () => {
+          route.query = { ...location.query };
+          resolve();
+        };
+        if (replaced.length === 1) resolveFirst = done;
+        else done();
+      });
+    });
+    const TestComponent = defineComponent({
+      template: "<div />",
+      setup() {
+        useRouteMapper(
+          {},
+          { z: { parse: String, get: () => storeZ.value, set: vi.fn() } },
+        );
+      },
+    });
+    shallowMount(TestComponent, {
+      global: {
+        provide: {
+          [routeLocationKey as symbol]: route,
+          ...routerProvider(mockRouter),
+        },
+      },
+    });
+    await nextTick();
+    await nextTick();
+
+    storeZ.value = "4";
+    await nextTick();
+    await nextTick();
+    const removal = removeQueryKeys(["x", "y"], mockRouter, route as any);
+    await nextTick();
+    // The removal waits for the z write.
+    expect(replaced).toHaveLength(1);
+    resolveFirst();
+    await removal;
+
+    expect(replaced[1]).toEqual({ z: "4" });
+  });
+
+  it("drops a mapper's clearsQuery keys when the store changes its value", async () => {
+    const storeView = { value: "a" };
+    const view = reactive(storeView);
+    const route = reactive({
+      name: "datasetview",
+      params: { id: "a" } as Record<string, string>,
+      query: { z: "1", x: "5", y: "6" } as Record<string, string>,
+      path: "/a",
+      hash: "",
+      fullPath: "/a?z=1&x=5&y=6",
+      matched: [],
+      meta: {},
+      redirectedFrom: undefined,
+    });
+    mockRouter.replace = vi.fn(async (location: any) => {
+      route.params = { ...location.params };
+      route.query = { ...location.query };
+    });
+    const TestComponent = defineComponent({
+      template: "<div />",
+      setup() {
+        useRouteMapper(
+          {
+            id: {
+              parse: String,
+              get: () => view.value,
+              set: vi.fn(),
+              clearsQuery: ["x", "y"],
+            },
+          },
+          {},
+        );
+      },
+    });
+    shallowMount(TestComponent, {
+      global: {
+        provide: {
+          [routeLocationKey as symbol]: route,
+          ...routerProvider(mockRouter),
+        },
+      },
+    });
+    await nextTick();
+    await nextTick();
+
+    view.value = "b";
+    for (let i = 0; i < 4; i++) await nextTick();
+
+    expect(mockRouter.replace).toHaveBeenCalledTimes(1);
+    expect(route.params.id).toBe("b");
+    expect(route.query).toEqual({ z: "1" });
+  });
+
+  it("keeps a URL-driven navigation's clearsQuery keys", async () => {
+    // Following a link to view b with ?x&y: the store follows the URL, so
+    // the camera keys the link carries must stay for the view to apply.
+    const view = reactive({ value: "a" });
+    const route = reactive({
+      name: "datasetview",
+      params: { id: "a" } as Record<string, string>,
+      query: {} as Record<string, string>,
+      path: "/a",
+      hash: "",
+      fullPath: "/a",
+      matched: [],
+      meta: {},
+      redirectedFrom: undefined,
+    });
+    const TestComponent = defineComponent({
+      template: "<div />",
+      setup() {
+        useRouteMapper(
+          {
+            id: {
+              parse: String,
+              get: () => view.value,
+              set: async (value: string) => {
+                view.value = value;
+              },
+              clearsQuery: ["x", "y"],
+            },
+          },
+          {},
+        );
+      },
+    });
+    shallowMount(TestComponent, {
+      global: {
+        provide: {
+          [routeLocationKey as symbol]: route,
+          ...routerProvider(mockRouter),
+        },
+      },
+    });
+    await nextTick();
+    await nextTick();
+
+    route.params = { id: "b" };
+    route.query = { x: "5", y: "6" };
+    route.fullPath = "/b?x=5&y=6";
+    for (let i = 0; i < 6; i++) await nextTick();
+
+    expect(view.value).toBe("b");
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+    expect(route.query).toEqual({ x: "5", y: "6" });
+  });
+
+  it("writes a store change skipped during a route change once it settles", async () => {
+    // Opening view b takes a while; meanwhile the store moves z on its own
+    // (the user scrubs, or the location is clamped to the new dataset). That
+    // Store→URL write is skipped while the route change applies, and must
+    // still reach the URL once it is done.
+    const view = reactive({ value: "a" });
+    const storeZ = ref("1");
+    let finishLoad: () => void = () => {};
+    const route = reactive({
+      name: "datasetview",
+      params: { id: "a" } as Record<string, string>,
+      query: { z: "1" } as Record<string, string>,
+      path: "/a",
+      hash: "",
+      fullPath: "/a?z=1",
+      matched: [],
+      meta: {},
+      redirectedFrom: undefined,
+    });
+    mockRouter.replace = vi.fn(async (location: any) => {
+      route.params = { ...location.params };
+      route.query = { ...location.query };
+    });
+    const TestComponent = defineComponent({
+      template: "<div />",
+      setup() {
+        useRouteMapper(
+          {
+            id: {
+              parse: String,
+              get: () => view.value,
+              set: (value: string) =>
+                new Promise<void>((resolve) => {
+                  view.value = value;
+                  finishLoad = resolve;
+                }),
+            },
+          },
+          {
+            z: {
+              parse: String,
+              get: () => storeZ.value,
+              set: async (value: string) => {
+                storeZ.value = value;
+              },
+            },
+          },
+        );
+      },
+    });
+    shallowMount(TestComponent, {
+      global: {
+        provide: {
+          [routeLocationKey as symbol]: route,
+          ...routerProvider(mockRouter),
+        },
+      },
+    });
+    await nextTick();
+    await nextTick();
+
+    route.params = { id: "b" };
+    route.fullPath = "/b?z=1";
+    await nextTick();
+    await nextTick();
+    storeZ.value = "3";
+    await nextTick();
+    await nextTick();
+    // Still loading: no write yet
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+
+    finishLoad();
+    for (let i = 0; i < 6; i++) await nextTick();
+
+    expect(mockRouter.replace).toHaveBeenCalledTimes(1);
+    expect(route.params.id).toBe("b");
+    expect(route.query).toEqual({ z: "3" });
+  });
+
+  // A mapper whose set() stays pending without committing (a view still
+  // being fetched), on a route the test can move.
+  function mountSlowViewMapper() {
+    const view = reactive({ value: "s" });
+    const setter = vi.fn<(value: string) => Promise<void>>(
+      () => new Promise<void>(() => {}),
+    );
+    const route = reactive({
+      name: "datasetview",
+      params: { id: "s" } as Record<string, string>,
+      query: {} as Record<string, string>,
+      path: "/s",
+      hash: "",
+      fullPath: "/s",
+      matched: [],
+      meta: {},
+      redirectedFrom: undefined,
+    });
+    const TestComponent = defineComponent({
+      template: "<div />",
+      setup() {
+        useRouteMapper({
+          id: { parse: String, get: () => view.value, set: setter },
+        });
+      },
+    });
+    shallowMount(TestComponent, {
+      global: {
+        provide: {
+          [routeLocationKey as symbol]: route,
+          ...routerProvider(mockRouter),
+        },
+      },
+    });
+    const moveTo = async (id: string, fullPath: string) => {
+      route.params = { id };
+      route.fullPath = fullPath;
+      await nextTick();
+      await nextTick();
+    };
+    return { setter, moveTo };
+  }
+
+  it("going back to the value the store still holds overtakes the navigation in flight", async () => {
+    const { setter, moveTo } = mountSlowViewMapper();
+    await nextTick();
+
+    // Open t: its load is in flight and the store still holds s
+    await moveTo("t", "/t");
+    expect(setter.mock.calls).toEqual([["t"]]);
+    // Back to s: equal to the store, but t is about to replace it
+    await moveTo("s", "/s");
+
+    expect(setter.mock.calls).toEqual([["t"], ["s"]]);
+  });
+
+  it("does not re-set the current value for a URL change while nothing of its own is in flight", async () => {
+    const { setter, moveTo } = mountSlowViewMapper();
+    await nextTick();
+
+    // A store-driven switch may be loading elsewhere (a snapshot); the URL
+    // still names s, and an unrelated URL write must not cancel that switch
+    await moveTo("s", "/s?z=2");
+
+    expect(setter).not.toHaveBeenCalled();
   });
 });

@@ -86,6 +86,7 @@ import store from "@/store";
 import ToolIcon from "@/tools/ToolIcon.vue";
 import ToolEdition from "@/tools/ToolEdition.vue";
 import jobs from "@/store/jobs";
+import batchRuns, { sessionEndedSignal } from "@/store/batchRuns";
 import { getTourAnchorId } from "@/utils/strings";
 
 const props = defineProps<{
@@ -111,13 +112,26 @@ const isToolSelected = computed(() => {
   return store.selectedTool?.configuration.id === props.tool.id;
 });
 
+// Busy as the tool's menu shows it: its job on the open dataset, or its
+// "apply to all datasets" batch, which may be on another dataset.
 const isToolLoading = computed(() => {
-  return !isToolSelected.value && !!jobId.value;
+  return (
+    !isToolSelected.value &&
+    (!!jobId.value ||
+      jobs.isToolRunInFlight(props.tool.id, store.dataset?.id ?? null) ||
+      !!batchRuns.batchRun(
+        "workerTool",
+        store.selectedConfigurationId,
+        props.tool.id,
+      )?.inFlight)
+  );
 });
 
-const jobId = computed((): string | null => {
-  return jobs.jobIdForToolId[props.tool.id] ?? null;
-});
+// The tool's job on the open dataset, as the tool's menu and the agent read
+// it: tool ids are shared by every dataset of a collection.
+const jobId = computed((): string | null =>
+  jobs.jobIdForToolInDataset(props.tool.id, store.dataset?.id ?? null),
+);
 
 const statusIcon = computed((): string | null => {
   const success = jobs.toolJobOutcome(props.tool.id);
@@ -138,11 +152,14 @@ function onJobChanged() {
   // Undefined if the job already settled (the jobs store drops finished
   // entries), in which case there is no outcome left to show an icon for.
   // The outcome goes to the store so it survives this item remounting.
-  jobs
-    .getPromiseForJobId(jobId.value)
-    ?.then((success: boolean) =>
-      jobs.setToolJobOutcome({ toolId, scope, success }),
-    );
+  // Logout settles the job as not successful without it having failed, and
+  // the same user may log back in to this scope.
+  const sessionEnded = sessionEndedSignal();
+  jobs.getPromiseForJobId(jobId.value)?.then((success: boolean) => {
+    if (!sessionEnded()) {
+      jobs.setToolJobOutcome({ toolId, scope, success });
+    }
+  });
 }
 
 watch(jobId, onJobChanged);

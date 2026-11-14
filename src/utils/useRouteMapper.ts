@@ -8,11 +8,23 @@ export interface IMapper<T> {
   parse(value: string): T;
   get(): T | null;
   set(value: T | null): Promise<any>;
+  /**
+   * Query keys that describe the current value only, dropped in the same URL
+   * write when the store changes this value (e.g. a view's camera target,
+   * which must not follow a store-driven switch to another view).
+   */
+  clearsQuery?: readonly string[];
 }
 
 // This counter is used to avoid loops of changes to the URL and changes to the mapper values
 // It counts how many instances of syncFromRoute are being called
 let currentRouteChanges = 0;
+
+// Run when currentRouteChanges returns to 0: each writes the Store→URL
+// changes its instance skipped while a route change was being applied (a
+// value the store changed on its own meanwhile, such as a clamp or the user
+// scrubbing while a view loads), so the URL does not keep the old value.
+const onRouteChangesSettled: Array<() => void> = [];
 
 // Counts in-flight Store→URL writes. While > 0, the URL is mid-transition
 // because of our own router.replace() calls — skip URL→Store sync to avoid
@@ -67,24 +79,27 @@ function notifyDrainIfIdle() {
   }, DRAIN_DEBOUNCE_MS);
 }
 
-// Avoid "navigation cancelled" errors by doing calls to router.replace() one at a time
-const setUrlParamsOrQuery = awaitPreviousCallsDecorator(
+// Avoid "navigation cancelled" errors by doing calls to router.replace() one
+// at a time. Every URL write goes through this one lock (each
+// awaitPreviousCallsDecorator wrap has its own chain), and `edit` reads
+// `route` when the write runs, so a queued write never undoes an earlier one.
+// `edit` changes the copied params/query and returns false for no change.
+const writeUrl = awaitPreviousCallsDecorator(
   async (
-    type: "query" | "params",
-    key: string,
-    value: string,
     router: Router,
     route: RouteLocationNormalized,
+    edit: (replacement: {
+      params: RouteLocationNormalized["params"];
+      query: RouteLocationNormalized["query"];
+    }) => boolean,
   ) => {
-    const stringifiedValue = String(value);
-    if (stringifiedValue === route[type][key]) {
-      return;
-    }
     const replacement = {
       params: { ...route.params },
       query: { ...route.query },
     };
-    replacement[type][key] = stringifiedValue;
+    if (!edit(replacement)) {
+      return;
+    }
     pendingUrlWrites++;
     try {
       await router.replace(replacement);
@@ -94,6 +109,84 @@ const setUrlParamsOrQuery = awaitPreviousCallsDecorator(
     }
   },
 );
+
+function setUrlParamsOrQuery(
+  type: "query" | "params",
+  key: string,
+  value: string,
+  router: Router,
+  route: RouteLocationNormalized,
+  clearsQuery: readonly string[] = [],
+) {
+  return writeUrl(router, route, (replacement) => {
+    const stringifiedValue = String(value);
+    if (stringifiedValue === route[type][key]) {
+      return false;
+    }
+    replacement[type][key] = stringifiedValue;
+    for (const queryKey of clearsQuery) {
+      delete replacement.query[queryKey];
+    }
+    return true;
+  });
+}
+
+/**
+ * Remove query keys from the URL through the same lock as the mappers'
+ * writes (and counted in pendingUrlWrites), so neither cancels the other.
+ * The removal may wait behind other writes and run on a later route:
+ * `onlyIf` (given the route when it runs) skips it when that route is no
+ * longer the one it was meant for.
+ */
+export function removeQueryKeys(
+  keys: readonly string[],
+  router: Router,
+  route: RouteLocationNormalized,
+  onlyIf: (current: RouteLocationNormalized) => boolean = () => true,
+) {
+  return writeUrl(router, route, (replacement) => {
+    if (!onlyIf(route) || !keys.some((key) => key in replacement.query)) {
+      return false;
+    }
+    for (const key of keys) {
+      delete replacement.query[key];
+    }
+    return true;
+  });
+}
+
+// Values this module has passed to a mapper's set() that have not settled
+// yet. While one of them differs from the URL's value, "the URL equals the
+// store" does not mean "nothing to do": the store is about to be replaced by
+// that navigation, and the URL's value must be set again to overtake it
+// (view S, open T, back to S before T's view arrives: the store still holds
+// S). Only this module's own calls count. A store-driven switch (a snapshot,
+// the breadcrumbs) leaves the URL on the old value until it lands, and an
+// unrelated URL write in that window must not cancel it.
+const pendingSets = new WeakMap<IMapper<any>, any[]>();
+
+function hasPendingSetToAnother(obj: IMapper<any>, value: any): boolean {
+  return (pendingSets.get(obj) ?? []).some((pending) => pending != value);
+}
+
+function trackedSet(obj: IMapper<any>, value: any) {
+  const pending = pendingSets.get(obj) ?? [];
+  pendingSets.set(obj, pending);
+  pending.push(value);
+  const settle = () => {
+    pending.splice(pending.indexOf(value), 1);
+  };
+  let result;
+  try {
+    result = obj.set(value);
+  } catch (error) {
+    settle();
+    throw error;
+  }
+  // Watched on the side: the caller awaits set()'s own promise, unchanged
+  Promise.resolve(result).then(settle, settle);
+  return result;
+}
 
 // Call the setter for this mapper if needed, using the value from the URL
 function setMapperValueFromUrl(
@@ -105,10 +198,13 @@ function setMapperValueFromUrl(
   }
   const parsedUrlValue = obj.parse(urlValue);
   const currentValue = obj.get();
-  if (parsedUrlValue == currentValue) {
+  if (
+    parsedUrlValue == currentValue &&
+    !hasPendingSetToAnother(obj, parsedUrlValue)
+  ) {
     return;
   }
-  return obj.set(parsedUrlValue);
+  return trackedSet(obj, parsedUrlValue);
 }
 
 // Check if any mapper's store value differs from the URL value
@@ -137,7 +233,8 @@ function needsSync(
  * - URL → Store: on mount and on route change
  * - Store → URL: via watchers on computed refs from mapper.get()
  * - Loop prevention: currentRouteChanges counter prevents store→URL watchers
- *   from firing during URL→store sync
+ *   from writing during URL→store sync; what they skipped is written once
+ *   every sync has settled
  */
 export function useRouteMapper(
   paramsMapper: Record<string, IMapper<any>>,
@@ -192,27 +289,68 @@ export function useRouteMapper(
       logError(e);
     } finally {
       currentRouteChanges--;
+      if (currentRouteChanges === 0) {
+        for (const cb of onRouteChangesSettled.splice(0)) {
+          cb();
+        }
+      }
     }
   }
 
   // Store → URL sync via watchers on computed refs
-  for (const [key, mapper] of Object.entries(paramsMapper)) {
-    const c = computed(() => mapper.get());
-    watch(c, async (value: any) => {
-      if (currentRouteChanges > 0) return;
-      // Never write null into path params — String(null) = "null" which
-      // creates invalid URLs like /datasetView/null/view and triggers
-      // cascading failed API calls.
-      if (value == null) return;
-      await setUrlParamsOrQuery("params", key, value, router, route);
-    });
+  function writeToUrl(
+    type: "params" | "query",
+    key: string,
+    mapper: IMapper<any>,
+    value: any,
+  ) {
+    // Never write null into path params — String(null) = "null" which
+    // creates invalid URLs like /datasetView/null/view and triggers
+    // cascading failed API calls.
+    if (type === "params" && value == null) return;
+    return setUrlParamsOrQuery(
+      type,
+      key,
+      value,
+      router,
+      route,
+      mapper.clearsQuery,
+    );
   }
-  for (const [key, mapper] of Object.entries(queryMapper)) {
-    const c = computed(() => mapper.get());
-    watch(c, async (value: any) => {
-      if (currentRouteChanges > 0) return;
-      await setUrlParamsOrQuery("query", key, value, router, route);
-    });
+
+  // Store → URL writes skipped while a route change was applied, replayed
+  // with the store's value once every route change has settled. A value the
+  // route change itself set matches the URL by then, so its replay is a no-op.
+  const skippedWrites = new Map<
+    string,
+    { type: "params" | "query"; key: string; mapper: IMapper<any> }
+  >();
+  function replaySkippedWrites() {
+    const writes = [...skippedWrites];
+    skippedWrites.clear();
+    if (!isAlive) return;
+    for (const [, { type, key, mapper }] of writes) {
+      writeToUrl(type, key, mapper, mapper.get());
+    }
+  }
+
+  for (const [type, mappers] of [
+    ["params", paramsMapper],
+    ["query", queryMapper],
+  ] as const) {
+    for (const [key, mapper] of Object.entries(mappers)) {
+      const c = computed(() => mapper.get());
+      watch(c, async (value: any) => {
+        if (currentRouteChanges > 0) {
+          if (skippedWrites.size === 0) {
+            onRouteChangesSettled.push(replaySkippedWrites);
+          }
+          skippedWrites.set(`${type}:${key}`, { type, key, mapper });
+          return;
+        }
+        await writeToUrl(type, key, mapper, value);
+      });
+    }
   }
 
   // Replace beforeRouteUpdate — watch fullPath so param changes within the

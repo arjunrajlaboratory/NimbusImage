@@ -78,6 +78,13 @@ services:
       # Keep under every proxy timeout in front: a Cloudflare tunnel cuts
       # at 100 s (use 85 there); production uses 120 behind HAProxy's 300 s.
       NI_MCP_MAX_JOB_WAIT: "${NI_MCP_MAX_JOB_WAIT:-240}"
+      # Links in tool results: the app, and Girder as the user's browser
+      # reaches it (download links; unset means none). Download links rely
+      # on Girder's auth cookie, which the browser keeps only when the app
+      # and Girder share an origin (production's /girder path); the dev
+      # app on :5173 calling :8080 never gets it, so they are off here.
+      NI_MCP_FRONTEND_URL: "${NI_MCP_FRONTEND_URL:-http://localhost:5173}"
+      NI_MCP_BROWSER_API_URL: "${NI_MCP_BROWSER_API_URL-}"
       # Shared with the nimbus_mcp_oauth plugin's
       # mcp_oauth.introspection_secret; unset means API keys only.
       NI_MCP_INTROSPECTION_SECRET: "${NI_MCP_INTROSPECTION_SECRET-}"

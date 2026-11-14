@@ -14,6 +14,7 @@ import annotations from "./annotation";
 import properties from "./properties";
 import { createProgressEventCallback, createErrorEventCallback } from "./jobs";
 import progress from "./progress";
+import { sessionEndedSignal } from "./batchRuns";
 import { BATCH_DATASET_LIMIT } from "./constants";
 import { logError } from "@/utils/log";
 import { findSourceProperty, resolveLinkedStep } from "@/utils/pipelineLinks";
@@ -482,7 +483,12 @@ export class Pipelines extends VuexModule {
     onStepJob?: (stepIndex: number, jobId: string) => void;
     onStepProgress?: (stepIndex: number, info: IProgressInfo) => void;
     onStepError?: (stepIndex: number, errors: IErrorInfoList) => void;
-    onStepComplete?: (stepIndex: number, success: boolean) => void;
+    // How the step ended, as the runner saw it: "cancelled" when the run
+    // was cancelled before or during it.
+    onStepComplete?: (
+      stepIndex: number,
+      status: IPipelineStepRunStatus["status"],
+    ) => void;
     onCancel?: (cancel: () => void) => void;
     onComplete?: (result: IPipelineRunResult) => void;
     // When run as a child of runPipelineBatch: the batch owns the "running"
@@ -520,6 +526,7 @@ export class Pipelines extends VuexModule {
     const runConfigurationId = configurationId ?? main.configuration.id;
     const configurationChanged = () =>
       main.configuration?.id !== runConfigurationId;
+    const sessionEnded = sessionEndedSignal();
     // The run's configuration object: the loaded one while it is still the
     // run's (a reload may replace the object), else the last one seen.
     let runConfiguration = main.configuration;
@@ -619,7 +626,7 @@ export class Pipelines extends VuexModule {
 
       if (isCancelled) {
         cancelled++;
-        onStepComplete?.(stepIndex, false);
+        onStepComplete?.(stepIndex, "cancelled");
         done++;
         progress.update({
           id: topProgressId,
@@ -773,16 +780,16 @@ export class Pipelines extends VuexModule {
 
       if (isCancelled) {
         cancelled++;
-        onStepComplete?.(stepIndex, false);
+        onStepComplete?.(stepIndex, "cancelled");
       } else if (success) {
         succeeded++;
-        onStepComplete?.(stepIndex, true);
+        onStepComplete?.(stepIndex, "success");
       } else {
         failed++;
         if (failedStepIndex === null) {
           failedStepIndex = stepIndex;
         }
-        onStepComplete?.(stepIndex, false);
+        onStepComplete?.(stepIndex, "error");
       }
 
       done++;
@@ -806,7 +813,9 @@ export class Pipelines extends VuexModule {
       // only when something actually changed - an annotation-only run (or one
       // whose property steps all reused an already-matching property) has
       // nothing new to write back to the configuration.
-      if (materializedSteps.length > 0) {
+      // Not after a logout, which ends the run by settling its step's job:
+      // the write would be the previous account's, and is refused.
+      if (materializedSteps.length > 0 && !sessionEnded()) {
         const storedPipeline = currentRunConfiguration().pipelines?.find(
           (candidate) => candidate.id === pipeline.id,
         );
@@ -1004,59 +1013,62 @@ export class Pipelines extends VuexModule {
     // (see runPipeline). Captured before any await.
     const batchConfigurationId = main.configuration?.id;
 
-    const datasetViews: IDatasetView[] = await main.api.findDatasetViews({
-      configurationId,
-    });
-    const datasetIds: string[] = [
-      ...new Set(datasetViews.map((v) => v.datasetId)),
-    ];
-    const total = datasetIds.length;
-    if (total === 0) {
-      onComplete?.(emptyResult);
-      return emptyResult;
-    }
-    if (total > BATCH_DATASET_LIMIT) {
-      logError(
-        `Refusing pipeline batch: ${total} datasets exceeds the limit of ` +
-          `${BATCH_DATASET_LIMIT}.`,
-      );
-      const rejectedResult = {
-        succeeded: 0,
-        failed: total,
-        cancelled: 0,
-      };
-      onRejected?.(total);
-      onComplete?.(rejectedResult);
-      return rejectedResult;
-    }
-
-    const datasetInfo = await main.api.batchResources({ folder: datasetIds });
-    const datasetNames: { [id: string]: string } = {};
-    for (const id of datasetIds) {
-      datasetNames[id] = datasetInfo.folder?.[id]?.name || "Unknown dataset";
-    }
-
+    // Take the run lock before any await, as runPipeline does, so Run stays
+    // disabled while the datasets are looked up. Released in the finally on
+    // every exit, including a rejected lookup.
     this.setRunningPipelineId(pipeline.id);
-    // Never rejects, so it cannot leave the lock held. Only on the batch's
-    // own configuration: after a switch during the awaits above, the reload
-    // would check the other configuration's properties and record this
-    // pipeline's sources as missing for the session. (The loop below then
-    // runs no dataset.)
-    const linkedPropertiesChecked =
-      main.configuration?.id === batchConfigurationId &&
-      (await this.loadMissingLinkedProperties(pipeline));
-    const batchProgressId = await progress.create({
-      type: ProgressType.BATCH_PIPELINE_COMPUTE,
-      title: `Batch pipeline: ${pipeline.name}`,
-    });
-    progress.update({ id: batchProgressId, progress: 0, total });
-
-    let completed = 0;
-    let failed = 0;
-    let cancelled = 0;
-    let configurationSwitched = false;
-
+    let batchProgressId: string | null = null;
     try {
+      const datasetViews: IDatasetView[] = await main.api.findDatasetViews({
+        configurationId,
+      });
+      const datasetIds: string[] = [
+        ...new Set(datasetViews.map((v) => v.datasetId)),
+      ];
+      const total = datasetIds.length;
+      if (total === 0) {
+        onComplete?.(emptyResult);
+        return emptyResult;
+      }
+      if (total > BATCH_DATASET_LIMIT) {
+        logError(
+          `Refusing pipeline batch: ${total} datasets exceeds the limit of ` +
+            `${BATCH_DATASET_LIMIT}.`,
+        );
+        const rejectedResult = {
+          succeeded: 0,
+          failed: total,
+          cancelled: 0,
+        };
+        onRejected?.(total);
+        onComplete?.(rejectedResult);
+        return rejectedResult;
+      }
+
+      const datasetInfo = await main.api.batchResources({ folder: datasetIds });
+      const datasetNames: { [id: string]: string } = {};
+      for (const id of datasetIds) {
+        datasetNames[id] = datasetInfo.folder?.[id]?.name || "Unknown dataset";
+      }
+
+      // Only on the batch's own configuration: after a switch during the
+      // awaits above, the reload would check the other configuration's
+      // properties and record this pipeline's sources as missing for the
+      // session. (The loop below then runs no dataset.)
+      const linkedPropertiesChecked =
+        main.configuration?.id === batchConfigurationId &&
+        (await this.loadMissingLinkedProperties(pipeline));
+      batchProgressId = await progress.create({
+        type: ProgressType.BATCH_PIPELINE_COMPUTE,
+        title: `Batch pipeline: ${pipeline.name}`,
+      });
+      progress.update({ id: batchProgressId, progress: 0, total });
+
+      let completed = 0;
+      let failed = 0;
+      let cancelled = 0;
+      let configurationSwitched = false;
+
       // Resolved once, so every dataset runs the same settings even if a
       // linked tool changes mid-batch (and auto-wired property steps don't
       // drift from their materialized property part-way through).
@@ -1158,7 +1170,9 @@ export class Pipelines extends VuexModule {
       onComplete?.(summary);
       return summary;
     } finally {
-      progress.complete(batchProgressId);
+      if (batchProgressId !== null) {
+        progress.complete(batchProgressId);
+      }
       this.setRunningPipelineId(null);
     }
   }

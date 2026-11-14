@@ -733,6 +733,35 @@ describe("App", () => {
     expect(store.setIsAnnotationPanelOpen).toHaveBeenCalledWith(true);
   });
 
+  it("a refused Object Browser request in embed mode does not leave the store open", async () => {
+    // e.g. the render-coverage HUD (shown in embeds) asks for the Connections
+    // tab. The embed refuses the palette; the store must agree, or the next
+    // request after leaving embed is no change and never opens it.
+    (store as any).isAnnotationPanelOpen = false;
+    (store as any).setIsAnnotationPanelOpen = vi.fn((value: boolean) => {
+      (store as any).isAnnotationPanelOpen = value;
+    });
+    const providedRoute = routeProvider();
+    const route = providedRoute[routeLocationKey as symbol];
+    Object.assign(route, { name: "datasetview", query: { embed: "1" } });
+    const wrapper = mountComponent({}, {}, providedRoute);
+    const vm = wrapper.vm as any;
+    await nextTick();
+
+    (store as any).isAnnotationPanelOpen = true;
+    await nextTick();
+    expect(vm.annotationPanel).toBe(false);
+    expect((store as any).isAnnotationPanelOpen).toBe(false);
+
+    Object.assign(route, { query: {} });
+    await nextTick();
+    (store as any).isAnnotationPanelOpen = true;
+    await nextTick();
+    expect(vm.annotationPanel).toBe(true);
+    wrapper.unmount();
+    (store as any).isAnnotationPanelOpen = false;
+  });
+
   // -- Watcher: routeName --
   it("closeAllPalettes clears open palettes (run when leaving datasetview)", () => {
     const wrapper = mountComponent({ name: "datasetview" });

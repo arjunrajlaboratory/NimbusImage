@@ -21,6 +21,7 @@
 import { onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import store from "@/store";
+import { useCameraDeepLinkUrlCleanup } from "@/utils/useCameraDeepLinkUrl";
 import { logError } from "@/utils/log";
 import { extractErrorMessage } from "@/utils/errors";
 import Viewer from "./datasetView/Viewer.vue";
@@ -33,6 +34,9 @@ import Viewer from "./datasetView/Viewer.vue";
  */
 
 const route = useRoute();
+
+useCameraDeepLinkUrlCleanup();
+
 const error = ref<string | null>(null);
 const ready = ref(false);
 let sequence = 0;

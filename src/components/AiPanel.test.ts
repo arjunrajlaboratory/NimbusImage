@@ -5,6 +5,7 @@ vi.mock("@/store/aiPanel", () => ({
   default: {
     items: [],
     running: false,
+    hydrating: false,
     canRevert: false,
     autoApprove: false,
     pendingApprovalIndex: null,
@@ -64,5 +65,24 @@ describe("AiPanel", () => {
     expect(
       (wrapper.find("textarea").element as HTMLTextAreaElement).value,
     ).toBe("first part\nsecond part");
+  });
+
+  it("keeps the typed message when sending while a stored conversation loads", async () => {
+    // The store drops a send while hydrating; clearing the input first lost
+    // the message with nothing on screen saying why.
+    (aiPanelStore as any).hydrating = true;
+    try {
+      wrapper = mount(AiPanel);
+      const textarea = wrapper.find("textarea");
+      await textarea.setValue("count the nuclei");
+      await textarea.trigger("keyup", { key: "Enter" });
+      await flushPromises();
+      expect((textarea.element as HTMLTextAreaElement).value).toBe(
+        "count the nuclei",
+      );
+      expect(aiPanelStore.sendUserMessage).not.toHaveBeenCalled();
+    } finally {
+      (aiPanelStore as any).hydrating = false;
+    }
   });
 });

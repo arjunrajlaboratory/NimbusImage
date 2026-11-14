@@ -139,7 +139,7 @@
             color="warning"
             size="small"
             class="ml-2"
-            :disabled="!currentJob && !batchCancelFunction"
+            :disabled="!cancellableJobId && !batchCancelFunction"
             @click="cancel"
           >
             <v-progress-circular size="16" indeterminate class="mr-2" />
@@ -255,6 +255,7 @@ import {
 } from "@/store/model";
 import propertiesStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
+import batchRuns, { runBatch } from "@/store/batchRuns";
 import WorkerInterfaceValues from "@/components/WorkerInterfaceValues.vue";
 import { getDefault } from "@/utils/workerInterface";
 import { useCollectionDatasetCount } from "@/utils/useCollectionDatasetCount";
@@ -277,7 +278,10 @@ const debouncedEditTool = debounce((tool: IToolConfiguration) => {
 
 // Data
 const fetchingWorkerInterface = ref(false);
-const running = ref(false);
+// A run this instance started that has not reported back yet. Whether the
+// tool is running at all also comes from the jobs store (see `running`), so
+// reopening the menu or a run started elsewhere still shows it.
+const localRunning = ref(false);
 const currentJob = ref<IComputeJob | null>(null);
 const previousRunStatus = ref<boolean | null>(null);
 const progressInfo = ref<IProgressInfo>({});
@@ -287,16 +291,22 @@ const showLogDialog = ref(false);
 const localJobLog = ref("");
 const showCopySnackbar = ref(false);
 
-// Batch processing state
+// Batch processing state. The batch itself lives in the store, keyed by
+// collection and tool, so a menu remounted mid-batch still shows it, can
+// cancel it and cannot start a second, and a duplicated collection (same
+// tool ids) does not show it.
 const applyToAllDatasets = ref(false);
-const batchProgress = ref<{
-  total: number;
-  completed: number;
-  failed: number;
-  cancelled: number;
-  currentDatasetName: string;
-} | null>(null);
-const batchCancelFunction = ref<(() => void) | null>(null);
+const batchRun = computed(() =>
+  props.tool
+    ? batchRuns.batchRun(
+        "workerTool",
+        store.selectedConfigurationId,
+        props.tool.id,
+      )
+    : null,
+);
+const batchProgress = computed(() => batchRun.value?.progress ?? null);
+const batchCancelFunction = computed(() => batchRun.value?.cancel ?? null);
 const {
   collectionDatasetCount,
   loadingDatasetCount,
@@ -335,8 +345,33 @@ const displayWorkerPreview = computed({
 });
 
 const currentJobId = computed(() => {
-  return props.tool ? jobsStore.jobIdForToolId[props.tool.id] : null;
+  return props.tool
+    ? jobsStore.jobIdForToolInDataset(props.tool.id, store.dataset?.id ?? null)
+    : null;
 });
+
+// The store's run-in-flight mark covers a submission another instance of
+// this menu started and has not had answered yet: selecting another tool and
+// coming back replaces the menu, and the job is not tracked until then.
+const running = computed(
+  () =>
+    localRunning.value ||
+    !!currentJobId.value ||
+    !!batchRun.value?.inFlight ||
+    (!!props.tool &&
+      jobsStore.isToolRunInFlight(props.tool.id, store.dataset?.id ?? null)),
+);
+
+// The job Cancel stops: the tool's tracked job on this dataset, else the one
+// this instance submitted while it is still running (the user may have moved
+// to another dataset). A finished local job is never the target: a later run
+// started elsewhere, by the agent say, is the one in flight.
+const cancellableJobId = computed(
+  () =>
+    currentJobId.value ??
+    (localRunning.value ? currentJob.value?.jobId : null) ??
+    null,
+);
 
 const batchProgressPercent = computed(() => {
   if (!batchProgress.value || batchProgress.value.total === 0) {
@@ -419,68 +454,70 @@ async function compute() {
     return;
   }
   localJobLog.value = "";
-  running.value = true;
+  localRunning.value = true;
   currentJob.value = null;
   previousRunStatus.value = null;
 
-  if (applyToAllDatasets.value && store.selectedConfigurationId) {
-    await computeBatch();
-  } else {
-    currentJob.value = await annotationsStore.computeAnnotationsWithWorker({
-      tool: props.tool,
-      workerInterface: interfaceValues.value,
-      progress: progressInfo.value,
-      error: errorInfo.value,
-      callback: (success) => {
-        running.value = false;
-        previousRunStatus.value = success;
-        progressInfo.value = {};
-      },
-    });
+  try {
+    if (applyToAllDatasets.value && store.selectedConfigurationId) {
+      await computeBatch();
+    } else {
+      currentJob.value = await annotationsStore.computeAnnotationsWithWorker({
+        tool: props.tool,
+        workerInterface: interfaceValues.value,
+        progress: progressInfo.value,
+        error: errorInfo.value,
+        callback: (success) => {
+          localRunning.value = false;
+          previousRunStatus.value = success;
+          progressInfo.value = {};
+        },
+      });
+    }
+  } catch (error) {
+    // The run never started (or the batch broke off): nothing will call
+    // back, so end the run here.
+    logError(`Failed to run ${props.tool.name}`, error);
+    localRunning.value = false;
+    previousRunStatus.value = false;
+    progressInfo.value = {};
   }
 }
 
 async function computeBatch() {
   const configurationId = store.selectedConfigurationId;
   if (!configurationId) {
-    running.value = false;
+    localRunning.value = false;
     return;
   }
 
-  batchProgress.value = {
-    total: collectionDatasetCount.value,
-    completed: 0,
-    failed: 0,
-    cancelled: 0,
-    currentDatasetName: "Starting...",
-  };
-
-  await annotationsStore.computeAnnotationsWithWorkerBatch({
-    tool: props.tool,
-    workerInterface: interfaceValues.value,
-    configurationId,
-    onBatchProgress: (status) => {
-      batchProgress.value = status;
-    },
-    onJobProgress: (_datasetId, progressInfoUpdate) => {
-      Object.assign(progressInfo.value, progressInfoUpdate);
-    },
-    onJobError: (_datasetId, errorInfoUpdate) => {
-      errorInfo.value.errors.push(...errorInfoUpdate.errors);
-    },
-    onCancel: (cancel) => {
-      batchCancelFunction.value = cancel;
-    },
-    onComplete: (results) => {
-      running.value = false;
-      batchCancelFunction.value = null;
+  try {
+    const { started, results } = await runBatch(
+      "workerTool",
+      configurationId,
+      props.tool.id,
+      collectionDatasetCount.value,
+      (hooks) =>
+        annotationsStore.computeAnnotationsWithWorkerBatch({
+          tool: props.tool,
+          workerInterface: interfaceValues.value,
+          configurationId,
+          ...hooks,
+          onJobProgress: (_datasetId, progressInfoUpdate) => {
+            Object.assign(progressInfo.value, progressInfoUpdate);
+          },
+          onJobError: (_datasetId, errorInfoUpdate) => {
+            errorInfo.value.errors.push(...errorInfoUpdate.errors);
+          },
+        }),
+    );
+    if (started && results) {
       previousRunStatus.value = results.succeeded > 0 && results.failed === 0;
-      progressInfo.value = {};
-      setTimeout(() => {
-        batchProgress.value = null;
-      }, 3000);
-    },
-  });
+    }
+  } finally {
+    localRunning.value = false;
+    progressInfo.value = {};
+  }
 }
 
 function cancel() {
@@ -489,7 +526,7 @@ function cancel() {
     return;
   }
 
-  const jobId = currentJob.value?.jobId;
+  const jobId = cancellableJobId.value;
   if (!jobId) {
     return;
   }
@@ -556,11 +593,14 @@ async function updateInterface(force?: boolean) {
     !fetchingWorkerInterface.value
   ) {
     fetchingWorkerInterface.value = true;
-    await propertiesStore
-      .fetchWorkerInterface({ image: image.value, force })
-      .finally();
-    fetchingWorkerInterface.value = false;
-    emit("loaded");
+    try {
+      await propertiesStore.fetchWorkerInterface({ image: image.value, force });
+      emit("loaded");
+    } catch (error) {
+      logError(`Failed to load the interface of ${image.value}`, error);
+    } finally {
+      fetchingWorkerInterface.value = false;
+    }
   }
 }
 
@@ -606,6 +646,7 @@ onMounted(() => {
 
 defineExpose({
   fetchingWorkerInterface,
+  localRunning,
   running,
   currentJob,
   previousRunStatus,

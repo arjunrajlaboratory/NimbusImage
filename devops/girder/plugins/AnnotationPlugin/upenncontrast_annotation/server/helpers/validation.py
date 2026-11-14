@@ -281,6 +281,22 @@ def validatePropertyPaths(propertyPaths):
         )
 
 
+def validateDisjointPropertyPaths(propertyPaths):
+    """Refuse a path that extends another (["area"] with ["area", "mean"]).
+    Mongo rejects such a projection with "Path collision"; in an endpoint
+    that streams its response, that would arrive after the 200 as a
+    truncated body. Repeated identical paths are fine. Call after
+    validatePropertyPaths."""
+    ordered = sorted(tuple(path) for path in propertyPaths)
+    for shorter, longer in zip(ordered, ordered[1:]):
+        if shorter != longer and longer[:len(shorter)] == shorter:
+            raise RestException(
+                "propertyPaths must not contain a path and its sub-path "
+                "(%s and %s)" % (".".join(shorter), ".".join(longer)),
+                code=400,
+            )
+
+
 def validateUncomputedCountsProperties(properties):
     """Validate the `properties` payload for the uncomputed-counts endpoint.
 
@@ -670,6 +686,22 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
     if tags is not None:
         if not isinstance(tags, dict):
             raise RestException("filters.tags must be an object", code=400)
+        # A key this server does not know is refused, not ignored: an
+        # ignored "all" would widen an ALL-tags match (e.g. a delete) to ANY.
+        unknown = set(tags) - {"values", "exclusive", "all"}
+        if unknown:
+            raise RestException(
+                "filters.tags has unknown keys: %s"
+                % ", ".join(sorted(map(str, unknown))),
+                code=400,
+            )
+        for flag in ("exclusive", "all"):
+            if tags.get(flag) is not None and not isinstance(
+                tags[flag], bool
+            ):
+                raise RestException(
+                    "filters.tags.%s must be a boolean" % flag, code=400
+                )
         tagValues = tags.get("values")
         if tagValues is not None:
             requireList(tagValues, "filters.tags.values")

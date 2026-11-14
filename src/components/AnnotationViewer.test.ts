@@ -440,6 +440,7 @@ vi.mock("@/store/filters", () => {
       roiFilters: [] as any[],
       emptyROIFilter: null as any,
       validateNewROIFilter: vi.fn(),
+      cancelROISelection: vi.fn(),
       updateHistograms: vi.fn().mockResolvedValue(undefined),
       // Every store member an immediate watcher in AnnotationViewer.vue reads
       // MUST be stubbed here. A missing one is not a silently absent stub: the
@@ -4077,6 +4078,79 @@ describe("AnnotationViewer", () => {
           (wrapper.vm as any).interactionLayer.removeAnnotation,
         ).toHaveBeenCalledWith(selectAnn);
       });
+
+      // Second click with "a1" already selected, hitting polygon "a2"
+      function mountForSecondCombineClick() {
+        mockedStore.selectedTool = {
+          configuration: {
+            id: "t1",
+            type: "edit",
+            values: { action: { value: "combine_click" }, tolerance: "2" },
+          },
+          state: { type: CombineToolStateSymbol, selectedAnnotationId: "a1" },
+        } as any;
+        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
+          makeAnnotation({ id: "a2", shape: "polygon" }),
+        );
+        (pointDistance as any).mockReturnValue(1);
+        wrapper = mountComponent();
+        const geoAnn = mockGeoJSAnnotation("polygon");
+        geoAnn.options("girderId", "a2");
+        (wrapper.vm as any).annotationLayer.annotations = vi.fn(() => [geoAnn]);
+      }
+
+      it("ignores clicks while a combine is in flight", async () => {
+        mountForSecondCombineClick();
+        let finishCombine!: (ok: boolean) => void;
+        (mockedAnnotationStore.combineAnnotations as any).mockReturnValueOnce(
+          new Promise<boolean>((resolve) => (finishCombine = resolve)),
+        );
+
+        const first = (wrapper.vm as any).handleAnnotationCombine(
+          mockGeoJSAnnotation("point"),
+        );
+        const secondClick = mockGeoJSAnnotation("point");
+        await (wrapper.vm as any).handleAnnotationCombine(secondClick);
+
+        expect(mockedAnnotationStore.combineAnnotations).toHaveBeenCalledTimes(
+          1,
+        );
+        expect(
+          (wrapper.vm as any).interactionLayer.removeAnnotation,
+        ).toHaveBeenCalledWith(secondClick);
+        finishCombine(true);
+        await first;
+        expect((wrapper.vm as any).selectedToolState.selectedAnnotationId).toBe(
+          null,
+        );
+      });
+
+      it("does not write the selection into a tool selected during the combine", async () => {
+        mountForSecondCombineClick();
+        let finishCombine!: (ok: boolean) => void;
+        (mockedAnnotationStore.combineAnnotations as any).mockReturnValueOnce(
+          new Promise<boolean>((resolve) => (finishCombine = resolve)),
+        );
+        const first = (wrapper.vm as any).handleAnnotationCombine(
+          mockGeoJSAnnotation("point"),
+        );
+
+        // The user picks another combine tool and clicks "a3" mid-request
+        mockedStore.selectedTool = {
+          configuration: {
+            id: "t2",
+            type: "edit",
+            values: { action: { value: "combine_click" }, tolerance: "2" },
+          },
+          state: { type: CombineToolStateSymbol, selectedAnnotationId: "a3" },
+        } as any;
+        finishCombine(true);
+        await first;
+
+        expect(
+          (mockedStore.selectedTool as any).state.selectedAnnotationId,
+        ).toBe("a3");
+      });
     });
 
     // --- handleAnnotationTagging / updateAnnotationTags ---
@@ -5942,7 +6016,38 @@ describe("AnnotationViewer", () => {
   // Category 7: Mouse / Drag Interactions (~17 tests)
   // =========================================================================
   describe("mouse / drag interactions", () => {
-    // --- handleDragStart ---
+    // --- Alt-drag move (handleDragStart / handleDragMove / handleDragEnd) ---
+    // The drag is one state object: null (idle) → dragging → saving → idle.
+    function setDragging(overrides: Record<string, any> = {}) {
+      const vm = wrapper.vm as any;
+      vm.dragState = {
+        phase: "dragging",
+        start: { x: 0, y: 0 },
+        annotation: makeAnnotation({ id: "a1" }),
+        originalCoordinates: [{ x: 100, y: 200 }],
+        ghost: mockGeoJSAnnotation("point"),
+        ghostLayer: vm.interactionLayer,
+        ...overrides,
+      };
+      return vm.dragState;
+    }
+
+    // Starts a drag through the real mousedown path, on annotation "a1"
+    function startAltDrag(ghost: any = mockGeoJSAnnotation("point")) {
+      const vm = wrapper.vm as any;
+      const ann1 = makeAnnotation({ id: "a1", shape: "point" });
+      (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(ann1);
+      (pointDistance as any).mockReturnValue(1);
+      const geoAnn = mockGeoJSAnnotation("point");
+      geoAnn.options("girderId", "a1");
+      vm.annotationLayer.annotations = vi.fn(() => [geoAnn]);
+      // Not mockReturnValueOnce: a start that is refused leaves the queued
+      // value behind, and vi.clearAllMocks() does not drain that queue
+      (geojsAnnotationFactory as any).mockReturnValue(ghost);
+      vm.handleDragStart({ geo: { x: 10, y: 20 }, modifiers: { alt: true } });
+      return { ann1, ghost };
+    }
+
     describe("handleDragStart", () => {
       it("requires alt modifier", () => {
         wrapper = mountComponent();
@@ -5960,50 +6065,19 @@ describe("AnnotationViewer", () => {
       });
 
       it("starts dragging when annotation is found", () => {
-        const ann1 = makeAnnotation({ id: "a1", shape: "point" });
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
-          ann1,
-        );
-        (pointDistance as any).mockReturnValue(1);
-
         wrapper = mountComponent();
-        const geoAnn = mockGeoJSAnnotation("point");
-        geoAnn.options("girderId", "a1");
-        (wrapper.vm as any).annotationLayer.annotations = vi.fn(() => [geoAnn]);
+        const { ann1 } = startAltDrag();
 
-        // Mock geojsAnnotationFactory to return a ghost
-        const ghost = mockGeoJSAnnotation("point");
-        (geojsAnnotationFactory as any).mockReturnValue(ghost);
-
-        (wrapper.vm as any).handleDragStart({
-          geo: { x: 10, y: 20 },
-          modifiers: { alt: true },
-        });
-
+        const drag = (wrapper.vm as any).dragState;
         expect((wrapper.vm as any).isDragging).toBe(true);
-        expect((wrapper.vm as any).draggedAnnotation).toStrictEqual(ann1);
-        expect((wrapper.vm as any).dragStartPosition).toEqual({ x: 10, y: 20 });
+        expect(drag.phase).toBe("dragging");
+        expect(drag.annotation).toStrictEqual(ann1);
+        expect(drag.start).toEqual({ x: 10, y: 20 });
       });
 
       it("creates ghost annotation and adds to interactionLayer", () => {
-        const ann1 = makeAnnotation({ id: "a1", shape: "point" });
-        (mockedAnnotationStore.getAnnotationFromId as any).mockReturnValue(
-          ann1,
-        );
-        (pointDistance as any).mockReturnValue(1);
-
         wrapper = mountComponent();
-        const geoAnn = mockGeoJSAnnotation("point");
-        geoAnn.options("girderId", "a1");
-        (wrapper.vm as any).annotationLayer.annotations = vi.fn(() => [geoAnn]);
-
-        const ghost = mockGeoJSAnnotation("point");
-        (geojsAnnotationFactory as any).mockReturnValue(ghost);
-
-        (wrapper.vm as any).handleDragStart({
-          geo: { x: 10, y: 20 },
-          modifiers: { alt: true },
-        });
+        const { ghost } = startAltDrag();
 
         expect(
           (wrapper.vm as any).interactionLayer.addAnnotation,
@@ -6023,6 +6097,50 @@ describe("AnnotationViewer", () => {
         });
         expect((wrapper.vm as any).isDragging).toBe(false);
       });
+
+      it("stays idle when the ghost cannot be created", () => {
+        wrapper = mountComponent();
+        startAltDrag(null);
+
+        expect((wrapper.vm as any).isDragging).toBe(false);
+        expect((wrapper.vm as any).dragState).toBeNull();
+      });
+
+      it("ignores an alt-mousedown while the previous move is saving", async () => {
+        wrapper = mountComponent();
+        const vm = wrapper.vm as any;
+        let finishSave!: () => void;
+        (
+          mockedAnnotationStore.updateAnnotationsPerId as any
+        ).mockReturnValueOnce(
+          new Promise<void>((resolve) => (finishSave = resolve)),
+        );
+        const { ghost: firstGhost } = startAltDrag();
+        const end = vm.handleDragEnd({ geo: { x: 30, y: 40 } });
+        expect(vm.dragState.phase).toBe("saving");
+
+        startAltDrag(mockGeoJSAnnotation("point"));
+
+        expect(vm.dragState.ghost).toBe(firstGhost);
+        expect(vm.interactionLayer.addAnnotation).toHaveBeenCalledTimes(1);
+        finishSave();
+        await end;
+        expect(vm.dragState).toBeNull();
+      });
+
+      it("drops a drag that lost its mouseup before starting another", () => {
+        wrapper = mountComponent();
+        const vm = wrapper.vm as any;
+        const { ghost: staleGhost } = startAltDrag();
+        const { ghost: freshGhost } = startAltDrag(
+          mockGeoJSAnnotation("point"),
+        );
+
+        expect(vm.interactionLayer.removeAnnotation).toHaveBeenCalledWith(
+          staleGhost,
+        );
+        expect(vm.dragState.ghost).toBe(freshGhost);
+      });
     });
 
     // --- handleDragMove ---
@@ -6035,26 +6153,19 @@ describe("AnnotationViewer", () => {
 
       it("calculates dx/dy from start position", () => {
         wrapper = mountComponent();
-        const ghost = mockGeoJSAnnotation("point");
-        (wrapper.vm as any).isDragging = true;
-        (wrapper.vm as any).dragStartPosition = { x: 10, y: 20 };
-        (wrapper.vm as any).draggedAnnotation = makeAnnotation({ id: "a1" });
-        (wrapper.vm as any).dragGhostAnnotation = ghost;
-        (wrapper.vm as any).dragOriginalCoordinates = [{ x: 5, y: 10 }];
+        const { ghost } = setDragging({
+          start: { x: 10, y: 20 },
+          originalCoordinates: [{ x: 5, y: 10 }],
+        });
 
         (wrapper.vm as any).handleDragMove({ geo: { x: 30, y: 40 } });
         // dx = 30-10 = 20, dy = 40-20 = 20
-        expect(ghost._coordinates).toHaveBeenCalled();
+        expect(ghost._coordinates).toHaveBeenCalledWith([{ x: 25, y: -30 }]);
       });
 
       it("updates ghost coordinates", () => {
         wrapper = mountComponent();
-        const ghost = mockGeoJSAnnotation("point");
-        (wrapper.vm as any).isDragging = true;
-        (wrapper.vm as any).dragStartPosition = { x: 0, y: 0 };
-        (wrapper.vm as any).draggedAnnotation = makeAnnotation({ id: "a1" });
-        (wrapper.vm as any).dragGhostAnnotation = ghost;
-        (wrapper.vm as any).dragOriginalCoordinates = [{ x: 100, y: 200 }];
+        const { ghost } = setDragging();
 
         (wrapper.vm as any).handleDragMove({ geo: { x: 10, y: 15 } });
         expect(ghost._coordinates).toHaveBeenCalled();
@@ -6063,14 +6174,17 @@ describe("AnnotationViewer", () => {
 
       it("does nothing when geo is missing", () => {
         wrapper = mountComponent();
-        (wrapper.vm as any).isDragging = true;
-        (wrapper.vm as any).dragStartPosition = { x: 0, y: 0 };
-        (wrapper.vm as any).draggedAnnotation = makeAnnotation({ id: "a1" });
-        const ghost = mockGeoJSAnnotation("point");
-        (wrapper.vm as any).dragGhostAnnotation = ghost;
-        (wrapper.vm as any).dragOriginalCoordinates = [{ x: 5, y: 10 }];
+        const { ghost } = setDragging();
 
         (wrapper.vm as any).handleDragMove({});
+        expect(ghost._coordinates).not.toHaveBeenCalled();
+      });
+
+      it("does not move the ghost while saving", () => {
+        wrapper = mountComponent();
+        const { ghost } = setDragging({ phase: "saving" });
+
+        (wrapper.vm as any).handleDragMove({ geo: { x: 10, y: 15 } });
         expect(ghost._coordinates).not.toHaveBeenCalled();
       });
     });
@@ -6087,12 +6201,7 @@ describe("AnnotationViewer", () => {
 
       it("commits offset via updateAnnotationsPerId", async () => {
         wrapper = mountComponent();
-        const ghost = mockGeoJSAnnotation("point");
-        (wrapper.vm as any).isDragging = true;
-        (wrapper.vm as any).dragStartPosition = { x: 0, y: 0 };
-        (wrapper.vm as any).draggedAnnotation = makeAnnotation({ id: "a1" });
-        (wrapper.vm as any).dragGhostAnnotation = ghost;
-        (wrapper.vm as any).dragOriginalCoordinates = [{ x: 100, y: 200 }];
+        setDragging();
 
         await (wrapper.vm as any).handleDragEnd({ geo: { x: 10, y: 15 } });
         expect(
@@ -6102,56 +6211,292 @@ describe("AnnotationViewer", () => {
             annotationIds: ["a1"],
           }),
         );
+        const { editFunction } = (
+          mockedAnnotationStore.updateAnnotationsPerId as any
+        ).mock.calls[0][0];
+        const edited: any = { coordinates: [] };
+        editFunction(edited);
+        expect(edited.coordinates).toEqual([{ x: 110, y: 215, z: undefined }]);
       });
 
       it("removes ghost and resets state", async () => {
         wrapper = mountComponent();
-        const ghost = mockGeoJSAnnotation("point");
-        (wrapper.vm as any).isDragging = true;
-        (wrapper.vm as any).dragStartPosition = { x: 0, y: 0 };
-        (wrapper.vm as any).draggedAnnotation = makeAnnotation({ id: "a1" });
-        (wrapper.vm as any).dragGhostAnnotation = ghost;
-        (wrapper.vm as any).dragOriginalCoordinates = [{ x: 100, y: 200 }];
+        const { ghost } = setDragging();
 
         await (wrapper.vm as any).handleDragEnd({ geo: { x: 10, y: 15 } });
         expect(
           (wrapper.vm as any).interactionLayer.removeAnnotation,
         ).toHaveBeenCalledWith(ghost);
         expect((wrapper.vm as any).isDragging).toBe(false);
-        expect((wrapper.vm as any).dragStartPosition).toBeNull();
-        expect((wrapper.vm as any).draggedAnnotation).toBeNull();
-        expect((wrapper.vm as any).dragGhostAnnotation).toBeNull();
+        expect((wrapper.vm as any).dragState).toBeNull();
       });
 
-      it("does nothing when geo is missing", async () => {
+      it("cancels the drag without saving when geo is missing", async () => {
         wrapper = mountComponent();
-        (wrapper.vm as any).isDragging = true;
-        (wrapper.vm as any).dragStartPosition = { x: 0, y: 0 };
-        (wrapper.vm as any).draggedAnnotation = makeAnnotation({ id: "a1" });
-        (wrapper.vm as any).dragGhostAnnotation = mockGeoJSAnnotation("point");
-        (wrapper.vm as any).dragOriginalCoordinates = [{ x: 5, y: 10 }];
+        const { ghost } = setDragging();
 
         await (wrapper.vm as any).handleDragEnd({});
         expect(
           mockedAnnotationStore.updateAnnotationsPerId,
         ).not.toHaveBeenCalled();
+        expect(
+          (wrapper.vm as any).interactionLayer.removeAnnotation,
+        ).toHaveBeenCalledWith(ghost);
+        expect((wrapper.vm as any).isDragging).toBe(false);
+      });
+
+      it("removes the ghost and returns to idle when the save fails", async () => {
+        wrapper = mountComponent();
+        const { ghost } = setDragging();
+        (
+          mockedAnnotationStore.updateAnnotationsPerId as any
+        ).mockRejectedValueOnce(new Error("save failed"));
+
+        await (wrapper.vm as any).handleDragEnd({ geo: { x: 10, y: 15 } });
+
+        expect(
+          (wrapper.vm as any).interactionLayer.removeAnnotation,
+        ).toHaveBeenCalledWith(ghost);
+        expect((wrapper.vm as any).isDragging).toBe(false);
+      });
+    });
+
+    describe("alt-drag reset", () => {
+      it("removes the ghost from the old interaction layer when the layer is swapped", async () => {
+        wrapper = mountComponent();
+        const oldLayer = (wrapper.vm as any).interactionLayer;
+        const { ghost } = startAltDrag();
+
+        await wrapper.setProps({ interactionLayer: mockAnnotationLayer() });
+
+        expect(oldLayer.removeAnnotation).toHaveBeenCalledWith(ghost);
+        expect((wrapper.vm as any).isDragging).toBe(false);
+      });
+
+      it("resets the drag when the annotation layer is swapped", async () => {
+        wrapper = mountComponent();
+        const { ghost } = startAltDrag();
+        const interactionLayer = (wrapper.vm as any).interactionLayer;
+
+        await wrapper.setProps({ annotationLayer: mockAnnotationLayer() });
+
+        expect(interactionLayer.removeAnnotation).toHaveBeenCalledWith(ghost);
+        expect((wrapper.vm as any).isDragging).toBe(false);
+      });
+
+      it("resets the drag when the tool changes", async () => {
+        wrapper = mountComponent();
+        const { ghost } = startAltDrag();
+        const interactionLayer = (wrapper.vm as any).interactionLayer;
+
+        mockedStore.selectedTool = {
+          configuration: {
+            id: "t1",
+            type: "segmentation",
+            values: {},
+          },
+          state: {},
+        } as any;
+        await wrapper.vm.$nextTick();
+
+        expect(interactionLayer.removeAnnotation).toHaveBeenCalledWith(ghost);
+        expect((wrapper.vm as any).isDragging).toBe(false);
+      });
+
+      it("keeps the drag when the same tool's configuration is replaced", async () => {
+        mockedStore.selectedTool = {
+          configuration: { id: "t1", type: "segmentation", values: {} },
+          state: {},
+        } as any;
+        wrapper = mountComponent();
+        startAltDrag();
+
+        mockedStore.selectedTool = {
+          configuration: { id: "t1", type: "segmentation", values: { a: 1 } },
+          state: {},
+        } as any;
+        await wrapper.vm.$nextTick();
+
+        expect((wrapper.vm as any).isDragging).toBe(true);
+      });
+
+      it("removes the ghost on unmount", () => {
+        wrapper = mountComponent();
+        const { ghost } = startAltDrag();
+        const interactionLayer = (wrapper.vm as any).interactionLayer;
+
+        wrapper.unmount();
+        wrapper = undefined as any;
+
+        expect(interactionLayer.removeAnnotation).toHaveBeenCalledWith(ghost);
+      });
+
+      it("does not clear a newer drag when an old save settles after a reset", async () => {
+        wrapper = mountComponent();
+        const vm = wrapper.vm as any;
+        let finishSave!: () => void;
+        (
+          mockedAnnotationStore.updateAnnotationsPerId as any
+        ).mockReturnValueOnce(
+          new Promise<void>((resolve) => (finishSave = resolve)),
+        );
+        startAltDrag();
+        const end = vm.handleDragEnd({ geo: { x: 30, y: 40 } });
+        vm.resetDrag();
+        const { ghost: newGhost } = startAltDrag(mockGeoJSAnnotation("point"));
+
+        finishSave();
+        await end;
+
+        expect(vm.dragState?.ghost).toBe(newGhost);
+        expect(vm.dragState?.phase).toBe("dragging");
+      });
+
+      it("cancels a drag whose release the map never sees", () => {
+        wrapper = mountComponent();
+        const { ghost } = startAltDrag();
+        const interactionLayer = (wrapper.vm as any).interactionLayer;
+
+        // Released outside the map: only the window hears it
+        window.dispatchEvent(new MouseEvent("mouseup"));
+        vi.runOnlyPendingTimers();
+
+        expect(interactionLayer.removeAnnotation).toHaveBeenCalledWith(ghost);
+        expect((wrapper.vm as any).isDragging).toBe(false);
+        expect(
+          mockedAnnotationStore.updateAnnotationsPerId,
+        ).not.toHaveBeenCalled();
+      });
+
+      it("still commits a release over the map that the window hears first", async () => {
+        wrapper = mountComponent();
+        const vm = wrapper.vm as any;
+        let finishSave!: () => void;
+        (
+          mockedAnnotationStore.updateAnnotationsPerId as any
+        ).mockReturnValueOnce(
+          new Promise<void>((resolve) => (finishSave = resolve)),
+        );
+        startAltDrag();
+
+        // Capture phase on the window first, then the map's own mouseup
+        window.dispatchEvent(new MouseEvent("mouseup"));
+        const end = vm.handleDragEnd({ geo: { x: 30, y: 40 } });
+        vi.runOnlyPendingTimers();
+
+        expect(vm.dragState?.phase).toBe("saving");
+        finishSave();
+        await end;
+        expect(
+          mockedAnnotationStore.updateAnnotationsPerId,
+        ).toHaveBeenCalledTimes(1);
+        expect(vm.isDragging).toBe(false);
+      });
+
+      it("cancels a drag when the window loses focus", () => {
+        wrapper = mountComponent();
+        const { ghost } = startAltDrag();
+        const interactionLayer = (wrapper.vm as any).interactionLayer;
+
+        window.dispatchEvent(new Event("blur"));
+
+        expect(interactionLayer.removeAnnotation).toHaveBeenCalledWith(ghost);
+        expect((wrapper.vm as any).isDragging).toBe(false);
+        expect(
+          mockedAnnotationStore.updateAnnotationsPerId,
+        ).not.toHaveBeenCalled();
+      });
+
+      it("leaves a drag that is saving to its save on window blur or release", () => {
+        wrapper = mountComponent();
+        const vm = wrapper.vm as any;
+        (
+          mockedAnnotationStore.updateAnnotationsPerId as any
+        ).mockReturnValueOnce(new Promise<void>(() => {}));
+        const { ghost } = startAltDrag();
+        void vm.handleDragEnd({ geo: { x: 30, y: 40 } });
+
+        window.dispatchEvent(new Event("blur"));
+        window.dispatchEvent(new MouseEvent("mouseup"));
+        vi.runOnlyPendingTimers();
+
+        expect(vm.dragState?.phase).toBe("saving");
+        expect(vm.interactionLayer.removeAnnotation).not.toHaveBeenCalledWith(
+          ghost,
+        );
+      });
+
+      it("removes every window listener it added on unmount", () => {
+        const added = vi.spyOn(window, "addEventListener");
+        const removed = vi.spyOn(window, "removeEventListener");
+        wrapper = mountComponent();
+        const viewerListeners = added.mock.calls.filter(([type]) =>
+          ["mouseup", "blur", "keydown"].includes(type),
+        );
+        expect(viewerListeners.length).toBeGreaterThanOrEqual(3);
+
+        wrapper.unmount();
+        wrapper = undefined as any;
+
+        // Same type, listener and capture flag, or the removal is a no-op
+        const notRemoved = viewerListeners.filter(
+          ([type, listener, options]) =>
+            !removed.mock.calls.some(
+              ([t, l, o]) =>
+                t === type && l === listener && Boolean(o) === Boolean(options),
+            ),
+        );
+        expect(notRemoved.map(([type]) => type)).toEqual([]);
+        added.mockRestore();
+        removed.mockRestore();
       });
     });
 
     // --- onMousePathChanged ---
     describe("onMousePathChanged", () => {
-      it("calls consumeMouseState when newState is null and oldState was active", () => {
+      it("consumes a capture that ended with an explicit commit", () => {
         wrapper = mountComponent();
-        // In Vue 3 <script setup>, can't spy on closure functions.
-        // Verify consumeMouseState was entered by checking it doesn't throw
-        // and that the code path was taken (consumeMouseState checks selectionAnnotation).
         const oldState = {
           isMouseMovePreviewState: false,
+          outcome: "commit",
           path: [{ x: 10, y: 20 }],
         };
-        expect(() => {
-          (wrapper.vm as any).onMousePathChanged(null, oldState);
-        }).not.toThrow();
+        (wrapper.vm as any).onMousePathChanged(null, oldState);
+        // consumeMouseState (no tool) builds a selection point from the path
+        expect(geojs.annotation.pointAnnotation).toHaveBeenCalled();
+      });
+
+      it("does not consume a cancelled capture, only clears the preview", () => {
+        wrapper = mountComponent();
+        const preview = mockGeoJSAnnotation("line");
+        (wrapper.vm as any).selectionAnnotation = preview;
+        const oldState = {
+          isMouseMovePreviewState: false,
+          outcome: "cancel",
+          path: [{ x: 10, y: 20 }],
+        };
+        (wrapper.vm as any).onMousePathChanged(null, oldState);
+        expect(geojs.annotation.pointAnnotation).not.toHaveBeenCalled();
+        expect(geojs.annotation.polygonAnnotation).not.toHaveBeenCalled();
+        expect(
+          (wrapper.vm as any).interactionLayer.removeAnnotation,
+        ).toHaveBeenCalledWith(preview);
+        expect((wrapper.vm as any).selectionAnnotation).toBeNull();
+      });
+
+      it("does not consume a capture cleared without an outcome", () => {
+        // e.g. its map entry was replaced, so the prop went null under it
+        wrapper = mountComponent();
+        const oldState = {
+          isMouseMovePreviewState: false,
+          path: [
+            { x: 10, y: 20 },
+            { x: 30, y: 40 },
+          ],
+        };
+        (wrapper.vm as any).onMousePathChanged(null, oldState);
+        expect(geojs.annotation.pointAnnotation).not.toHaveBeenCalled();
+        expect(geojs.annotation.polygonAnnotation).not.toHaveBeenCalled();
       });
 
       it("calls previewMouseState for non-null newState", () => {
@@ -6537,7 +6882,11 @@ describe("AnnotationViewer", () => {
         expect(eventTypes).toContain("geojs.annotation.state");
       });
 
-      it("registers tagging click handler when tool is tagging type", () => {
+      // A tag_click arms point mode, and the finished point annotation is
+      // tagged through the state event. A separate mouseclick handler, bound
+      // only when the tool happened to be selected at bind time, tagged the
+      // same click a second time.
+      it("binds no separate tagging click handler, even when a tagging tool is selected at bind time", () => {
         mockedStore.selectedTool = {
           configuration: {
             type: "tagging",
@@ -6554,7 +6903,16 @@ describe("AnnotationViewer", () => {
         const mouseclickCalls = geoOnCalls.filter(
           (call: any[]) => call[0] === "geojs.mouseclick",
         );
-        expect(mouseclickCalls.length).toBeGreaterThanOrEqual(1);
+        expect(mouseclickCalls).toHaveLength(0);
+        // The click still reaches the tagging path through the state event
+        expect(
+          geoOnCalls.some(
+            (call: any[]) => call[0] === "geojs.annotation.state",
+          ),
+        ).toBe(true);
+        expect(
+          (wrapper.vm as any).interactionLayer.mode,
+        ).toHaveBeenLastCalledWith("point");
       });
     });
 
@@ -6792,7 +7150,7 @@ describe("AnnotationViewer", () => {
         expect((wrapper.vm as any).samPrompts).toEqual([]);
       });
 
-      it("returns prompts when mainPrompt has output", async () => {
+      it("returns prompts from the state's reactive mirror", async () => {
         // Must mock samPromptToAnnotation before setting tool, because
         // the @Watch("samPrompts") watcher fires and calls it
         const mockAnn = mockGeoJSAnnotation("polygon");
@@ -6806,10 +7164,12 @@ describe("AnnotationViewer", () => {
           state: {
             type: SamAnnotationToolStateSymbol,
             mapEntry: { map: mapObj },
+            // samPrompts reads this reactive mirror, not the markRaw'd node.
+            prompts: mockPrompts,
             nodes: {
               input: {
                 geoJSMap: { output: { map: mapObj } },
-                mainPrompt: { output: mockPrompts },
+                mainPrompt: { output: NoOutput },
                 previewPrompt: { output: NoOutput, setValue: vi.fn() },
               },
             },
@@ -7213,12 +7573,206 @@ describe("AnnotationViewer", () => {
         }).not.toThrow();
       });
 
-      it("does not call refreshAnnotationMode when no roiFilter", () => {
-        mockedFilterStore.emptyROIFilter = null;
+      it("leaves ROI polygon mode when the empty ROI filter is cleared", async () => {
         wrapper = mountComponent();
-        const spy = vi.spyOn(wrapper.vm as any, "refreshAnnotationMode");
-        (wrapper.vm as any).watchFilter();
-        expect(spy).not.toHaveBeenCalled();
+        const interactionLayer = (wrapper.vm as any).interactionLayer;
+
+        mockedFilterStore.emptyROIFilter = { id: "roi1" } as any;
+        await wrapper.vm.$nextTick();
+        expect(interactionLayer.mode).toHaveBeenLastCalledWith("polygon");
+
+        // Cleared without a drawing completing (e.g. a filter reset)
+        mockedFilterStore.emptyROIFilter = null;
+        await wrapper.vm.$nextTick();
+        expect(interactionLayer.mode).toHaveBeenLastCalledWith(null);
+      });
+
+      describe("leaving a pending ROI selection", () => {
+        beforeEach(() => {
+          (mockedFilterStore.cancelROISelection as any).mockImplementation(
+            () => {
+              mockedFilterStore.emptyROIFilter = null;
+            },
+          );
+        });
+        afterEach(() => {
+          (mockedFilterStore.cancelROISelection as any).mockReset();
+        });
+
+        it("cancels a pending ROI selection on Escape", async () => {
+          wrapper = mountComponent();
+          const interactionLayer = (wrapper.vm as any).interactionLayer;
+          mockedFilterStore.emptyROIFilter = { id: "roi1" } as any;
+          await wrapper.vm.$nextTick();
+
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+          await wrapper.vm.$nextTick();
+
+          expect(mockedFilterStore.cancelROISelection).toHaveBeenCalled();
+          expect(interactionLayer.mode).toHaveBeenLastCalledWith(null);
+        });
+
+        it("keeps a pending ROI selection on an Escape something else handled", async () => {
+          wrapper = mountComponent();
+          mockedFilterStore.emptyROIFilter = { id: "roi1" } as any;
+          await wrapper.vm.$nextTick();
+
+          // Typed in a text field, or in a contenteditable element
+          const input = document.createElement("input");
+          const editable = document.createElement("div");
+          editable.contentEditable = "true";
+          // jsdom does not implement isContentEditable
+          Object.defineProperty(editable, "isContentEditable", { value: true });
+          // Closing a menu or dialog (its content holds the focus)
+          const overlay = document.createElement("div");
+          overlay.className = "v-overlay__content";
+          const overlayButton = document.createElement("button");
+          overlay.appendChild(overlayButton);
+          document.body.append(input, editable, overlay);
+          for (const target of [input, editable, overlayButton]) {
+            target.dispatchEvent(
+              new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+            );
+          }
+          // Handled (and prevented) by a handler that ran first
+          const prevented = new KeyboardEvent("keydown", {
+            key: "Escape",
+            cancelable: true,
+          });
+          prevented.preventDefault();
+          window.dispatchEvent(prevented);
+          input.remove();
+          editable.remove();
+          overlay.remove();
+          // Closing a menu opened by a click, or a dialog: the focus stays on
+          // the activator, outside the overlay
+          for (const overlayClass of ["v-menu", "v-dialog"]) {
+            const openOverlay = document.createElement("div");
+            openOverlay.className = `v-overlay ${overlayClass} v-overlay--active`;
+            document.body.append(openOverlay);
+            window.dispatchEvent(
+              new KeyboardEvent("keydown", { key: "Escape" }),
+            );
+            openOverlay.remove();
+          }
+
+          expect(mockedFilterStore.cancelROISelection).not.toHaveBeenCalled();
+
+          // An open tooltip is an overlay too, but Escape is not for it
+          const tooltip = document.createElement("div");
+          tooltip.className = "v-overlay v-tooltip v-overlay--active";
+          document.body.append(tooltip);
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+          tooltip.remove();
+
+          expect(mockedFilterStore.cancelROISelection).toHaveBeenCalledTimes(1);
+        });
+
+        it("ignores Escape when no ROI selection is pending", () => {
+          wrapper = mountComponent();
+
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+
+          expect(mockedFilterStore.cancelROISelection).not.toHaveBeenCalled();
+        });
+
+        it("keeps an ROI selection whose start deselected the tool", async () => {
+          mockedStore.selectedTool = {
+            configuration: {
+              id: "t1",
+              type: "create",
+              values: { annotation: { shape: "point" } },
+            },
+            state: {},
+          } as any;
+          wrapper = mountComponent();
+          mockedFilterStore.emptyROIFilter = { id: "roi1" } as any;
+          await wrapper.vm.$nextTick();
+
+          // Starting the ROI selection deselects the tool (the store mock
+          // does not, so do it here)
+          mockedStore.selectedTool = null;
+          await wrapper.vm.$nextTick();
+
+          expect(mockedFilterStore.cancelROISelection).not.toHaveBeenCalled();
+          expect(mockedFilterStore.emptyROIFilter).toEqual({ id: "roi1" });
+        });
+
+        it("keeps a tool picked while an ROI selection is pending, and drops the selection", async () => {
+          wrapper = mountComponent();
+          mockedFilterStore.emptyROIFilter = { id: "roi1" } as any;
+          await wrapper.vm.$nextTick();
+          (mockedStore.setSelectedToolId as any).mockClear();
+
+          mockedStore.selectedTool = {
+            configuration: {
+              id: "t1",
+              type: "create",
+              values: { annotation: { shape: "point" } },
+            },
+            state: {},
+          } as any;
+          await wrapper.vm.$nextTick();
+
+          expect(mockedFilterStore.cancelROISelection).toHaveBeenCalled();
+          expect(mockedStore.setSelectedToolId).not.toHaveBeenCalledWith(null);
+          expect(
+            (wrapper.vm as any).interactionLayer.mode,
+          ).toHaveBeenLastCalledWith("point");
+        });
+      });
+    });
+
+    describe("addAnnotationFromSnapping", () => {
+      it("creates the annotation with the tool it was drawn with, even if the selection changes during the snap", async () => {
+        const snapTool = {
+          id: "snap1",
+          type: "snap",
+          values: {
+            snapTo: { value: "circleToDot" },
+            annotation: { coordinateAssignments: { layer: "layer1" } },
+          },
+        };
+        mockedStore.selectedTool = {
+          configuration: snapTool,
+          state: {},
+        } as any;
+        let finishScreenshot!: (canvas: any) => void;
+        const mapentry = {
+          imageLayers: [{}],
+          map: {
+            screenshot: vi.fn(
+              () => new Promise((resolve) => (finishScreenshot = resolve)),
+            ),
+          },
+        };
+        wrapper = mountComponent({ maps: [mapentry] });
+        (mockedStore.getLayerIndexFromId as any).mockReturnValueOnce(0);
+        const { snapCoordinates } = await import("@/utils/itk");
+        (snapCoordinates as any).mockResolvedValueOnce([{ x: 1, y: 2 }]);
+
+        const done = (wrapper.vm as any).addAnnotationFromSnapping(
+          mockGeoJSAnnotation("point"),
+        );
+        // The user deselects the tool while the screenshot is taken
+        mockedStore.selectedTool = null;
+        finishScreenshot({
+          toBlob: (callback: (blob: any) => void) =>
+            callback({ arrayBuffer: async () => new ArrayBuffer(4) }),
+        });
+        await done;
+
+        expect(snapCoordinates).toHaveBeenCalledWith(
+          [{ x: 10, y: 20 }],
+          expect.any(Uint8Array),
+          snapTool,
+          mapentry.map,
+        );
+        expect(
+          mockedAnnotationStore.addAnnotationFromTool,
+        ).toHaveBeenCalledWith(
+          expect.objectContaining({ toolConfiguration: snapTool }),
+        );
       });
     });
 
@@ -7608,6 +8162,73 @@ describe("AnnotationViewer", () => {
         (wrapper.vm as any).handleLineScanMouseDown();
 
         expect(lineScanStore.points).not.toBeNull();
+      });
+
+      it("clears the scan and its displayed line when switching to another linescan tool", async () => {
+        armTool("linescan", "freehand");
+        wrapper = mountComponent();
+        await wrapper.vm.$nextTick();
+        const vm = wrapper.vm as any;
+        const displayed = mockGeoJSAnnotation("line");
+        (geojsAnnotationFactory as any).mockReturnValueOnce(displayed);
+        vm.handleLineScanAnnotationDone({
+          coordinates: () => completedLine.points,
+        });
+        expect(lineScanStore.points).not.toBeNull();
+        expect(vm.lineScanAnnotation).toBe(displayed);
+
+        mockedStore.selectedTool = {
+          configuration: {
+            id: "t2",
+            type: "linescan",
+            values: { lineType: { value: "segment" } },
+          },
+          state: {},
+        } as any;
+        await wrapper.vm.$nextTick();
+
+        expect(lineScanStore.points).toBeNull();
+        expect(vm.interactionLayer.removeAnnotation).toHaveBeenCalledWith(
+          displayed,
+        );
+        expect(vm.lineScanAnnotation).toBeNull();
+      });
+
+      it("keeps the line and the tool state when another of several viewers unmounts", async () => {
+        wrapper = mountComponent();
+        const other = mountComponent();
+        armTool("linescan", "freehand");
+        await wrapper.vm.$nextTick();
+        (geojsAnnotationFactory as any).mockReturnValueOnce(
+          mockGeoJSAnnotation("line"),
+        );
+        (wrapper.vm as any).handleLineScanAnnotationDone({
+          coordinates: () => completedLine.points,
+        });
+        expect(lineScanStore.toolLineType).toBe("freehand");
+
+        other.unmount();
+
+        expect(lineScanStore.points).toEqual(completedLine.points);
+        expect(lineScanStore.toolLineType).toBe("freehand");
+      });
+
+      it("clears the line when the viewer that drew it unmounts", async () => {
+        const owner = mountComponent();
+        wrapper = mountComponent();
+        armTool("linescan", "freehand");
+        await wrapper.vm.$nextTick();
+        (geojsAnnotationFactory as any).mockReturnValueOnce(
+          mockGeoJSAnnotation("line"),
+        );
+        (owner.vm as any).handleLineScanAnnotationDone({
+          coordinates: () => completedLine.points,
+        });
+
+        owner.unmount();
+
+        expect(lineScanStore.points).toBeNull();
+        expect(lineScanStore.toolLineType).toBe("freehand");
       });
     });
   });

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { nextTick } from "vue";
 import { shallowMount, flushPromises } from "@vue/test-utils";
 
@@ -7,6 +7,7 @@ vi.mock("lodash", () => ({
   debounce: (fn: any) => {
     const debounced = fn;
     debounced.cancel = vi.fn();
+    debounced.flush = vi.fn();
     return debounced;
   },
 }));
@@ -19,6 +20,8 @@ vi.mock("@/store", () => ({
   default: {
     editToolInConfiguration: vi.fn(),
     selectedConfigurationId: "config-1",
+    // The open dataset: the tool's job is looked up on it
+    dataset: { id: "ds-1" },
     api: {
       cancelJob: vi.fn(),
     },
@@ -56,7 +59,16 @@ vi.mock("@/store/properties", () => ({
 
 vi.mock("@/store/jobs", () => ({
   default: {
-    jobIdForToolId: {} as Record<string, string>,
+    // Tracked tool jobs per dataset: { [datasetId]: { [toolId]: jobId } }
+    trackedToolJobs: {} as Record<string, Record<string, string>>,
+    jobIdForToolInDataset(toolId: string, datasetId: string | null) {
+      return this.trackedToolJobs[String(datasetId)]?.[toolId] ?? null;
+    },
+    // Runs requested but not tracked yet: { [datasetId]: toolId[] }
+    toolRunsInFlight: {} as Record<string, string[]>,
+    isToolRunInFlight(toolId: string, datasetId: string | null) {
+      return !!this.toolRunsInFlight[String(datasetId)]?.includes(toolId);
+    },
     getJobLog: vi.fn().mockReturnValue(""),
   },
 }));
@@ -76,6 +88,7 @@ import annotationsStore from "@/store/annotation";
 import propertiesStore from "@/store/properties";
 import jobsStore from "@/store/jobs";
 import { getDefault } from "@/utils/workerInterface";
+import batchRuns, { resetBatchRuns } from "@/store/batchRuns";
 
 function makeTool(overrides: Record<string, any> = {}): any {
   return {
@@ -117,6 +130,7 @@ describe("AnnotationWorkerMenu", () => {
     // Reset store mocks
     (store as any).editToolInConfiguration = vi.fn();
     (store as any).selectedConfigurationId = "config-1";
+    (store as any).dataset = { id: "ds-1" };
     (store as any).api = { cancelJob: vi.fn() };
     (store as any).getCollectionDatasetCount = vi.fn().mockResolvedValue(3);
     (annotationsStore as any).computeAnnotationsWithWorker = vi
@@ -139,9 +153,24 @@ describe("AnnotationWorkerMenu", () => {
       .mockResolvedValue(undefined);
     (propertiesStore as any).fetchWorkerImageList = vi.fn();
     (propertiesStore as any).requestWorkerPreview = vi.fn();
-    (jobsStore as any).jobIdForToolId = {};
+    (jobsStore as any).trackedToolJobs = {};
     (jobsStore as any).getJobLog = vi.fn().mockReturnValue("");
+    resetBatchRuns();
   });
+
+  const toolRun = {
+    kind: "workerTool" as const,
+    configurationId: "config-1",
+    id: "tool-1",
+  };
+
+  // Puts a running batch for tool-1 in the store, as the menu would
+  function startStoreBatch(cancel?: () => void) {
+    batchRuns.startRun({ ...toolRun, total: 10 });
+    if (cancel) {
+      batchRuns.setRunCancel({ ...toolRun, cancel });
+    }
+  }
 
   // -- Computed: workerInterface --
   it("workerInterface returns store value for the image", () => {
@@ -186,14 +215,13 @@ describe("AnnotationWorkerMenu", () => {
 
   // -- Computed: currentJobId --
   it("currentJobId returns null when no matching jobId", () => {
-    (jobsStore as any).jobIdForToolId = {};
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    expect(vm.currentJobId).toBeUndefined();
+    expect(vm.currentJobId).toBeNull();
   });
 
   it("currentJobId returns job ID when tool has matching entry", () => {
-    (jobsStore as any).jobIdForToolId = { "tool-1": "job-abc" };
+    (jobsStore as any).trackedToolJobs = { "ds-1": { "tool-1": "job-abc" } };
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.currentJobId).toBe("job-abc");
@@ -252,13 +280,17 @@ describe("AnnotationWorkerMenu", () => {
   it("batchProgressPercent computes correct percentage", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    vm.batchProgress = {
-      total: 10,
-      completed: 3,
-      failed: 1,
-      cancelled: 1,
-      currentDatasetName: "test",
-    };
+    startStoreBatch();
+    batchRuns.setRunProgress({
+      ...toolRun,
+      progress: {
+        total: 10,
+        completed: 3,
+        failed: 1,
+        cancelled: 1,
+        currentDatasetName: "test",
+      },
+    });
     expect(vm.batchProgressPercent).toBe(50);
   });
 
@@ -292,7 +324,7 @@ describe("AnnotationWorkerMenu", () => {
 
   // -- Computed: jobLog --
   it("jobLog returns store log when currentJobId exists", () => {
-    (jobsStore as any).jobIdForToolId = { "tool-1": "job-abc" };
+    (jobsStore as any).trackedToolJobs = { "ds-1": { "tool-1": "job-abc" } };
     (jobsStore.getJobLog as any).mockReturnValue("log from store");
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
@@ -310,7 +342,7 @@ describe("AnnotationWorkerMenu", () => {
   it("compute does nothing when already running", async () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    vm.running = true;
+    vm.localRunning = true;
     await vm.compute();
     expect(
       annotationsStore.computeAnnotationsWithWorker,
@@ -320,7 +352,7 @@ describe("AnnotationWorkerMenu", () => {
   it("compute calls computeAnnotationsWithWorker for single dataset", async () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    vm.running = false;
+    vm.localRunning = false;
     vm.applyToAllDatasets = false;
     await vm.compute();
     expect(annotationsStore.computeAnnotationsWithWorker).toHaveBeenCalled();
@@ -332,7 +364,7 @@ describe("AnnotationWorkerMenu", () => {
   it("compute calls computeBatch when applyToAllDatasets is true", async () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    vm.running = false;
+    vm.localRunning = false;
     vm.applyToAllDatasets = true;
     await vm.compute();
     expect(
@@ -345,7 +377,7 @@ describe("AnnotationWorkerMenu", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     const mockCancel = vi.fn();
-    vm.batchCancelFunction = mockCancel;
+    startStoreBatch(mockCancel);
     vm.cancel();
     expect(mockCancel).toHaveBeenCalled();
     expect(store.api.cancelJob).not.toHaveBeenCalled();
@@ -354,16 +386,59 @@ describe("AnnotationWorkerMenu", () => {
   it("cancel calls api.cancelJob when currentJob has jobId", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    vm.batchCancelFunction = null;
+    vm.localRunning = true;
     vm.currentJob = { jobId: "job-xyz", datasetId: "ds-1" };
     vm.cancel();
     expect(store.api.cancelJob).toHaveBeenCalledWith("job-xyz");
   });
 
+  it("cancels the tracked job, not a finished job this menu submitted", () => {
+    // This menu's own run has ended; the agent then started the tool again.
+    // (The mock is not reactive, so the tracked job is set before mounting.)
+    (jobsStore as any).trackedToolJobs = {
+      [String(store.dataset?.id ?? null)]: { "tool-1": "job-active" },
+    };
+    try {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.localRunning = false;
+      vm.currentJob = { jobId: "job-finished", datasetId: "ds-1" };
+      vm.cancel();
+      expect(store.api.cancelJob).toHaveBeenCalledWith("job-active");
+    } finally {
+      (jobsStore as any).trackedToolJobs = {};
+    }
+  });
+
+  it("does not cancel a finished job when nothing is running", () => {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.localRunning = false;
+    vm.currentJob = { jobId: "job-finished", datasetId: "ds-1" };
+    vm.cancel();
+    expect(store.api.cancelJob).not.toHaveBeenCalled();
+  });
+
+  it("is running while a run another menu instance requested is unanswered", () => {
+    (jobsStore as any).toolRunsInFlight = {
+      [String(store.dataset?.id ?? null)]: ["tool-1"],
+    };
+    try {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.running).toBe(true);
+      vm.compute();
+      expect(
+        annotationsStore.computeAnnotationsWithWorker,
+      ).not.toHaveBeenCalled();
+    } finally {
+      (jobsStore as any).toolRunsInFlight = {};
+    }
+  });
+
   it("cancel does nothing when no batchCancel and no currentJob", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    vm.batchCancelFunction = null;
     vm.currentJob = null;
     vm.cancel();
     expect(store.api.cancelJob).not.toHaveBeenCalled();
@@ -479,5 +554,181 @@ describe("AnnotationWorkerMenu", () => {
     await wrapper.setProps({ tool: newTool });
     await nextTick();
     expect(propertiesStore.fetchWorkerImageList).toHaveBeenCalled();
+  });
+
+  // -- Run state ends on every path (IMPLICIT_STATE_MACHINES.md J2) --
+  describe("run state", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("ends the run when starting the worker job rejects", async () => {
+      (annotationsStore as any).computeAnnotationsWithWorker = vi
+        .fn()
+        .mockRejectedValue(new Error("POST failed"));
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      await vm.compute();
+      expect(vm.running).toBe(false);
+      expect(vm.previousRunStatus).toBe(false);
+    });
+
+    it("ends a batch run when the batch action rejects", async () => {
+      (annotationsStore as any).computeAnnotationsWithWorkerBatch = vi
+        .fn()
+        .mockRejectedValue(new Error("findDatasetViews failed"));
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.applyToAllDatasets = true;
+      await vm.compute();
+      expect(vm.running).toBe(false);
+      expect(vm.batchProgress).toBeNull();
+    });
+
+    it("stops showing the interface spinner when fetching the interface rejects", async () => {
+      (propertiesStore.getWorkerInterface as any).mockReturnValue(undefined);
+      (propertiesStore as any).fetchWorkerInterface = vi
+        .fn()
+        .mockRejectedValue(new Error("worker down"));
+      const wrapper = mountComponent();
+      await flushPromises();
+      expect((wrapper.vm as any).fetchingWorkerInterface).toBe(false);
+    });
+
+    it("keeps a new batch's progress when the previous batch's hide timer fires", async () => {
+      vi.useFakeTimers();
+      let call = 0;
+      (annotationsStore as any).computeAnnotationsWithWorkerBatch = vi.fn(
+        ({ onBatchProgress, onComplete }: any) => {
+          call++;
+          if (call === 1) {
+            onComplete({ succeeded: 1, failed: 0, cancelled: 0 });
+            return Promise.resolve();
+          }
+          onBatchProgress({
+            total: 3,
+            completed: 1,
+            failed: 0,
+            cancelled: 0,
+            currentDatasetName: "second",
+          });
+          // Still running when the first batch's timer fires
+          return new Promise(() => {});
+        },
+      );
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.applyToAllDatasets = true;
+      await vm.compute();
+      await vi.advanceTimersByTimeAsync(1000);
+      void vm.compute();
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(vm.batchProgress?.currentDatasetName).toBe("second");
+    });
+
+    it("shows a run the jobs store still tracks for the tool after remounting", () => {
+      (jobsStore as any).trackedToolJobs = {
+        "ds-1": {
+          "tool-1": "job-running",
+        },
+      };
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.running).toBe(true);
+      vm.cancel();
+      expect(store.api.cancelJob).toHaveBeenCalledWith("job-running");
+    });
+
+    // A menu remounted mid-batch (palettes remount; the menu is keyed by
+    // tool): the batch outlives the component (IMPLICIT_STATE_MACHINES.md J2)
+    it("shows, cancels and guards a batch started before the menu remounted", async () => {
+      const cancelBatch = vi.fn();
+      let reportProgress!: (status: any) => void;
+      (annotationsStore as any).computeAnnotationsWithWorkerBatch = vi.fn(
+        ({ onCancel, onBatchProgress }: any) => {
+          onCancel(cancelBatch);
+          reportProgress = onBatchProgress;
+          return new Promise(() => {});
+        },
+      );
+      const first = mountComponent();
+      (first.vm as any).applyToAllDatasets = true;
+      void (first.vm as any).compute();
+      await flushPromises();
+      first.unmount();
+
+      const vm = mountComponent().vm as any;
+      expect(vm.running).toBe(true);
+      expect(vm.batchProgress?.currentDatasetName).toBe("Starting...");
+
+      reportProgress({
+        total: 4,
+        completed: 1,
+        failed: 0,
+        cancelled: 0,
+        currentDatasetName: "dataset-2",
+      });
+      expect(vm.batchProgress?.currentDatasetName).toBe("dataset-2");
+      expect(vm.batchProgressPercent).toBe(25);
+
+      vm.cancel();
+      expect(cancelBatch).toHaveBeenCalledTimes(1);
+      expect(store.api.cancelJob).not.toHaveBeenCalled();
+
+      vm.applyToAllDatasets = true;
+      await vm.compute();
+      vm.applyToAllDatasets = false;
+      await vm.compute();
+      expect(
+        annotationsStore.computeAnnotationsWithWorkerBatch,
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        annotationsStore.computeAnnotationsWithWorker,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("ends the run and keeps the outcome when a batch completes", async () => {
+      (annotationsStore as any).computeAnnotationsWithWorkerBatch = vi.fn(
+        async ({ onComplete }: any) => {
+          onComplete({ succeeded: 2, failed: 0, cancelled: 0 });
+        },
+      );
+      const vm = mountComponent().vm as any;
+      vm.applyToAllDatasets = true;
+      await vm.compute();
+      expect(vm.running).toBe(false);
+      expect(vm.previousRunStatus).toBe(true);
+      expect(vm.batchCancelFunction).toBeNull();
+    });
+
+    it("does not show another dataset's run of the same tool", () => {
+      (jobsStore as any).trackedToolJobs = {
+        "some-other-dataset": { "tool-1": "job-elsewhere" },
+      };
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      expect(vm.running).toBe(false);
+      vm.cancel();
+      expect(store.api.cancelJob).not.toHaveBeenCalled();
+    });
+
+    it("does not show or cancel a duplicated collection's batch of the same tool", () => {
+      const cancelBatch = vi.fn();
+      batchRuns.startRun({
+        ...toolRun,
+        configurationId: "config-copy",
+        total: 4,
+      });
+      batchRuns.setRunCancel({
+        ...toolRun,
+        configurationId: "config-copy",
+        cancel: cancelBatch,
+      });
+      const vm = mountComponent().vm as any;
+      expect(vm.running).toBe(false);
+      expect(vm.batchProgress).toBeNull();
+      vm.cancel();
+      expect(cancelBatch).not.toHaveBeenCalled();
+    });
   });
 });
