@@ -28,8 +28,9 @@
 | The reactive owner: restore, save, visibility, hide-all          | `src/utils/usePanelLayout.ts`                    |
 | Per-user localStorage                                            | `src/utils/uiState.ts`                           |
 | Widths and clearances                                            | `src/utils/paletteGeometry.ts`                   |
-| Minimize button, resize handle, reorder grip                     | `src/components/FloatingPalette.vue`             |
+| Close button, resize handle, reorder grip, tour-done marker      | `src/components/FloatingPalette.vue`             |
 | Wiring, chips, stacking, commands                                | `src/App.vue`                                    |
+| A tour step whose goal is already met (`tourStepAlreadyDone`)    | `src/plugins/tour.ts`                            |
 | Workspace / reset / collection-default commands                  | `layoutCommands` in `src/commands/providers.ts`  |
 | Collection default (the only server write)                       | `saveDefaultPanelLayout` in `src/store/index.ts` |
 
@@ -38,8 +39,9 @@
 1. **Memory.** The viewer remembers how each person left it: which panels are
    open, and the small presentation state inside them (active tab, collapsed
    sections, column widths). Today every entry resets to a hard-coded default.
-2. **Structured rearrangement.** Panels can be minimized, resized and
-   reordered inside the existing zones. No free-floating windows.
+2. **Structured rearrangement.** Panels can be resized and reordered inside
+   the existing zones, and a closed panel waits as a labeled chip beside
+   where it opens. No free-floating windows.
 3. **Workspaces.** Named layouts ("Annotate", "Analyze", "Review") that set
    the panels up in one step, plus an optional default a collection owner
    chooses on purpose.
@@ -79,8 +81,9 @@ four recurring shapes. The panel layout is exactly such a machine, and this
 feature adds state to it, so the audit's rules apply directly:
 
 - **One state object, not parallel refs** (shape 4, partial reset; shape 3,
-  one question with several sources). Open, minimized, order and widths live
-  in a single `IPanelLayout` owned by one composable (`usePanelLayout`).
+  one question with several sources). Which panels are open lives in one
+  `IPanelLayout`, order and widths in one `IPanelArrangement`, both owned by
+  one composable (`usePanelLayout`).
   App.vue's per-panel refs become writable computeds over it, so "is this
   panel showing" has one answer and a reset cannot clear part of it.
 - **The Object Browser's store mirror is derived.** The audit listed
@@ -99,7 +102,7 @@ feature adds state to it, so the audit's rules apply directly:
 - **Every gesture needs a cancel exit.** Column resize and stack reorder are
   drags: each holds its state as one `null | {...}` object and ends on
   pointer-up, pointer-cancel, lost capture, and Escape (which reverts).
-- **No remount to hide.** Minimizing and hide-all change visibility only. A
+- **No remount to hide.** Closing and hide-all change visibility only. A
   `:key` or `v-if` would discard the panel's in-flight flags.
 - **No second source for "why is it open" until one is needed.** The
   user/context distinction below is a rule for the first context-opened
@@ -193,11 +196,10 @@ owns.
 ### Two state objects: `src/utils/panelLayout.ts`
 
 ```ts
-// Which panels are open or minimized. Remembered per collection.
+// Which panels are open. Remembered per collection.
 interface IPanelLayout {
   version: 1;
-  open: PanelId[]; // in the order opened; includes minimized panels
-  minimized: PanelId[]; // always a subset of `open`
+  open: PanelId[]; // in the order opened
 }
 
 // How the zones are arranged. One per user, the same in every collection:
@@ -213,6 +215,10 @@ Both are replaced whole on every change, never mutated in place.
 `validateLayout` drops unknown ids and re-applies the placement rules by
 opening the ids one at a time through `applyOpen`, so a stored layout cannot
 produce an illegal state.
+
+An earlier format also stored `minimized`, a subset of `open` shown as chips.
+There is no minimized state now (Part 3). Such a layout still validates: the
+field is ignored, so those panels come back open, as palettes.
 
 ### What is stored, and the restore order
 
@@ -234,8 +240,7 @@ these that exists is shown:
 
 - **Visibility is derived, the layout is not mutated to hide things.** A
   palette is on screen when it is open AND the route is the viewer (not the
-  embed) AND it is not minimized AND "hide all" is off AND it is available
-  for this dataset. Leaving the viewer therefore changes nothing in the
+  embed) AND "hide all" is off AND it is available for this dataset. Leaving the viewer therefore changes nothing in the
   layout, so there is no "all closed" to save by mistake, and nothing is
   refused silently except opening outside the viewer.
 - **Restore when the (user, collection) token changes.** The watcher's source
@@ -304,19 +309,47 @@ Rules:
 
 Free-floating, drag-anywhere panels remain a non-goal.
 
-**Minimize to a chip.** Each registry palette has a minimize button. A
-minimized panel stays in `open` and is shown as a chip in a row at the top of
-its zone; the zone's palettes start below the row. Clicking the chip, the
-app-bar toggle or the panel's command restores it. Placement rules treat a
-minimized panel like any open one, so opening another right-zone primary
-closes it.
+**A closed panel is a chip.** A panel is open (a palette on screen) or
+closed; there is no third state. Every closed panel that is available for
+the dataset is a labeled chip in a row at the top of its zone: the left row
+in the user's stack order (`arrangement.leftOrder`), the right in registry
+order. Clicking a chip opens the panel through `panelLayout.open`, so the
+placement rules apply; a palette's X closes it and it is a chip again. The
+chips are not rendered outside the viewer or in the embed.
+
+The chip is the panel's only control. The viewer used to have two: a small
+icon toggle per panel in the app bar, and a chip for a _minimized_ panel.
+They said the same thing, and the chip said it better: it is labeled, and it
+sits next to where the panel opens, while the icons were small, unlabeled
+and across the screen. The nine app-bar toggles were removed (3D and
+montage stay there), and with them the minimize button: closing a panel is
+what leaves a chip behind. A chip carries what the toggle did: the panel's
+icon and title, its badge, the relevance dot, a tooltip (the registry's
+`description`; for Filters and Analysis, what the count means), an
+accessible label that includes the count and the accent,
+`data-command-id="panel.toggle.<id>"`, and the tour anchors and triggers
+for the four panels tours point at.
+
+**Chip rows wrap, and the palettes start below them.** A row has a
+max-width (the left column's width in use; on the right the Object
+Browser's width, or the zone's width once resized, rather than the widest
+palette showing, which would re-wrap the row whenever a panel opens) and
+wraps. Each row's width and height are measured
+(`chipRowSizes`, a `ResizeObserver`); a zone's palettes start below its
+row's height plus `STACK_GAP`, or at `PALETTE_TOP` when the row has no
+chips. Unmeasured (and where there is no `ResizeObserver`), a row with chips
+counts as one line, `PALETTE_CHIP_HEIGHT`. With the default layout (left
+stack open, right column closed) the right column's palettes therefore
+start below the right row.
 
 **Chip rows hold their edge.** A chip row sits at the top corner of its zone
 at the palettes' z-index, which is where the selection panels and the montage
-start. The rows are measured (`chipRowWidths`) and count in the clearances:
-the left row sets `any-left-palette-open` and feeds
-`--nimbus-left-palette-clear-x`, the right row is an entry in the
-`rightEdgeClearX` list.
+start. The rows count in the clearances by their measured width: the left
+row sets `any-left-palette-open` and feeds `--nimbus-left-palette-clear-x`
+(the column's width when a left palette shows, or the row's if wider; the
+row's alone when only chips are there), the right row is an entry in the
+`rightEdgeClearX` list. The image overview (minimap), whose default corner
+is the top right, starts below the right row through `--nimbus-overview-top`.
 
 **Resizable zones.** Drag a zone's inner edge; double-click resets. A zone
 keeps each palette's own default width until it is resized, then every
@@ -371,8 +404,10 @@ view of the layout (`chromeHidden`), not a change to it: not remembered, and
 ended by leaving the viewer or by opening any panel. It also masks the
 Timelapse palette, the AI panel and the Analyze drawer, which keep their own
 open state; opening any of those ends it too, and the AI button shows a
-masked AI panel rather than closing it. While it is on, one "Show panels" chip remains, so a hidden
-interface always shows how to undo it.
+masked AI panel rather than closing it. While it is on, both chip rows are
+replaced by one "Show panels" chip at the top left (in the left row, so it
+is measured and cleared like the row), so a hidden interface always shows
+how to undo it.
 
 Deferred: moving a panel between the left and right zones.
 
@@ -399,9 +434,9 @@ the configuration.
   `syncConfiguration("defaultPanelLayout")`) and cleared by "Clear collection
   default panel layout" (writes null, which the server drops from the
   metadata). Opening and closing panels never writes it.
-- It stores only the panels open as palettes: not the minimized ones, not
-  widths, not order. It is read from the layout, not from the screen, so
-  saving while "hide all" is on does not save an empty default.
+- It stores only which panels are open: not widths, not order. It is read
+  from the layout, not from the screen, so saving while "hide all" is on
+  does not save an empty default.
 - The commands are offered only when logged in and when the collection on
   screen is the one in the store.
 - A refused write (a read-only or share-link user) puts the previous value
@@ -428,18 +463,17 @@ available?: (context: IPanelContext) => boolean;
 relevant?: (context: IPanelContext) => boolean;
 ```
 
-The app-bar toggle, the command, the palette and the minimized chip all read
-the same rules.
+The chip, the command and the palette all read the same rules.
 
 - **Badge**: a short status (Filters: active filter count; Analysis: active
-  gate count), on the toggle and on the chip, and in the chip's accessible
-  label.
+  gate count), on the chip, capped at "9+", and in the chip's accessible
+  label with what it counts.
 - **Available**: whether the panel exists for this dataset (Transcripts). An
-  unavailable panel is hidden with its toggle, command and chip; the layout
-  that says it is open is left alone.
+  unavailable panel is hidden with its chip and command; the layout that
+  says it is open is left alone.
 - **Relevant**: the panel holds something new the user has not looked at.
-  While it is not on screen, its toggle and chip carry a dot and their
-  label says so. It only points; nothing opens by itself.
+  While it is not on screen, its chip carries a dot and its label says so.
+  It only points; nothing opens by itself.
 
 **There is one relevance rule, on purpose.** The Object Browser is accented
 when a job that adds objects or measurements (`leavesResults` on the job,
@@ -494,8 +528,8 @@ set_panels({ workspace?, open?: PanelId[], close?: PanelId[] })
 - **The result says what is open, not what was asked for**, plus `notOpen`
   for anything the placement rules displaced. Without that the model
   reports panels open that are not.
-- `get_interface_state` has a `panels` section (open, minimized, all
-  hidden, available, workspaces).
+- `get_interface_state` has a `panels` section (open, all hidden,
+  available, workspaces).
 - It is not gated: visible at once and reversible. It is in the AI panel's
   `VIEW_STATE_TOOLS`, and the per-turn view snapshot carries the layout and
   whether everything was hidden, so "revert view changes" puts the panels
@@ -517,10 +551,27 @@ applied only if the user accepts.
 
 Before layouts were remembered, every visit opened the left stack, so tours
 could assume their anchors were showing. Now a step's anchor can be mounted
-inside a palette that is closed, minimized or hidden. Each palette carries
+inside a palette that is closed or hidden. Each palette carries
 `data-panel-id`; when a step's target is inside one that is not displayed,
 `plugins/tour.ts` emits `TOUR_REVEAL_PANEL_EVENT` on the tour bus and App.vue
 opens it.
+
+**A step whose goal is already met moves on.** Steps such as
+`object-list-button-tourstep` ("Click here to open the object list") anchor
+to a panel's chip and wait for its trigger event. The chip exists only while
+the panel is closed, so with a remembered layout that already has the panel
+open there is nothing to point at, and the step would wait out its timeout
+and show "This step isn't available". The palette carries the chip's anchor
+as `data-tour-done` (`tourDoneAnchor` on `FloatingPalette`, set from
+`PANEL_TOUR_HOOKS` in App.vue). `tourStepAlreadyDone` says a step is done
+when it waits for a trigger event, its element is `[data-tour="X"]`, no `X`
+anchor exists, and a _displayed_ element with `data-tour-done="X"` does
+(asked with `getComputedStyle(el).display`, since a fixed element has no
+`offsetParent`). `showCurrentStep` asks before waiting and again when the
+wait times out, and advances instead of showing the step.
+
+Under "hide all panels" neither the chip nor the open palette shows, so such
+a step still waits and then offers to skip.
 
 ## Non-goals
 
@@ -545,12 +596,16 @@ collection:
    viewer issue no configuration PUT. "Save panel layout as collection
    default" issues exactly one.
 4. Leave the viewer and come back. The layout is as it was, not all closed.
-5. Minimize every left palette. The chips appear, and
+5. Close every left palette. The chips appear, and
    `--nimbus-left-palette-clear-x` on `#inspire` is the chip row's width plus
-   its insets.
+   its insets. Narrow the window, or open nothing on the right: the right row
+   wraps onto a second line, and the right palettes and the minimap start
+   below it.
 6. Drag a zone's edge to its minimum and look at every panel in it.
-7. With Tools minimized, start the "Add first object creation tool" tour.
-   Tools opens and the popover points at "Add new tool".
+7. With Tools closed, start the "Add first object creation tool" tour.
+   Tools opens and the popover points at "Add new tool". With the Object
+   Browser open, start "Calculate Blob Metrics": the "Object List" step is
+   skipped, not shown as unavailable.
 8. Focus a column's edge (Tab to it) and press the arrow keys; focus a left
    palette's grip and press Up and Down.
 9. Add an Analysis plot, then drag the right column's edge: the plot's
@@ -579,7 +634,7 @@ Things this pass proved about testing it:
 
 ## Regression checklist
 
-Run `pnpm test src/utils src/components/FloatingPalette.test.ts src/App.test.ts src/store/defaultPanelLayout.test.ts src/components/AnnotationBrowser/AnnotationBrowser.test.ts`.
+Run `pnpm test src/utils src/plugins src/components/FloatingPalette.test.ts src/App.test.ts src/App.commands.test.ts src/store/defaultPanelLayout.test.ts src/components/AnnotationBrowser/AnnotationBrowser.test.ts`.
 
 ### Placement rules (registry)
 
@@ -588,7 +643,7 @@ Run `pnpm test src/utils src/components/FloatingPalette.test.ts src/App.test.ts 
 - [ ] **The left stack is independent of itself and of the right zone.** — _"left-zone palettes stack independently of each other and the right"_
 - [ ] **An unknown id (from an older or newer client) is ignored.** — _"leaves the set unchanged for an unknown id"_
 - [ ] **The defaults are the left stack only.** — _"opens the left stack by default and nothing on the right"_
-- [ ] **A stored layout cannot produce an illegal state.** — _"resolves two right-zone primaries to the last one"_, _"keeps a companion only with a host"_, _"drops ids it does not know and repeats"_, _"keeps minimized only for panels that are open"_
+- [ ] **A stored layout cannot produce an illegal state.** — _"resolves two right-zone primaries to the last one"_, _"keeps a companion only with a host"_, _"drops ids it does not know and repeats"_, _"reads a panel minimized in the earlier format as open"_
 - [ ] **Every workspace shows all the panels it names.** — _"every workspace is a set of panels the placement rules allow as is"_
 
 ### Storage
@@ -609,16 +664,21 @@ Run `pnpm test src/utils src/components/FloatingPalette.test.ts src/App.test.ts 
 - [ ] **While the collection is unknown the screen is left alone, and a change made then wins and goes to the new collection.** — _"keeps what is on screen while the next collection loads"_, _"keeps a change I made while it was loading, and stores it for the collection"_, _"a change made while the next collection loads goes to it, not the previous one"_
 - [ ] **A switch gives the same layout a reload there would.** — _"a switch to an unvisited collection uses my last layout, as a reload there would"_
 - [ ] **The previous collection's configuration is never read as the current one.** — _"does not take the previous collection's layout while the next one loads"_, _"waits for the view the route names before reading its collection"_
-- [ ] **The layout survives a page load.** — _"remembers the layout for the next page load"_, _"remembers a minimized panel"_
+- [ ] **The layout survives a page load.** — _"remembers the layout for the next page load"_, _"a closed panel leaves the layout, and stays closed on the next page load"_
 
 ### Visibility
 
-- [ ] **A minimized panel is open, shown as a chip, and comes back by its chip or toggle.** — _"a minimized panel is open but not shown, and toggling brings it back"_, _"a minimized palette becomes a chip in its zone that restores it"_
+- [ ] **A closed panel is a chip in its zone that opens it by the placement rules; an open one has none.** — _"a closed panel is a chip in its zone, and clicking it opens the panel"_, _"a closed panel leaves the layout, and stays closed on the next page load"_
+- [ ] **Left chips follow the user's stack order.** — _"left chips follow the user's stack order"_
+- [ ] **An unavailable panel has no chip.** — _"an unavailable panel has no chip"_, _"keeps the Transcripts control reachable after schema failure and during retry"_
+- [ ] **The chips are the only panel controls, and only in the viewer.** — _"the app bar has no panel toggles"_, _"there are no chips outside the viewer or in the embed"_
 - [ ] **An unavailable panel is hidden without changing the layout.** — _"hides an unavailable panel without changing or rewriting the layout"_
 - [ ] **Hide-all is not stored, restores the same set, and ends with the visit.** — _"hide-all hides every panel, restores the same set, and is not stored"_, _"hide-all does not carry into the next visit"_
 - [ ] **Hide-all leaves a way back and covers the non-registry panels.** — _"the hide-all hotkey hides every palette and leaves one chip to bring them back"_, _"hide-all also hides the Timelapse palette and the Analyze drawer, and brings them back"_
-- [ ] **A panel's chip carries its badge.** — _"a minimized panel's chip carries its badge"_
+- [ ] **A chip carries its badge, capped, and says what it counts.** — _"a chip carries its badge, and its label says what the count means"_, _"caps the badge at 9+ so it stays small"_, _"keeps the two badges independent"_, _"a chip's tooltip says what its panel is for, and what its count means"_
 - [ ] **A tour step's palette is opened for it.** — _"a tour step inside a palette that is not showing gets it opened"_
+- [ ] **A "click here to open it" step moves on when the panel is already open, and only then.** — _"is done when the anchor is gone and its palette is open"_, _"is not done while the anchor is there to click"_, _"is not done for a step that does not wait for a click"_, _"is not done when the palette that would show it is not displayed"_, _"is not done for another anchor's palette"_
+- [ ] **The chips carry the tour anchors and the palettes the matching done marker.** — _"the chips the tours point at carry their anchors"_, _"names the tour step it completes when given an anchor"_, _"announces nothing without a trigger"_
 - [ ] **A remembered tab does no work in a closed palette.** — _"a remembered tab does no work while the palette is closed"_
 
 ### Geometry
@@ -628,7 +688,7 @@ Run `pnpm test src/utils src/components/FloatingPalette.test.ts src/App.test.ts 
 - [ ] **Unresized, the functions equal the constants.** — _"matches the unresized constants when no width is set"_
 - [ ] **Everything that clears the left column follows its width.** — _"a resized left column moves the surfaces that clear it"_, _"moves both left clearances with a resized column"_
 - [ ] **A chip row holds its edge.** — _"a chip row holds its edge, so canvas surfaces clear it like a palette"_, _"the hide-all chip also holds the left edge"_
-- [ ] **A zone's palettes start below its chip row only.** — _"the palettes of a zone start below its chip row, the other zone does not move"_
+- [ ] **A zone's palettes start below its chip row's measured height, and at the top without one; the minimap follows the right row.** — _"a zone's palettes start below its chip row, and at the top without one"_, _"a wrapped chip row pushes its zone's palettes and the overview down"_
 - [ ] **A cancelled resize leaves no trace; a drop is stored; reset clears it.** — _"dragging a zone's edge resizes every palette in it, clamped to the viewport"_
 
 ### Gestures
@@ -646,7 +706,6 @@ Run `pnpm test src/utils src/components/FloatingPalette.test.ts src/App.test.ts 
 - [ ] **A request that changes nothing is not a change.** — _"a request that changes nothing while the collection loads does not override its layout"_
 - [ ] **After a reset the user follows the collection default.** — _"after a reset I follow the collection default, including one changed later"_
 - [ ] **Opening a masked panel ends hide-all.** — _"opening a panel that hide-all masks ends hide-all"_, _"the AI button shows a masked AI panel instead of closing it"_
-- [ ] **A toggle is lit while its panel is open, minimized or not.** — _"a minimized panel's toggle stays lit, and no toggle is lit under hide-all"_
 - [ ] **Chip rows are cleared by their measured width.** — _"canvas surfaces clear a chip row by its measured width"_
 - [ ] **A tour anchor hidden any way is revealed.** — _"names the palette that holds a hidden anchor"_, _"asks for the panels back when the anchor is hidden outside any palette"_, _"a tour step hidden only by hide-all gets the panels back"_
 - [ ] **A plot follows its palette's width.** — _"redraws at the new width when its palette's column is resized"_
@@ -670,7 +729,7 @@ Run `pnpm test src/utils src/components/FloatingPalette.test.ts src/App.test.ts 
 ### Relevance accent
 
 - [ ] **Only a job that left results on this dataset raises it, and only when it worked.** — _"marks unseen results only for a job that worked, with the Object Browser not showing"_
-- [ ] **It shows on the toggle and the chip, and ends when the browser is shown or the dataset changes.** — _"a closed panel with unseen job results is accented until it is shown"_, _"a minimized panel's chip carries the accent, and another dataset clears it"_
+- [ ] **It shows on the chip, and ends when the browser is shown or the dataset changes.** — _"a closed panel with unseen job results is accented until it is shown"_, _"another dataset clears the accent"_
 - [ ] **Results that arrive while the browser is showing are not unseen.** — _"results that arrive while the Object Browser is showing are not unseen"_
 - [ ] **There is one rule.** — _"only the Object Browser is accented, and only for unseen job results"_
 

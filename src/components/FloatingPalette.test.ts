@@ -44,13 +44,19 @@ const HANDLE = ".palette-resize-handle";
 const GRIP = ".palette-grip";
 
 describe("FloatingPalette", () => {
-  it("shows the minimize button only when minimizable, and emits minimize", async () => {
+  it("has one way to close: the X, which closes it", async () => {
+    const wrapper = mountPalette();
+    expect(wrapper.findAll(".palette-actions button")).toHaveLength(1);
+    await wrapper.find('[aria-label="Close palette"]').trigger("click");
+    expect(wrapper.emitted("update:modelValue")).toEqual([[false]]);
+  });
+
+  it("names the tour step it completes when given an anchor", () => {
     expect(
-      mountPalette().find('[aria-label="Minimize palette"]').exists(),
-    ).toBe(false);
-    const wrapper = mountPalette({ minimizable: true });
-    await wrapper.find('[aria-label="Minimize palette"]').trigger("click");
-    expect(wrapper.emitted("minimize")).toHaveLength(1);
+      palette(mountPalette({ tourDoneAnchor: "object-list-button" })).dataset
+        .tourDone,
+    ).toBe("object-list-button");
+    expect(palette(mountPalette()).dataset.tourDone).toBeUndefined();
   });
 
   it("has no resize handle unless an edge is given", () => {

@@ -51,9 +51,11 @@ export interface IPanelContext {
 
 export interface IPanelDefinition {
   id: PanelId;
-  // Same string the FloatingPalette header shows.
+  // Same string the FloatingPalette header and the panel's chip show.
   title: string;
-  // The app-bar toggle's mdi icon.
+  // What the panel is for, in a sentence: the chip's tooltip.
+  description: string;
+  // The chip's mdi icon.
   icon: string;
   zone: PanelZone;
   role: "primary" | "companion";
@@ -64,23 +66,22 @@ export interface IPanelDefinition {
   defaultOpen: boolean;
   // What users call the panel; the "Open X" command's aliases.
   aliases: string[];
-  // A short status shown on the panel's app-bar toggle and on its chip while
-  // it is minimized, so what a closed panel is doing stays visible. Null:
-  // nothing to show.
+  // A short status shown on the panel's chip, so what a closed panel is
+  // doing stays visible. Null: nothing to show.
   badge?: (context: IPanelContext) => string | null;
   // Whether the panel exists for the open dataset. Omitted: always. An
-  // unavailable panel is hidden, with its toggle, command and chip; the
-  // layout that says it is open is left alone.
+  // unavailable panel is hidden, with its chip and command; the layout that
+  // says it is open is left alone.
   available?: (context: IPanelContext) => boolean;
   // Whether the panel holds something new that the user has not looked at.
-  // While true and the panel is not on screen, its toggle and chip carry an
+  // While true and the panel is not on screen, its chip carries an
   // accent. This only points; nothing opens by itself. Keep the rules few
   // and causal (the user did something, and its result is in this panel):
   // an accent that is often on is an accent nobody reads.
   relevant?: (context: IPanelContext) => boolean;
 }
 
-/** A count as badge text: nothing for zero, capped so it fits the toggle. */
+/** A count as badge text: nothing for zero, capped so it fits the chip. */
 export function countBadge(count: number): string | null {
   if (count <= 0) {
     return null;
@@ -93,6 +94,7 @@ export const PANELS: readonly IPanelDefinition[] = [
   {
     id: "navigatorPanel",
     title: "Navigator",
+    description: "XY / Z / Time and the timelapse mode toggle",
     icon: "mdi-axis-arrow",
     zone: "left",
     role: "primary",
@@ -102,6 +104,7 @@ export const PANELS: readonly IPanelDefinition[] = [
   {
     id: "layersPanel",
     title: "Layers",
+    description: "Channels, blending and layer mode",
     icon: "mdi-layers",
     zone: "left",
     role: "primary",
@@ -111,16 +114,19 @@ export const PANELS: readonly IPanelDefinition[] = [
   {
     id: "toolsPanel",
     title: "Tools",
+    description: "Create and configure annotation tools",
     icon: "mdi-tools",
     zone: "left",
     role: "primary",
     defaultOpen: true,
     aliases: ["toolset"],
   },
-  // Right column, in app-bar order.
+  // Right column, in chip order.
   {
     id: "annotationPanel",
     title: "Object Browser",
+    description:
+      "List of all objects in the dataset, including their properties, and various actions on them",
     icon: "mdi-format-list-bulleted-square",
     zone: "right",
     role: "primary",
@@ -143,6 +149,7 @@ export const PANELS: readonly IPanelDefinition[] = [
   {
     id: "filtersPanel",
     title: "Filters",
+    description: "Filter objects by tags, scope, properties, ID and region",
     icon: "mdi-filter-variant",
     zone: "right",
     role: "companion",
@@ -156,6 +163,8 @@ export const PANELS: readonly IPanelDefinition[] = [
   {
     id: "analysisPanel",
     title: "Analysis",
+    description:
+      "Plot object properties against each other and select the objects to keep",
     icon: "mdi-chart-scatter-plot",
     zone: "right",
     role: "primary",
@@ -170,6 +179,7 @@ export const PANELS: readonly IPanelDefinition[] = [
   {
     id: "transcriptsPanel",
     title: "Transcripts",
+    description: "Show transcripts of chosen genes on the image",
     icon: "mdi-dots-hexagon",
     zone: "right",
     role: "primary",
@@ -180,6 +190,8 @@ export const PANELS: readonly IPanelDefinition[] = [
   {
     id: "snapshotPanel",
     title: "Snapshots",
+    description:
+      "Snapshots for bookmarking and downloading cropped regions in your dataset",
     icon: "mdi-camera-outline",
     zone: "right",
     role: "primary",
@@ -189,6 +201,7 @@ export const PANELS: readonly IPanelDefinition[] = [
   {
     id: "settingsPanel",
     title: "Settings",
+    description: "Image and object display settings",
     icon: "mdi-tune",
     zone: "right",
     role: "primary",
@@ -249,7 +262,7 @@ const PANELS_BY_ID = new Map<PanelId, IPanelDefinition>(
 
 /**
  * Each panel's definition by id, for templates: App.vue binds the palette
- * titles and app-bar toggle icons from here, so the "Open X" command and the
+ * titles and the chips from here, so the "Open X" command, the chip and the
  * palette header can't drift apart.
  */
 export const PANEL_BY_ID = Object.fromEntries(PANELS_BY_ID) as Readonly<

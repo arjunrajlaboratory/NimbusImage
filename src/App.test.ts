@@ -191,14 +191,18 @@ describe("App", () => {
   // -- Computed: routeName --
   it("keeps the Transcripts control reachable after schema failure and during retry", async () => {
     const wrapper = mountWithAppBar();
+    const vm = wrapper.vm as any;
     expect(wrapper.find('[aria-label="Transcripts"]').exists()).toBe(false);
     (transcriptsStore as any).error =
       "Could not read the dataset's transcript store.";
     await nextTick();
     await wrapper.get('[aria-label="Transcripts"]').trigger("click");
-    expect((wrapper.vm as any).transcriptsPanel).toBe(true);
+    expect(vm.transcriptsPanel).toBe(true);
     (transcriptsStore as any).error = null;
     (transcriptsStore as any).loading = true;
+    await nextTick();
+    expect(vm.transcriptsPanel).toBe(true);
+    vm.togglePalette("transcriptsPanel");
     await nextTick();
     expect(wrapper.find('[aria-label="Transcripts"]').exists()).toBe(true);
     wrapper.unmount();
@@ -388,7 +392,7 @@ describe("App", () => {
     wrapper.unmount();
   });
 
-  // -- Minimize, hide-all, resize and reorder --
+  // -- Chips, hide-all, resize and reorder --
   describe("rearranging palettes", () => {
     function mountViewer() {
       (store as any).dataset = { id: "ds1", name: "Dataset" };
@@ -406,47 +410,180 @@ describe("App", () => {
       return stub!;
     }
 
+    function chip(wrapper: ReturnType<typeof mountViewer>, id: string) {
+      return wrapper.find(
+        `.palette-chip[data-command-id="panel.toggle.${id}"]`,
+      );
+    }
+
+    function chipTitles(wrapper: ReturnType<typeof mountViewer>, zone: string) {
+      return wrapper
+        .findAll(`.palette-chips[data-zone="${zone}"] .palette-chip`)
+        .map((element) => element.text());
+    }
+
+    function hideAll(vm: any) {
+      vm.appHotkeys
+        .find((entry: any) => entry.bind === "mod+.")
+        .handler(document.body, new KeyboardEvent("keydown"));
+    }
+
+    // jsdom has no ResizeObserver: stand one in, and report sizes through
+    // the function this returns.
+    function stubResizeObserver() {
+      const callbacks: ((entries: { target: Element }[]) => void)[] = [];
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          observe = vi.fn();
+          disconnect = vi.fn();
+          constructor(callback: (entries: { target: Element }[]) => void) {
+            callbacks.push(callback);
+          }
+        },
+      );
+      return (element: Element, width: number, height: number) => {
+        Object.defineProperty(element, "offsetWidth", {
+          value: width,
+          configurable: true,
+        });
+        Object.defineProperty(element, "offsetHeight", {
+          value: height,
+          configurable: true,
+        });
+        for (const callback of callbacks) {
+          callback([{ target: element }]);
+        }
+      };
+    }
+
     function storedArrangement() {
       return JSON.parse(
         window.localStorage.getItem("nimbus.ui.anonymous.layout.arrangement")!,
       );
     }
 
-    it("a minimized palette becomes a chip in its zone that restores it", async () => {
+    it("a closed panel is a chip in its zone, and clicking it opens the panel", async () => {
       const wrapper = mountViewer();
       const vm = wrapper.vm as any;
-      paletteStub(wrapper, "Tools").vm.$emit("minimize");
-      await nextTick();
-      expect(vm.toolsPanel).toBe(false);
-      expect(vm.paletteChips.left.map((chip: any) => chip.title)).toEqual([
-        "Tools",
+      // The default: the left stack open, the right column closed.
+      expect(chipTitles(wrapper, "left")).toEqual([]);
+      expect(chipTitles(wrapper, "right")).toEqual([
+        "Object Browser",
+        "Filters",
+        "Analysis",
+        "Snapshots",
+        "Settings",
       ]);
-      expect(vm.paletteChips.right).toEqual([]);
 
-      await wrapper.get('[aria-label="Restore Tools"]').trigger("click");
+      paletteStub(wrapper, "Tools").vm.$emit("update:modelValue", false);
+      await nextTick();
+      expect(chipTitles(wrapper, "left")).toEqual(["Tools"]);
+      await chip(wrapper, "toolsPanel").trigger("click");
       expect(vm.toolsPanel).toBe(true);
-      expect(wrapper.find('[aria-label="Restore Tools"]').exists()).toBe(false);
+      // An open panel has no chip.
+      expect(chip(wrapper, "toolsPanel").exists()).toBe(false);
+
+      // A chip opens through the placement rules.
+      await chip(wrapper, "annotationPanel").trigger("click");
+      await chip(wrapper, "settingsPanel").trigger("click");
+      expect(vm.settingsPanel).toBe(true);
+      expect(vm.annotationPanel).toBe(false);
+      expect(chip(wrapper, "annotationPanel").exists()).toBe(true);
     });
 
-    it("a minimized panel's chip carries its badge", async () => {
+    it("left chips follow the user's stack order", async () => {
+      const wrapper = mountViewer();
+      paletteStub(wrapper, "Navigator").vm.$emit("reorder-step", 1);
+      for (const title of ["Navigator", "Layers", "Tools"]) {
+        paletteStub(wrapper, title).vm.$emit("update:modelValue", false);
+      }
+      await nextTick();
+      expect(chipTitles(wrapper, "left")).toEqual([
+        "Layers",
+        "Navigator",
+        "Tools",
+      ]);
+    });
+
+    it("an unavailable panel has no chip", async () => {
+      const wrapper = mountViewer();
+      expect(chip(wrapper, "transcriptsPanel").exists()).toBe(false);
+      (transcriptsStore as any).loading = true;
+      await nextTick();
+      expect(chip(wrapper, "transcriptsPanel").exists()).toBe(true);
+    });
+
+    it("a chip carries its badge, and its label says what the count means", async () => {
       (filterStore as any).activeFilterCount = 4;
       const wrapper = mountViewer();
-      const vm = wrapper.vm as any;
-      vm.togglePalette("filtersPanel");
-      paletteStub(wrapper, "Filters").vm.$emit("minimize");
-      await nextTick();
+      const filters = chip(wrapper, "filtersPanel");
+      expect(filters.find(".palette-chip-badge").text()).toBe("4");
       // The count is in the label too, not only in the badge it draws.
-      const chip = wrapper.get('[aria-label="Restore Filters (4)"]');
-      expect(chip.find(".palette-chip-badge").text()).toBe("4");
+      expect(filters.attributes("aria-label")).toBe("Filters (4 active)");
       // A chip with nothing to report has no badge.
-      paletteStub(wrapper, "Tools").vm.$emit("minimize");
-      await nextTick();
+      expect(
+        chip(wrapper, "settingsPanel").find(".palette-chip-badge").exists(),
+      ).toBe(false);
+    });
+
+    it("a chip's tooltip says what its panel is for, and what its count means", () => {
+      (filterStore as any).activeFilterCount = 2;
+      const vm = mountViewer().vm as any;
+      const tooltip = (id: string) =>
+        vm.panelChips.right.find((entry: any) => entry.id === id).tooltip;
+      expect(tooltip("filtersPanel")).toBe(vm.filtersTooltip);
+      expect(tooltip("filtersPanel")).toContain("(2 active filters)");
+      expect(tooltip("analysisPanel")).toBe(vm.analysisTooltip);
+      expect(tooltip("settingsPanel")).toBe(
+        "Image and object display settings",
+      );
+    });
+
+    it("the chips the tours point at carry their anchors", () => {
+      const wrapper = mountViewer();
+      expect(chip(wrapper, "annotationPanel").attributes("data-tour")).toBe(
+        "object-list-button",
+      );
+      expect(chip(wrapper, "settingsPanel").attributes("data-tour")).toBe(
+        "settings-button",
+      );
+      expect(
+        chip(wrapper, "analysisPanel").attributes("data-tour"),
+      ).toBeUndefined();
+      // The open palette names the step its chip was for.
+      expect(
+        paletteStub(wrapper, "Object Browser").props("tourDoneAnchor"),
+      ).toBe("object-list-button");
+      expect(
+        paletteStub(wrapper, "Tools").props("tourDoneAnchor"),
+      ).toBeUndefined();
+    });
+
+    it("the app bar has no panel toggles", () => {
+      const wrapper = mountViewer();
       expect(
         wrapper
-          .get('[aria-label="Restore Tools"]')
-          .find(".palette-chip-badge")
-          .exists(),
-      ).toBe(false);
+          .findAll("[data-command-id^='panel.toggle.']")
+          .every((element) => element.classes("palette-chip")),
+      ).toBe(true);
+      expect(wrapper.findAll(".palette-ibtn")).toHaveLength(2);
+    });
+
+    it("there are no chips outside the viewer or in the embed", async () => {
+      const providedRoute = routeProvider({ ...mockRoute });
+      const route = providedRoute[routeLocationKey as symbol];
+      (store as any).dataset = { id: "ds1", name: "Dataset" };
+      const wrapper = mountComponent({}, renderAppBarStubs, providedRoute);
+      expect(wrapper.findAll(".palette-chip").length).toBeGreaterThan(0);
+
+      Object.assign(route, { name: "root" });
+      await nextTick();
+      expect(wrapper.findAll(".palette-chip")).toHaveLength(0);
+
+      Object.assign(route, { name: "embed" });
+      await nextTick();
+      expect(wrapper.findAll(".palette-chip")).toHaveLength(0);
     });
 
     it("saving the collection default takes the panels shown as palettes, even while all are hidden", async () => {
@@ -455,11 +592,8 @@ describe("App", () => {
       const wrapper = mountViewer();
       const vm = wrapper.vm as any;
       vm.togglePalette("annotationPanel");
-      paletteStub(wrapper, "Tools").vm.$emit("minimize");
-      const hideAll = vm.appHotkeys.find(
-        (entry: any) => entry.bind === "mod+.",
-      );
-      hideAll.handler(document.body, new KeyboardEvent("keydown"));
+      paletteStub(wrapper, "Tools").vm.$emit("update:modelValue", false);
+      hideAll(vm);
       await nextTick();
       expect(store.saveDefaultPanelLayout).not.toHaveBeenCalled();
 
@@ -615,78 +749,70 @@ describe("App", () => {
     it("a chip row holds its edge, so canvas surfaces clear it like a palette", async () => {
       const wrapper = mountViewer();
       const vm = wrapper.vm as any;
-      const emptyRight = vm.rightEdgeClearance;
       for (const title of ["Navigator", "Layers", "Tools"]) {
-        paletteStub(wrapper, title).vm.$emit("minimize");
+        paletteStub(wrapper, title).vm.$emit("update:modelValue", false);
       }
       await nextTick();
       // No left palette is showing, but the corner is not free.
       expect(vm.navigatorPanel || vm.layersPanel || vm.toolsPanel).toBe(false);
       expect(vm.leftEdgeOccupied).toBe(true);
-      expect(vm.leftEdgeClearX).toBeGreaterThan(16);
-
-      vm.togglePalette("annotationPanel");
-      paletteStub(wrapper, "Object Browser").vm.$emit("minimize");
-      await nextTick();
-      expect(vm.rightEdgeClearance).toBeGreaterThan(emptyRight);
-
-      // With nothing on the left edge at all, it is free again.
-      for (const title of ["Navigator", "Layers", "Tools"]) {
-        paletteStub(wrapper, title).vm.$emit("update:modelValue", false);
-      }
-      await nextTick();
-      expect(vm.leftEdgeOccupied).toBe(false);
+      // The right column is closed, and its chips hold the edge.
+      expect(vm.rightEdgeClearance).toBeGreaterThan(16);
     });
 
     it("canvas surfaces clear a chip row by its measured width", async () => {
-      // jsdom has no ResizeObserver: stand one in and report a width.
-      let report: (entries: { target: Element }[]) => void = () => {};
-      vi.stubGlobal(
-        "ResizeObserver",
-        class {
-          observe = vi.fn();
-          disconnect = vi.fn();
-          constructor(callback: typeof report) {
-            report = callback;
-          }
-        },
-      );
+      const report = stubResizeObserver();
       try {
         const wrapper = mountViewer();
         const vm = wrapper.vm as any;
         for (const title of ["Navigator", "Layers", "Tools"]) {
-          paletteStub(wrapper, title).vm.$emit("minimize");
+          paletteStub(wrapper, title).vm.$emit("update:modelValue", false);
         }
-        vm.togglePalette("annotationPanel");
-        paletteStub(wrapper, "Object Browser").vm.$emit("minimize");
         await nextTick();
         const rows = wrapper.findAll(".palette-chips");
         expect(rows.map((row) => row.attributes("data-zone"))).toEqual([
           "left",
           "right",
         ]);
-        Object.defineProperty(rows[0].element, "offsetWidth", { value: 200 });
-        Object.defineProperty(rows[1].element, "offsetWidth", { value: 150 });
-        report(rows.map((row) => ({ target: row.element })));
+        report(rows[0].element, 200, 28);
+        report(rows[1].element, 150, 28);
         await nextTick();
         // Inset 16 + the row + the 10px canvas-surface gap.
         expect(vm.leftEdgeClearX).toBe(226);
         // Inset 16 + the row + inset 16.
         expect(vm.rightEdgeClearance).toBe(182);
+
+        // With a left palette showing, the column's width, or the row's if
+        // it is wider.
+        vm.togglePalette("layersPanel");
+        await nextTick();
+        expect(vm.leftEdgeClearX).toBe(16 + 420 + 10);
+        report(rows[0].element, 500, 28);
+        await nextTick();
+        expect(vm.leftEdgeClearX).toBe(16 + 500 + 10);
       } finally {
         vi.unstubAllGlobals();
       }
     });
 
     it("the hide-all chip also holds the left edge", async () => {
-      const wrapper = mountViewer();
-      const vm = wrapper.vm as any;
-      const hideAll = vm.appHotkeys.find(
-        (entry: any) => entry.bind === "mod+.",
-      );
-      hideAll.handler(document.body, new KeyboardEvent("keydown"));
-      await nextTick();
-      expect(vm.leftEdgeOccupied).toBe(true);
+      const report = stubResizeObserver();
+      try {
+        const wrapper = mountViewer();
+        const vm = wrapper.vm as any;
+        hideAll(vm);
+        await nextTick();
+        expect(vm.leftEdgeOccupied).toBe(true);
+        report(
+          wrapper.get('.palette-chips[data-zone="left"]').element,
+          120,
+          28,
+        );
+        await nextTick();
+        expect(vm.leftEdgeClearX).toBe(16 + 120 + 10);
+      } finally {
+        vi.unstubAllGlobals();
+      }
     });
 
     it("a tour step inside a palette that is not showing gets it opened", async () => {
@@ -696,12 +822,9 @@ describe("App", () => {
       const wrapper = mountViewer();
       const vm = wrapper.vm as any;
       expect(paletteStub(wrapper, "Tools").props("panelId")).toBe("toolsPanel");
-      paletteStub(wrapper, "Tools").vm.$emit("minimize");
+      vm.togglePalette("toolsPanel");
       vm.togglePalette("layersPanel");
-      const hideAll = vm.appHotkeys.find(
-        (entry: any) => entry.bind === "mod+.",
-      );
-      hideAll.handler(document.body, new KeyboardEvent("keydown"));
+      hideAll(vm);
       await nextTick();
 
       tourBus.emit(TOUR_REVEAL_PANEL_EVENT, "toolsPanel");
@@ -736,31 +859,6 @@ describe("App", () => {
       expect(vm.navigatorPanel).toBe(false);
       tourBus.emit(TOUR_REVEAL_PANEL_EVENT, undefined);
       expect(vm.navigatorPanel).toBe(true);
-    });
-
-    it("a minimized panel's toggle stays lit, and no toggle is lit under hide-all", async () => {
-      const wrapper = mountViewer();
-      const vm = wrapper.vm as any;
-      const toggle = () => wrapper.get('[aria-label="Object list"]');
-      expect(toggle().classes()).not.toContain("active");
-      vm.togglePalette("annotationPanel");
-      await nextTick();
-      expect(toggle().classes()).toContain("active");
-
-      paletteStub(wrapper, "Object Browser").vm.$emit("minimize");
-      await nextTick();
-      expect(vm.annotationPanel).toBe(false);
-      expect(toggle().classes()).toContain("active");
-      // The lit toggle brings a minimized panel back rather than closing it.
-      await toggle().trigger("click");
-      expect(vm.annotationPanel).toBe(true);
-
-      const hideAll = vm.appHotkeys.find(
-        (entry: any) => entry.bind === "mod+.",
-      );
-      hideAll.handler(document.body, new KeyboardEvent("keydown"));
-      await nextTick();
-      expect(toggle().classes()).not.toContain("active");
     });
 
     it("a resize of an unresized zone starts from its widest palette showing", async () => {
@@ -829,19 +927,27 @@ describe("App", () => {
       const wrapper = mountViewer();
       const vm = wrapper.vm as any;
       await nextTick();
-      const toggle = wrapper.get(
-        '[data-command-id="panel.toggle.annotationPanel"]',
+      const objectBrowser = chip(wrapper, "annotationPanel");
+      expect(objectBrowser.classes()).toContain("relevant");
+      expect(objectBrowser.attributes("aria-label")).toBe(
+        "Object Browser (new results)",
       );
-      expect(toggle.classes()).toContain("relevant");
-      expect(toggle.attributes("aria-label")).toBe("Object list (new results)");
-      // No other toggle is accented.
-      expect(wrapper.findAll(".palette-ibtn.relevant")).toHaveLength(1);
+      // No other chip is accented.
+      expect(wrapper.findAll(".palette-chip.relevant")).toHaveLength(1);
 
       vm.togglePalette("annotationPanel");
       await nextTick();
       expect(store.setAnnotationPanelBadge).toHaveBeenCalledWith(false);
-      expect(toggle.classes()).not.toContain("relevant");
-      expect(toggle.attributes("aria-label")).toBe("Object list");
+      // Shown: the chip is gone, and closed again it is not accented.
+      expect(chip(wrapper, "annotationPanel").exists()).toBe(false);
+      vm.togglePalette("annotationPanel");
+      await nextTick();
+      expect(chip(wrapper, "annotationPanel").classes()).not.toContain(
+        "relevant",
+      );
+      expect(chip(wrapper, "annotationPanel").attributes("aria-label")).toBe(
+        "Object Browser",
+      );
     });
 
     it("results that arrive while the Object Browser is showing are not unseen", async () => {
@@ -865,34 +971,26 @@ describe("App", () => {
       expect((store as any).annotationPanelBadge).toBe(false);
       vm.togglePalette("annotationPanel");
       await nextTick();
-      expect(
-        wrapper
-          .get('[data-command-id="panel.toggle.annotationPanel"]')
-          .classes(),
-      ).not.toContain("relevant");
+      expect(chip(wrapper, "annotationPanel").classes()).not.toContain(
+        "relevant",
+      );
     });
 
-    it("a minimized panel's chip carries the accent, and another dataset clears it", async () => {
+    it("another dataset clears the accent", async () => {
       (store as any).setAnnotationPanelBadge = vi.fn((value: boolean) => {
         (store as any).annotationPanelBadge = value;
       });
       const wrapper = mountViewer();
-      const vm = wrapper.vm as any;
-      vm.togglePalette("annotationPanel");
-      paletteStub(wrapper, "Object Browser").vm.$emit("minimize");
       (store as any).annotationPanelBadge = true;
       await nextTick();
-      const chip = wrapper.get(
-        '[aria-label="Restore Object Browser (new results)"]',
-      );
-      expect(chip.classes()).toContain("relevant");
+      expect(chip(wrapper, "annotationPanel").classes()).toContain("relevant");
 
       (store as any).dataset = { id: "ds2", name: "Another" };
       await nextTick();
       expect((store as any).annotationPanelBadge).toBe(false);
-      expect(
-        wrapper.get('[aria-label="Restore Object Browser"]').classes(),
-      ).not.toContain("relevant");
+      expect(chip(wrapper, "annotationPanel").classes()).not.toContain(
+        "relevant",
+      );
     });
 
     it("gives the AI agent's tools the layout's owner while mounted", async () => {
@@ -913,11 +1011,9 @@ describe("App", () => {
         "analysisPanel",
         "toolsPanel",
       ]);
-      paletteStub(wrapper, "Tools").vm.$emit("minimize");
-      expect(controller.minimizedPanels()).toEqual(["toolsPanel"]);
       expect(controller.isAvailable("transcriptsPanel")).toBe(false);
 
-      // A snapshot puts back what was open and what was minimized.
+      // A snapshot puts back what was open.
       const snapshot = JSON.parse(JSON.stringify(controller.layoutSnapshot()));
       controller.applyOpenSet(["navigatorPanel"]);
       controller.restoreLayout(snapshot);
@@ -926,10 +1022,13 @@ describe("App", () => {
         "analysisPanel",
         "toolsPanel",
       ]);
-      expect(controller.minimizedPanels()).toEqual(["toolsPanel"]);
       controller.restoreLayout({ layout: { open: "nonsense" } });
       controller.restoreLayout(null);
-      expect(controller.minimizedPanels()).toEqual(["toolsPanel"]);
+      expect(controller.openPanels()).toEqual([
+        "filtersPanel",
+        "analysisPanel",
+        "toolsPanel",
+      ]);
 
       // A snapshot taken under "hide all panels" puts that back too.
       const hideAll = vm.appHotkeys.find(
@@ -955,7 +1054,7 @@ describe("App", () => {
         const wrapper = mountViewer();
         const layers = () => wrapper.findComponent({ name: "LayersPanel" });
         expect(layers().props("visible")).toBe(true);
-        paletteStub(wrapper, "Layers").vm.$emit("minimize");
+        paletteStub(wrapper, "Layers").vm.$emit("update:modelValue", false);
         await nextTick();
         expect(layers().props("visible")).toBe(false);
       } finally {
@@ -963,39 +1062,74 @@ describe("App", () => {
       }
     });
 
-    it("the palettes of a zone start below its chip row, the other zone does not move", async () => {
+    it("a zone's palettes start below its chip row, and at the top without one", async () => {
       const wrapper = mountViewer();
       const vm = wrapper.vm as any;
-      const leftTop = vm.leftStack.navigatorPanel.top;
-      const rightTop = vm.rightColumnTop;
+      // Left: every panel open, so no chips. Right: all closed, so a row of
+      // one line until it is measured.
+      expect(vm.leftStack.navigatorPanel.top).toBe(72);
+      expect(vm.rightColumnTop).toBe(72 + 28 + 8);
       vm.togglePalette("annotationPanel");
-      paletteStub(wrapper, "Object Browser").vm.$emit("minimize");
+      vm.togglePalette("filtersPanel");
       await nextTick();
-      expect(vm.rightColumnTop).toBeGreaterThan(rightTop);
       expect(paletteStub(wrapper, "Filters").props("top")).toBe(
         vm.rightColumnTop,
       );
-      expect(vm.leftStack.navigatorPanel.top).toBe(leftTop);
+
+      paletteStub(wrapper, "Tools").vm.$emit("update:modelValue", false);
+      await nextTick();
+      expect(vm.leftStack.navigatorPanel.top).toBe(72 + 28 + 8);
+    });
+
+    it("a wrapped chip row pushes its zone's palettes and the overview down", async () => {
+      const report = stubResizeObserver();
+      try {
+        const wrapper = mountViewer();
+        const vm = wrapper.vm as any;
+        const overviewTop = () =>
+          (wrapper.vm as any).$el.style.getPropertyValue(
+            "--nimbus-overview-top",
+          );
+        expect(overviewTop()).toBe(`${72 + 28 + 8}px`);
+        report(
+          wrapper.get('.palette-chips[data-zone="right"]').element,
+          400,
+          62,
+        );
+        await nextTick();
+        expect(vm.rightColumnTop).toBe(72 + 62 + 8);
+        expect(paletteStub(wrapper, "Settings").props("top")).toBe(142);
+        expect(overviewTop()).toBe("142px");
+
+        // Opening a panel leaves the other chips, so the row stays measured.
+        vm.togglePalette("snapshotPanel");
+        await nextTick();
+        expect(vm.rightColumnTop).toBe(142);
+      } finally {
+        vi.unstubAllGlobals();
+      }
     });
 
     it("the hide-all hotkey hides every palette and leaves one chip to bring them back", async () => {
       const wrapper = mountViewer();
       const vm = wrapper.vm as any;
       vm.togglePalette("annotationPanel");
-      const hotkey = vm.appHotkeys.find((entry: any) => entry.bind === "mod+.");
-      hotkey.handler(document.body, new KeyboardEvent("keydown"));
+      hideAll(vm);
       await nextTick();
       for (const id of ["annotationPanel", "navigatorPanel", "toolsPanel"]) {
         expect(vm[id]).toBe(false);
       }
-      expect(vm.paletteChips.left.map((chip: any) => chip.label)).toEqual([
-        "Show all panels",
-      ]);
+      expect(
+        wrapper.findAll(".palette-chip").map((element) => element.text()),
+      ).toEqual(["Show panels"]);
+      expect(vm.rightColumnTop).toBe(72);
 
       await wrapper.get('[aria-label="Show all panels"]').trigger("click");
       expect(vm.annotationPanel).toBe(true);
       expect(vm.navigatorPanel).toBe(true);
-      expect(vm.paletteChips.left).toEqual([]);
+      expect(wrapper.find('[aria-label="Show all panels"]').exists()).toBe(
+        false,
+      );
     });
 
     it("dragging a zone's edge resizes every palette in it, clamped to the viewport", async () => {
@@ -1220,51 +1354,51 @@ describe("App", () => {
     expect((wrapper.vm as any).filtersAriaLabel).toBe("Filters (2 active)");
   });
 
-  // -- Filter-count badge on the Filters button --
-  it("renders no badge on the Filters button when no filter is active", () => {
+  // -- Filter-count badge on the Filters chip --
+  it("renders no badge on the Filters chip when no filter is active", () => {
     const wrapper = mountWithAppBar();
-    expect(wrapper.find(".palette-ibtn-badge").exists()).toBe(false);
+    expect(wrapper.find(".palette-chip-badge").exists()).toBe(false);
   });
 
-  it("renders the active filter count on the Filters button", () => {
+  it("renders the active filter count on the Filters chip", () => {
     (filterStore as any).activeFilterCount = 3;
     const wrapper = mountWithAppBar();
-    const badge = wrapper.find(".palette-ibtn-badge");
+    const badge = wrapper.find(".palette-chip-badge");
     expect(badge.exists()).toBe(true);
     expect(badge.text()).toBe("3");
-    // The badge belongs to the Filters button, not a neighbouring palette one,
-    // and the count is mirrored into the label so it is not hidden from
-    // assistive tech (aria-label overrides the button's rendered content).
+    // The badge belongs to the Filters chip, not a neighboring one, and the
+    // count is mirrored into the label so it is not hidden from assistive
+    // tech (aria-label overrides the chip's rendered content).
     expect(badge.element.closest("button")?.getAttribute("aria-label")).toBe(
       "Filters (3 active)",
     );
   });
 
-  it("caps the badge at 9+ so it stays inside the icon button", () => {
+  it("caps the badge at 9+ so it stays small", () => {
     (filterStore as any).activeFilterCount = 12;
     const wrapper = mountWithAppBar();
-    expect(wrapper.find(".palette-ibtn-badge").text()).toBe("9+");
+    expect(wrapper.find(".palette-chip-badge").text()).toBe("9+");
   });
 
-  // -- Gate-count badge on the Analysis button --
+  // -- Gate-count badge on the Analysis chip --
   //
   // Gates narrow the object set from a different panel, so the Filters badge
   // cannot speak for them: it counts only rows its own panel can show. Without
   // a badge here, a saved gate silently hid objects with nothing on screen to
   // say so — the palette can be closed and the gate still applies.
-  it("renders no badge on the Analysis button when no gate is active", () => {
+  it("renders no badge on the Analysis chip when no gate is active", () => {
     const wrapper = mountWithAppBar();
-    expect(wrapper.find(".palette-ibtn-badge").exists()).toBe(false);
+    expect(wrapper.find(".palette-chip-badge").exists()).toBe(false);
   });
 
-  it("renders the active gate count on the Analysis button", () => {
+  it("renders the active gate count on the Analysis chip", () => {
     (filterStore as any).activeAnalysisGateCount = 2;
     const wrapper = mountWithAppBar();
-    const badge = wrapper.find(".palette-ibtn-badge");
+    const badge = wrapper.find(".palette-chip-badge");
     expect(badge.exists()).toBe(true);
     expect(badge.text()).toBe("2");
     expect(badge.element.closest("button")?.getAttribute("aria-label")).toBe(
-      "Analysis plots (2 gates active)",
+      "Analysis (2 gates active)",
     );
   });
 
@@ -1272,19 +1406,19 @@ describe("App", () => {
     (filterStore as any).activeFilterCount = 3;
     (filterStore as any).activeAnalysisGateCount = 1;
     const wrapper = mountWithAppBar();
-    const badges = wrapper.findAll(".palette-ibtn-badge");
+    const badges = wrapper.findAll(".palette-chip-badge");
     expect(badges.map((b) => b.text())).toEqual(["3", "1"]);
     expect(
       badges.map((b) =>
         b.element.closest("button")?.getAttribute("aria-label"),
       ),
-    ).toEqual(["Filters (3 active)", "Analysis plots (1 gate active)"]);
+    ).toEqual(["Filters (3 active)", "Analysis (1 gate active)"]);
   });
 
   it("caps the gate badge at 9+ like the filters one", () => {
     (filterStore as any).activeAnalysisGateCount = 11;
     const wrapper = mountWithAppBar();
-    expect(wrapper.find(".palette-ibtn-badge").text()).toBe("9+");
+    expect(wrapper.find(".palette-chip-badge").text()).toBe("9+");
   });
 
   it("analysisTooltip names the gate count, singular and plural", () => {

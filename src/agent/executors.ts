@@ -733,16 +733,10 @@ function describePanels() {
   if (!controller?.inViewer()) {
     return null;
   }
-  const minimized = controller.minimizedPanels();
   const describe = (id: PanelId) => ({ id, title: PANEL_BY_ID[id].title });
   return {
     // On screen as a panel.
-    open: controller
-      .openPanels()
-      .filter((id) => !minimized.includes(id) && controller.isAvailable(id))
-      .map(describe),
-    // Still open, collapsed to a chip at the edge of the viewer.
-    minimized: minimized.filter(controller.isAvailable).map(describe),
+    open: controller.openPanels().filter(controller.isAvailable).map(describe),
     // "Hide all panels" is on: nothing above is visible until it is ended
     // (opening any panel ends it).
     allHidden: controller.allHidden(),
@@ -3796,7 +3790,7 @@ export interface IViewStateSnapshot {
   selectedToolId: string | null;
   displayOptions: ReturnType<typeof currentDisplayOptions>;
   viewMode: string;
-  // Which panels were open or minimized (set_panels changes it). Opaque
+  // Which panels were open (set_panels changes it). Opaque
   // here: the layout's owner hands it out and takes it back. Null outside
   // the viewer.
   panelLayout: unknown;

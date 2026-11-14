@@ -1,5 +1,5 @@
 // The reactive owner of the viewer's panel layout: one state object for which
-// palettes are open or minimized, one for how the zones are arranged, and the
+// palettes are open, one for how the zones are arranged, and the
 // rules for remembering both. App.vue binds its palettes to the refs this
 // returns. See codebaseDocumentation/PANEL_LAYOUT_PERSISTENCE.md.
 //
@@ -12,20 +12,13 @@
 // and read-only users and cannot race a configuration save.
 
 import { computed, ref, shallowRef, watch, WritableComputedRef } from "vue";
-import {
-  IPanelDefinition,
-  PANELS,
-  PANEL_IDS,
-  PanelId,
-  PanelZone,
-} from "./panelRegistry";
+import { PANEL_IDS, PanelId, PanelZone } from "./panelRegistry";
 import {
   IPanelLayout,
   completeLeftOrder,
   defaultArrangement,
   defaultLayout,
   layoutWithClosed,
-  layoutWithMinimized,
   layoutWithOpen,
   layoutWithOpenSet,
   serializeLayout,
@@ -93,8 +86,7 @@ export interface IPanelLayoutOptions {
 export function usePanelLayout(options: IPanelLayoutOptions) {
   const isAvailable = options.isAvailable ?? (() => true);
 
-  // Replaced whole on every change, never mutated in place, so a change
-  // cannot update `open` and leave `minimized` behind.
+  // Replaced whole on every change, never mutated in place.
   const layout = shallowRef<IPanelLayout>(layoutWithOpenSet([]));
   const arrangement = usePersistedUiState(
     ARRANGEMENT_KEY,
@@ -227,17 +219,12 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
     layout.value = next;
   }
 
-  /** In the open set, shown or minimized. */
-  function isOpen(id: PanelId): boolean {
-    return options.inViewer() && layout.value.open.includes(id);
-  }
-
-  /** Actually on screen as a palette. */
+  /** On screen as a palette. */
   function isVisible(id: PanelId): boolean {
     return (
-      isOpen(id) &&
+      options.inViewer() &&
+      layout.value.open.includes(id) &&
       !chromeHidden.value &&
-      !layout.value.minimized.includes(id) &&
       isAvailable(id)
     );
   }
@@ -255,17 +242,13 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
     change(layoutWithClosed(layout.value, id));
   }
 
-  /** Close a palette that is showing; otherwise open, restore or reveal it. */
+  /** Close a palette that is showing; otherwise open or reveal it. */
   function toggle(id: PanelId) {
     if (isVisible(id)) {
       close(id);
     } else {
       open(id);
     }
-  }
-
-  function minimize(id: PanelId) {
-    change(layoutWithMinimized(layout.value, id));
   }
 
   /**
@@ -362,28 +345,15 @@ export function usePanelLayout(options: IPanelLayoutOptions) {
     ]),
   ) as Record<PanelId, WritableComputedRef<boolean>>;
 
-  /** The panels shown as chips, in registry order. */
-  const minimizedPanels = computed<IPanelDefinition[]>(() =>
-    options.inViewer() && !chromeHidden.value
-      ? PANELS.filter(
-          (panel) =>
-            layout.value.minimized.includes(panel.id) && isAvailable(panel.id),
-        )
-      : [],
-  );
-
   return {
     layout,
     arrangement,
     chromeHidden,
     visible,
-    minimizedPanels,
-    isOpen,
     isVisible,
     open,
     close,
     toggle,
-    minimize,
     applyLayout,
     applyOpenSet,
     reset,

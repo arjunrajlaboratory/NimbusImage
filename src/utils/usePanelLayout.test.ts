@@ -237,7 +237,6 @@ describe("usePanelLayout", () => {
       const layout = {
         version: 1,
         open: [...DEFAULT_OPEN, "filtersPanel"],
-        minimized: [],
       };
       expect(stored("layout.last")).toEqual(layout);
       expect(stored("layout.byConfiguration")).toEqual([["config-a", layout]]);
@@ -347,27 +346,17 @@ describe("usePanelLayout", () => {
       expect(panels.layout.value.open).not.toContain("settingsPanel");
     });
 
-    it("a minimized panel is open but not shown, and toggling brings it back", () => {
+    // There is no third state: a panel that is not on screen is closed (its
+    // chip is how it comes back), and the layout holds only what is open.
+    it("a closed panel leaves the layout, and stays closed on the next page load", () => {
       const panels = mount();
-      panels.open("annotationPanel");
-      panels.minimize("annotationPanel");
-      expect(panels.visible.annotationPanel.value).toBe(false);
-      expect(panels.isOpen("annotationPanel")).toBe(true);
-      expect(panels.minimizedPanels.value.map((panel) => panel.id)).toEqual([
-        "annotationPanel",
-      ]);
-
-      panels.toggle("annotationPanel");
-      expect(panels.visible.annotationPanel.value).toBe(true);
-      expect(panels.minimizedPanels.value).toEqual([]);
-    });
-
-    it("remembers a minimized panel", () => {
-      const panels = mount();
-      panels.minimize("toolsPanel");
-      expect(reload().minimizedPanels.value.map((panel) => panel.id)).toEqual([
-        "toolsPanel",
-      ]);
+      panels.close("toolsPanel");
+      expect(panels.layout.value).toEqual({
+        version: 1,
+        open: ["navigatorPanel", "layersPanel"],
+      });
+      expect(stored("layout.last")).toEqual(panels.layout.value);
+      expect(reload().visible.toolsPanel.value).toBe(false);
     });
 
     it("hides an unavailable panel without changing or rewriting the layout", () => {
@@ -386,14 +375,17 @@ describe("usePanelLayout", () => {
     it("hide-all hides every panel, restores the same set, and is not stored", () => {
       const panels = mount();
       panels.open("annotationPanel");
-      panels.minimize("toolsPanel");
+      panels.close("toolsPanel");
       const before = shown(panels);
+      const layoutBefore = panels.layout.value;
       const storedBefore = stored("layout.last");
 
       panels.toggleChromeHidden();
       expect(shown(panels)).toEqual([]);
-      expect(panels.minimizedPanels.value).toEqual([]);
+      expect(panels.layout.value).toBe(layoutBefore);
       expect(stored("layout.last")).toEqual(storedBefore);
+      panels.toggleChromeHidden();
+      expect(shown(panels)).toEqual(before);
       expect(shown(reload())).toEqual(before);
     });
 
@@ -421,14 +413,12 @@ describe("usePanelLayout", () => {
   describe("presets", () => {
     it("applying an open set shows exactly it, by the placement rules", () => {
       const panels = mount();
-      panels.minimize("toolsPanel");
       panels.applyOpenSet(["layersPanel", "annotationPanel", "filtersPanel"]);
       expect(shown(panels)).toEqual([
         "annotationPanel",
         "filtersPanel",
         "layersPanel",
       ]);
-      expect(panels.minimizedPanels.value).toEqual([]);
     });
 
     it("reset returns to the collection default, or the app's without one", () => {

@@ -74,10 +74,14 @@ describe("App.vue command palette coverage", () => {
         stubs: { "router-view": true },
       },
     });
-    const declared = [...template.matchAll(/data-command-id="([^"]+)"/g)].map(
-      (match) => match[1],
-    );
-    expect(declared.length).toBeGreaterThan(10);
+    // Literal ids only; a bound one (`:data-command-id`) is checked below.
+    const declared = [
+      ...template.matchAll(/(?<!:)data-command-id="([^"]+)"/g),
+    ].map((match) => match[1]);
+    // The panel chips are made from one template, so their ids
+    // (`panel.toggle.<id>`, one per registry panel) are not literals here.
+    expect(declared.length).toBeGreaterThan(8);
+    expect(template).toContain(':data-command-id="`panel.toggle.${chip.id}`"');
     const registered = new Set(allCommands.value.map((command) => command.id));
     expect(declared.filter((id) => !registered.has(id))).toEqual([]);
     wrapper.unmount();

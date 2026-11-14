@@ -35,6 +35,31 @@ export function panelRevealRequest(
   };
 }
 
+/**
+ * Whether a step that waits for the user to click something is already done:
+ * its anchor is absent and an element showing that the click's goal is met
+ * (`data-tour-done` naming the anchor, on a palette that is displayed) is
+ * there instead. The panel chips are such anchors: "click here to open the
+ * object list" has nothing to point at while the list is open, because its
+ * chip exists only while the panel is closed.
+ */
+export function tourStepAlreadyDone(
+  step: Pick<ITourStepRuntime, "element" | "onTriggerEvent">,
+  root: ParentNode = document,
+): boolean {
+  if (!step.onTriggerEvent || !step.element) {
+    return false;
+  }
+  const anchor = step.element.match(/^\[data-tour="([^"]+)"\]$/)?.[1];
+  if (!anchor || root.querySelector(step.element)) {
+    return false;
+  }
+  // A fixed palette has no offsetParent, so ask for its display.
+  return Array.from(root.querySelectorAll(`[data-tour-done="${anchor}"]`)).some(
+    (element) => getComputedStyle(element).display !== "none",
+  );
+}
+
 export class TourManager {
   private driverObj: Driver | null = null;
   private steps: ITourStepRuntime[] = [];
@@ -143,11 +168,25 @@ export class TourManager {
 
     this.clearTriggerListener();
 
+    // The step waits for a click whose goal is already met (its panel is
+    // open, so the chip it points at is gone): move on. Asked before the
+    // wait, so the user is not kept waiting, and after it, for a palette
+    // that came up meanwhile.
+    if (tourStepAlreadyDone(step)) {
+      return this.advance();
+    }
     let target: Element | null = null;
     if (step.element) {
       try {
         target = await this.waitForElement(step.element, step.waitForElement);
       } catch {
+        // The tour moved on or ended while this step waited.
+        if (!this.isActive || this.steps[this.currentStepIndex] !== step) {
+          return;
+        }
+        if (tourStepAlreadyDone(step)) {
+          return this.advance();
+        }
         return this.showMissingTargetPopover(step);
       }
       await this.revealContainingPanel(target);
@@ -248,10 +287,10 @@ export class TourManager {
     }
   }
 
-  // Palette content stays mounted while its palette is closed, minimized or
-  // hidden, so a step's anchor can exist and still be invisible, and the
-  // popover would point at nothing. Ask for the palette that holds it, then
-  // give the app a turn to show it before the step is drawn.
+  // Palette content stays mounted while its palette is closed or hidden, so
+  // a step's anchor can exist and still be invisible, and the popover would
+  // point at nothing. Ask for the palette that holds it, then give the app a
+  // turn to show it before the step is drawn.
   private async revealContainingPanel(target: Element) {
     const request = panelRevealRequest(target);
     if (!request) {

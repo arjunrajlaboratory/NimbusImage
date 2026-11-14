@@ -571,9 +571,12 @@ Vuetify 4 changed the default theme from `"light"` to `"system"`. Our config set
 
 ### The viewer's app bar is already full — measure before widening a control
 
-On the dataset view the app bar holds about 20 controls and already overflows
-by ~50px at 1024px wide. Anything wider than an icon pushes the right-hand
-buttons (help, account, Nimbus AI) off screen with no scrollbar and no error;
+On the dataset view the app bar held about 20 controls and overflowed by
+~50px at 1024px wide, before the nine panel toggles moved out of it into the
+labeled chips at the top of each panel zone. Do not put panel controls back
+in the app bar: a closed panel's control is its chip. Anything wider than an
+icon pushes the right-hand buttons (help, account, Nimbus AI) off screen
+with no scrollbar and no error;
 a 264px search-field trigger hid all three anywhere from 960px to ~1300px.
 Before widening an app-bar control, measure on the **viewer** route (not the
 home page, which has half the controls) at 1024 and 1280px:
@@ -866,6 +869,13 @@ Three traps that come with remembering anything:
   could assume their anchors were showing. A mounted-but-hidden anchor is
   still found by `querySelector`. Tours now ask for the palette
   (`data-panel-id` → `TOUR_REVEAL_PANEL_EVENT`).
+- **A tour anchor can exist in only one state.** A panel's chip is its one
+  control, and it exists only while the panel is closed, so "click here to
+  open the object list" has nothing to point at when a remembered layout
+  already has the list open. The palette carries `data-tour-done="<anchor>"`,
+  and `tourStepAlreadyDone` in `plugins/tour.ts` moves such a step on instead
+  of waiting for a target that will not come. Give any new state-dependent
+  anchor the same pair.
 - **A list remembered by many instances of a component needs one ref.**
   Each layer row remembering "am I expanded" in its own
   `usePersistedUiState` copy of the list overwrites the other rows' changes
@@ -880,7 +890,7 @@ Three traps that come with remembering anything:
 - **Derive visibility; do not mutate the remembered state to hide things.**
   The layout used to be closed when the route left the viewer, which is one
   watcher away from saving "all closed". A palette is now on screen when it
-  is open AND in the viewer AND not minimized AND not hidden, and leaving
+  is open AND in the viewer AND available AND not hidden, and leaving
   changes nothing (`src/utils/usePanelLayout.ts`). See
   `codebaseDocumentation/PANEL_LAYOUT_PERSISTENCE.md`.
 

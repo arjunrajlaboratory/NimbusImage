@@ -255,7 +255,7 @@ export interface IPanelController {
 /**
  * "Open X" / "Close X" for every registered palette. The controller is the
  * owner of the open/closed state (App.vue); toggling through it applies the
- * same companion rules as the app-bar buttons.
+ * same companion rules as the panel chips.
  */
 export function panelCommands(
   ctx: IProviderContext,

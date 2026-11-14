@@ -14,6 +14,7 @@
         [`resizes-${resizeEdge}`]: !!resizeEdge,
       }"
       :data-panel-id="panelId"
+      :data-tour-done="tourDoneAnchor"
       :style="paletteStyle"
       @click.stop
     >
@@ -52,23 +53,6 @@
         <h4 class="palette-title">{{ title }}</h4>
         <div class="palette-actions">
           <slot name="actions" />
-          <button
-            v-if="minimizable"
-            type="button"
-            class="palette-close"
-            aria-label="Minimize palette"
-            title="Minimize"
-            @click="$emit('minimize')"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <path d="M6 12h12" />
-            </svg>
-          </button>
           <button
             type="button"
             class="palette-close"
@@ -131,8 +115,6 @@ const props = withDefaults(
     top?: number;
     /** Optional max-height; defaults to fitting in the viewport. */
     maxHeight?: string;
-    /** Show a minimize button; the parent collapses the palette to a chip. */
-    minimizable?: boolean;
     /** Which edge resizes the palette's zone: the one facing the canvas. */
     resizeEdge?: "left" | "right";
     /**
@@ -152,6 +134,12 @@ const props = withDefaults(
      * palette that contains it to be shown.
      */
     panelId?: string;
+    /**
+     * A tour anchor whose step this palette being open completes: the chip
+     * that opens it, which is gone while it is open. Written to the DOM as
+     * `data-tour-done` so the tour can move on (plugins/tour.ts).
+     */
+    tourDoneAnchor?: string;
   }>(),
   {
     width: 360,
@@ -163,7 +151,6 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: boolean): void;
-  (e: "minimize"): void;
   /** The width the drag has reached. Unclamped: the parent owns the limits. */
   (e: "resize", width: number): void;
   (e: "resize-end", width: number): void;

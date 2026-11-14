@@ -4,7 +4,6 @@ import {
   defaultArrangement,
   defaultLayout,
   layoutWithClosed,
-  layoutWithMinimized,
   layoutWithOpen,
   layoutWithOpenSet,
   leftOrderAfterDrop,
@@ -18,7 +17,6 @@ describe("panelLayout", () => {
     expect(defaultLayout()).toEqual({
       version: 1,
       open: ["navigatorPanel", "layersPanel", "toolsPanel"],
-      minimized: [],
     });
   });
 
@@ -40,9 +38,8 @@ describe("panelLayout", () => {
       expect(
         validateLayout({
           open: ["layersPanel", "goneInThisVersion", 7, "layersPanel"],
-          minimized: ["goneInThisVersion"],
         }),
-      ).toEqual({ version: 1, open: ["layersPanel"], minimized: [] });
+      ).toEqual({ version: 1, open: ["layersPanel"] });
     });
 
     it("resolves two right-zone primaries to the last one", () => {
@@ -69,52 +66,41 @@ describe("panelLayout", () => {
       expect(validateLayout({ open: ["toolsPanel"] })).toEqual({
         version: 1,
         open: ["toolsPanel"],
-        minimized: [],
       });
     });
 
-    it("keeps minimized only for panels that are open", () => {
+    // An earlier format kept minimized panels in `open` and named them again
+    // in `minimized`. There is no minimized state now: they were open, so
+    // they come back open, as palettes.
+    it("reads a panel minimized in the earlier format as open", () => {
       expect(
         validateLayout({
+          version: 1,
           open: ["toolsPanel", "annotationPanel"],
           minimized: ["annotationPanel", "layersPanel"],
-        })?.minimized,
-      ).toEqual(["annotationPanel"]);
+        }),
+      ).toEqual({ version: 1, open: ["toolsPanel", "annotationPanel"] });
     });
   });
 
   describe("changes", () => {
-    const base = layoutWithMinimized(
-      layoutWithOpenSet(["toolsPanel", "annotationPanel", "filtersPanel"]),
+    const base = layoutWithOpenSet([
+      "toolsPanel",
       "annotationPanel",
-    );
+      "filtersPanel",
+    ]);
 
-    it("minimizing keeps the panel open", () => {
-      expect(base.open).toContain("annotationPanel");
-      expect(base.minimized).toEqual(["annotationPanel"]);
-    });
-
-    it("minimizing a closed panel changes nothing", () => {
-      expect(layoutWithMinimized(base, "settingsPanel")).toBe(base);
-    });
-
-    it("opening a minimized panel restores it", () => {
-      expect(layoutWithOpen(base, "annotationPanel").minimized).toEqual([]);
-    });
-
-    it("opening a primary drops the minimized panel it evicts", () => {
+    it("opening a primary evicts by the placement rules", () => {
       expect(layoutWithOpen(base, "settingsPanel")).toEqual({
         version: 1,
         open: ["toolsPanel", "settingsPanel"],
-        minimized: [],
       });
     });
 
-    it("closing a panel also clears its minimized flag", () => {
+    it("closing a panel removes only it", () => {
       expect(layoutWithClosed(base, "annotationPanel")).toEqual({
         version: 1,
         open: ["toolsPanel", "filtersPanel"],
-        minimized: [],
       });
     });
   });

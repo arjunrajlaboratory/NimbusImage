@@ -1,7 +1,7 @@
 [
   {
     "name": "get_interface_state",
-    "description": "Get a structured snapshot of the current NimbusImage interface state: dataset, collection, location (XY/Z/Time), layer mode, camera, layers (id, name, channel, color, contrast, visibility), selected tool, active annotation filters, annotation counts, and the viewer's panels (which are open or minimized, whether all are hidden, and the workspaces set_panels can switch to). Cheap and precise \u2014 prefer this over capture_screenshot for questions about application state. Read-only.",
+    "description": "Get a structured snapshot of the current NimbusImage interface state: dataset, collection, location (XY/Z/Time), layer mode, camera, layers (id, name, channel, color, contrast, visibility), selected tool, active annotation filters, annotation counts, and the viewer's panels (which are open, whether all are hidden, and the workspaces set_panels can switch to). Cheap and precise \u2014 prefer this over capture_screenshot for questions about application state. Read-only.",
     "input_schema": {
       "type": "object",
       "properties": {},

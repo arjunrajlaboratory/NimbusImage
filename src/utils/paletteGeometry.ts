@@ -21,8 +21,12 @@ export const PALETTE_INSET = 16;
 /** Gap between two adjacent or stacked palettes. */
 export const PALETTE_GAP = 8;
 
-/** Height of the row of minimized-palette chips at the top of a zone. */
-export const PALETTE_CHIP_ROW_HEIGHT = 28;
+/**
+ * Height of one line of closed-panel chips (`.palette-chip` in App.vue). A
+ * chip row wraps and is measured; this is its height until it has been, and
+ * where nothing can measure it.
+ */
+export const PALETTE_CHIP_HEIGHT = 28;
 
 /**
  * Gap a canvas-anchored surface keeps from a palette's edge.

@@ -79,6 +79,10 @@ Because the registration sits next to the button, adding a feature and its
 command is the same edit. Add a **coverage test** so nothing gets forgotten:
 give each app-bar control a `data-command-id` attribute and assert that every
 id in `App.vue`'s template exists in the registry.
+The panel chips (a closed panel's one control, at the top of its zone; see
+`PANEL_LAYOUT_PERSISTENCE.md`) are made from one template and carry
+`panel.toggle.<id>` through a binding, so the test checks that binding rather
+than a literal per panel.
 
 **Hotkeys.** `boundKeys` in `src/utils/v-mousetrap.ts` records only
 `{ section, description }`, not the handler, so it can't drive commands
@@ -249,7 +253,7 @@ Departures from the spec, and why:
   beside it, take `v-model:open`, and **mount the first time they are
   opened**, so a viewer load still pays for none of them. Mounted eagerly,
   the CSV dialog would read the filtered-annotation list on every render.
-- **Every app-bar and Tools-palette button has a command**, including "Add new
+- **Every app-bar control, panel chip and Tools-palette button has a command**, including "Add new
   tool…" (browse every tool type), alongside the per-card "Add tool: X…".
 - **The worker list is refreshed when the palette opens** in the viewer.
   Before this, only mounting the Add-tool dialog fetched it, so

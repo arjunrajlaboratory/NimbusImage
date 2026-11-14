@@ -1,4 +1,4 @@
-// The viewer's panel layout as data: which palettes are open or minimized
+// The viewer's panel layout as data: which palettes are open
 // (`IPanelLayout`, remembered per collection) and how the zones are arranged
 // (`IPanelArrangement`, one per user). Pure functions only; the reactive
 // owner is `usePanelLayout`. See codebaseDocumentation/
@@ -15,11 +15,8 @@ import {
 export interface IPanelLayout {
   version: 1;
   // The open set in the order opened, not a boolean per panel, so a panel
-  // added later falls back to its registry `defaultOpen`. Includes minimized
-  // panels: a minimized panel is open, shown as a chip.
+  // added later falls back to its registry `defaultOpen`.
   open: PanelId[];
-  // Always a subset of `open`.
-  minimized: PanelId[];
 }
 
 export interface IPanelArrangement {
@@ -71,7 +68,7 @@ export function layoutWithOpenSet(ids: readonly PanelId[]): IPanelLayout {
   for (const id of ids) {
     open = applyOpen(open, id);
   }
-  return { version: 1, open: [...open], minimized: [] };
+  return { version: 1, open: [...open] };
 }
 
 /**
@@ -87,11 +84,7 @@ export function validateLayout(raw: unknown): IPanelLayout | null {
   if (!openIds) {
     return null;
   }
-  const layout = layoutWithOpenSet(openIds);
-  // Optional: a collection default and a workspace carry only `open`.
-  const minimized = knownPanelIds(raw.minimized) ?? [];
-  layout.minimized = minimized.filter((id) => layout.open.includes(id));
-  return layout;
+  return layoutWithOpenSet(openIds);
 }
 
 /** `layout` with `id` opened and shown; its zone's rules evict as needed. */
@@ -99,41 +92,19 @@ export function layoutWithOpen(
   layout: IPanelLayout,
   id: PanelId,
 ): IPanelLayout {
-  const open = [...applyOpen(new Set(layout.open), id)];
-  return {
-    version: 1,
-    open,
-    minimized: layout.minimized.filter(
-      (other) => other !== id && open.includes(other),
-    ),
-  };
+  return { version: 1, open: [...applyOpen(new Set(layout.open), id)] };
 }
 
 export function layoutWithClosed(
   layout: IPanelLayout,
   id: PanelId,
 ): IPanelLayout {
-  return {
-    version: 1,
-    open: layout.open.filter((other) => other !== id),
-    minimized: layout.minimized.filter((other) => other !== id),
-  };
-}
-
-/** `layout` with the open panel `id` collapsed to a chip. Closed: unchanged. */
-export function layoutWithMinimized(
-  layout: IPanelLayout,
-  id: PanelId,
-): IPanelLayout {
-  if (!layout.open.includes(id) || layout.minimized.includes(id)) {
-    return layout;
-  }
-  return { ...layout, minimized: [...layout.minimized, id] };
+  return { version: 1, open: layout.open.filter((other) => other !== id) };
 }
 
 /** One string per distinct layout, for change detection and comparison. */
 export function serializeLayout(layout: IPanelLayout): string {
-  return JSON.stringify([layout.open, layout.minimized]);
+  return JSON.stringify(layout.open);
 }
 
 export function defaultArrangement(): IPanelArrangement {

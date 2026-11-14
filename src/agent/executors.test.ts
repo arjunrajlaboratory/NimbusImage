@@ -1950,7 +1950,6 @@ describe("display + view mode tools", () => {
       const unregister = registerPanelLayoutController({
         inViewer: () => true,
         openPanels: () => [...state.open],
-        minimizedPanels: () => [],
         allHidden: () => false,
         isAvailable: (id) => id !== "transcriptsPanel",
         open: (id) => {
@@ -2119,16 +2118,15 @@ describe("display + view mode tools", () => {
     it("the interface state lists the panels, and nothing outside the viewer", () => {
       expect(buildInterfaceState().panels).toBeNull();
       layout = registerLayout({
-        minimizedPanels: () => ["layersPanel"],
+        openPanels: () => ["navigatorPanel", "transcriptsPanel"],
         allHidden: () => true,
       });
       const panels = buildInterfaceState().panels!;
-      expect(panels.open).toEqual([
-        { id: "navigatorPanel", title: "Navigator" },
-      ]);
-      expect(panels.minimized).toEqual([
-        { id: "layersPanel", title: "Layers" },
-      ]);
+      // An unavailable panel is not open, whatever the layout says.
+      expect(panels).toMatchObject({
+        open: [{ id: "navigatorPanel", title: "Navigator" }],
+      });
+      expect(Object.keys(panels)).not.toContain("minimized");
       expect(panels.allHidden).toBe(true);
       expect(panels.available.map((panel) => panel.id)).not.toContain(
         "transcriptsPanel",

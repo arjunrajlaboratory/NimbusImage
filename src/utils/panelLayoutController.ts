@@ -9,10 +9,8 @@ import { PanelId } from "./panelRegistry";
 export interface IPanelLayoutController {
   /** Whether panels can be shown at all: in the dataset viewer, not embedded. */
   inViewer: () => boolean;
-  /** Open as a palette or minimized to a chip, in the order opened. */
+  /** The open panels, in the order opened. */
   openPanels: () => PanelId[];
-  /** The open panels that are minimized to a chip. */
-  minimizedPanels: () => PanelId[];
   /** "Hide all panels" is on. */
   allHidden: () => boolean;
   /** Whether a panel exists for the open dataset. */
