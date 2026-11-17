@@ -1,6 +1,6 @@
 /**
  * Tests for the `activeFilterCount` getter that drives the count badge on the
- * app-bar Filters button. The badge exists so a user can tell filters are
+ * Filters chip. The badge exists so a user can tell filters are
  * narrowing the object set even when the Filters panel is closed, so the count
  * must include every filter kind the panel exposes and nothing else.
  */

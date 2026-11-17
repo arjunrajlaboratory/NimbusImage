@@ -54,6 +54,30 @@ function mountComponent(props = {}) {
   });
 }
 
+describe("AnnotationFilters remembered sections", () => {
+  it("the Advanced section is open again on the next page load", async () => {
+    window.localStorage.clear();
+    const first = mountComponent();
+    const toggle = () =>
+      first
+        .findAll("[aria-expanded]")
+        .find((el) => el.text().includes("Advanced"))!;
+    expect(toggle().attributes("aria-expanded")).toBe("false");
+    await toggle().trigger("click");
+    expect(toggle().attributes("aria-expanded")).toBe("true");
+    first.unmount();
+
+    const again = mountComponent();
+    expect(
+      again
+        .findAll("[aria-expanded]")
+        .find((el) => el.text().includes("Advanced"))!
+        .attributes("aria-expanded"),
+    ).toBe("true");
+    window.localStorage.clear();
+  });
+});
+
 describe("AnnotationFilters", () => {
   it("tagFilter getter reads from filterStore", () => {
     const wrapper = mountComponent();

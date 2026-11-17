@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { nextTick, ref } from "vue";
 import { shallowMount } from "@vue/test-utils";
 
 vi.mock("@/store", () => ({
@@ -64,6 +65,8 @@ vi.mock("./ColorPickerMenu.vue", () => ({
 
 import store from "@/store";
 import DisplayLayer from "./DisplayLayer.vue";
+import { forgetSharedUiState } from "@/utils/uiState";
+import { PANEL_VISIBLE_KEY } from "@/utils/panelVisibility";
 
 const sampleLayer = {
   id: "l1",
@@ -85,6 +88,90 @@ function mountComponent(propsOverrides = {}) {
     },
   });
 }
+
+describe("DisplayLayer remembered rows", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    forgetSharedUiState();
+  });
+
+  const rowModel = (wrapper: ReturnType<typeof mountComponent>) =>
+    wrapper.findAllComponents({ name: "VExpansionPanels" })[0];
+
+  function mountIn(visible: boolean, id = "l1") {
+    return shallowMount(DisplayLayer, {
+      props: { modelValue: { ...sampleLayer, id } as any },
+      global: { provide: { [PANEL_VISIBLE_KEY as symbol]: ref(visible) } },
+    });
+  }
+
+  it("an expanded row is expanded again on the next page load", async () => {
+    const first = mountComponent();
+    expect(rowModel(first).props("modelValue")).toBeUndefined();
+    rowModel(first).vm.$emit("update:modelValue", "expanded");
+    await nextTick();
+    expect(rowModel(first).props("modelValue")).toBe("expanded");
+
+    forgetSharedUiState();
+    expect(rowModel(mountComponent()).props("modelValue")).toBe("expanded");
+    // Another layer's row is not.
+    expect(
+      rowModel(mountComponent({ id: "l2" })).props("modelValue"),
+    ).toBeUndefined();
+  });
+
+  it("rows share one list, so expanding one keeps the others", async () => {
+    const one = mountComponent({ id: "l1" });
+    const two = mountComponent({ id: "l2" });
+    rowModel(one).vm.$emit("update:modelValue", "expanded");
+    rowModel(two).vm.$emit("update:modelValue", "expanded");
+    rowModel(one).vm.$emit("update:modelValue", undefined);
+    await nextTick();
+    expect(
+      JSON.parse(
+        window.localStorage.getItem("nimbus.ui.anonymous.layers.expandedIds")!,
+      ),
+    ).toEqual(["l2"]);
+  });
+
+  it("a remembered row stays collapsed while its palette is not on screen", async () => {
+    window.localStorage.setItem(
+      "nimbus.ui.anonymous.layers.expandedIds",
+      '["l1"]',
+    );
+    const visible = ref(false);
+    const wrapper = shallowMount(DisplayLayer, {
+      props: { modelValue: { ...sampleLayer } as any },
+      global: { provide: { [PANEL_VISIBLE_KEY as symbol]: visible } },
+    });
+    expect(rowModel(wrapper).props("modelValue")).toBeUndefined();
+    // Nothing the hidden row reports changes what is remembered.
+    rowModel(wrapper).vm.$emit("update:modelValue", undefined);
+    visible.value = true;
+    await nextTick();
+    expect(rowModel(wrapper).props("modelValue")).toBe("expanded");
+    expect(rowModel(mountIn(true)).props("modelValue")).toBe("expanded");
+  });
+
+  it("the advanced options are open in every row once opened in one", async () => {
+    const advanced = (wrapper: ReturnType<typeof mountComponent>) =>
+      wrapper.findAllComponents({ name: "VExpansionPanels" })[1];
+    // The advanced options sit inside the row's body, which a shallow mount
+    // only renders when asked to render the stubs' slots.
+    const mountRow = (id: string) =>
+      shallowMount(DisplayLayer, {
+        props: { modelValue: { ...sampleLayer, id } as any },
+        global: { renderStubDefaultSlot: true },
+      });
+    const one = mountRow("l1");
+    const two = mountRow("l2");
+    advanced(one).vm.$emit("update:modelValue", "expanded");
+    await nextTick();
+    expect(advanced(two).props("modelValue")).toBe("expanded");
+    forgetSharedUiState();
+    expect(advanced(mountRow("l3")).props("modelValue")).toBe("expanded");
+  });
+});
 
 describe("DisplayLayer", () => {
   it("index returns store layer index", async () => {

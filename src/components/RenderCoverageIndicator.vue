@@ -92,7 +92,7 @@ const stubMode = computed(
       annotationStore.visibilityConfig.stubThreshold,
 );
 
-// Filters AND analysis gates, from the one list the app-bar badges count too
+// Filters AND analysis gates, from the one list the panel chips' badges count too
 // (utils/activeConstraints.ts), so the three surfaces cannot disagree.
 const constraints = computed(() => filterStore.activeConstraints);
 

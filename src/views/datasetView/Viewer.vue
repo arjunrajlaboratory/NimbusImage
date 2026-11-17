@@ -216,7 +216,9 @@ defineExpose({
   position: absolute;
   /* Inset like the floating palettes (8px below the bar, 16px from the
      edges), so it reads as a panel rather than a hole in the canvas. */
-  top: 72px;
+  /* Below the band the rows of panel chips occupy at the top of the canvas,
+     so it clears them by 36px of height rather than by their whole width. */
+  top: var(--nimbus-below-chip-rows, 72px);
   left: 16px;
   right: max(var(--nimbus-right-edge-clear-x, 0px), 16px);
   bottom: 16px;

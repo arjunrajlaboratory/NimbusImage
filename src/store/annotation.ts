@@ -108,7 +108,9 @@ function cloneAnnotation(annotation: IAnnotation): IAnnotation {
 // "running" for the next account on a shared dataset (which cannot read it).
 // Resolves false, as a retired job does: the waiter releases its run.
 function trackJob(job: IComputeJob, sessionEnded: () => boolean) {
-  return sessionEnded() ? Promise.resolve(false) : jobs.addJob(job);
+  return sessionEnded()
+    ? Promise.resolve(false)
+    : jobs.addJob({ ...job, leavesResults: true });
 }
 
 @Module({ dynamic: true, store, name: "annotation" })

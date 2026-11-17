@@ -30,7 +30,13 @@
     0 18px 40px -12px rgba(0, 0, 0, 0.62),
     0 6px 14px -6px rgba(0, 0, 0, 0.45);
   color: rgb(var(--v-theme-on-surface, 247, 248, 248));
-  font-family: var(--nimbus-font, Geist, "SF Pro Display", system-ui, sans-serif);
+  font-family: var(
+    --nimbus-font,
+    Geist,
+    "SF Pro Display",
+    system-ui,
+    sans-serif
+  );
   max-width: 384px;
   padding: 20px 20px 16px;
   // NOTE: do NOT set `position` here — driver.js positions the popover with

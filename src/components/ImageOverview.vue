@@ -378,10 +378,12 @@ defineExpose({
 <style scoped lang="scss">
 .wrapper {
   position: absolute;
-  // Default to the top-right of the canvas, aligned with the palette column.
-  // Palettes (z 1006) sit in front, so the minimap is acceptably obscured
-  // when one is open. Users can still drag it or snap it to another corner.
-  top: 72px;
+  // Default to the top-right of the canvas, aligned with the palette column
+  // and below the right zone's row of panel chips (App.vue sets the
+  // variable). Palettes (z 1006) sit in front, so the minimap is acceptably
+  // obscured when one is open. Users can still drag it or snap it to another
+  // corner.
+  top: var(--nimbus-overview-top, 72px);
   right: 16px;
   background: black;
   border: 1px solid white;

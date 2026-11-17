@@ -717,11 +717,46 @@ watch(
   { flush: "post" },
 );
 
+// Plotly's `responsive` option follows the window only. The palette's column
+// can be dragged wider or narrower (and reset) without the window changing,
+// which left the plot at its old width: overflowing a narrowed palette, or
+// leaving a gap in a widened one. The plot div sits behind `v-if`, so the
+// observer follows the element.
+let plotWidthObserver: ResizeObserver | null = null;
+watch(
+  plotEl,
+  (element) => {
+    plotWidthObserver?.disconnect();
+    plotWidthObserver = null;
+    if (!element || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    let width = element.clientWidth;
+    plotWidthObserver = new ResizeObserver(() => {
+      const nextWidth = element.clientWidth;
+      // Zero is the palette being hidden (display: none), not a size to draw
+      // at; an unchanged width is the plot's own height settling.
+      if (nextWidth === 0 || nextWidth === width) {
+        return;
+      }
+      width = nextWidth;
+      // Only once Plotly has drawn into the div; before that the render in
+      // flight picks up the current size itself.
+      if (element.classList.contains("js-plotly-plot")) {
+        plotly.value?.Plots.resize(element);
+      }
+    });
+    plotWidthObserver.observe(element);
+  },
+  { immediate: true, flush: "post" },
+);
+
 onMounted(() => {
   renderPlot();
 });
 
 onBeforeUnmount(() => {
+  plotWidthObserver?.disconnect();
   if (plotly.value && plotEl.value) {
     plotly.value.purge(plotEl.value);
   }
