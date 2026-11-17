@@ -96,6 +96,24 @@ export function canonicalHotkey(
 }
 
 /**
+ * Whether pressing one canonical hotkey also runs the other. Every binding
+ * has its own Mousetrap instance, so a single key fires even while it is a
+ * step of another binding's sequence: "g" clashes with "g i" (typing the
+ * sequence runs it), as do equal keys. Two different sequences do not.
+ */
+export function hotkeysOverlap(a: string, b: string): boolean {
+  if (a === b) {
+    return true;
+  }
+  const stepsA = a.split(" ");
+  const stepsB = b.split(" ");
+  return (
+    (stepsA.length === 1 && stepsB.includes(a)) ||
+    (stepsB.length === 1 && stepsA.includes(b))
+  );
+}
+
+/**
  * The palette's own toggle (Mousetrap "mod+k"): ⌘K on a Mac, Ctrl+K
  * elsewhere, with no other modifier.
  */

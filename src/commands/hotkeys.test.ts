@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { canonicalHotkey, formatHotkey, isAskAiKey } from "./hotkeys";
+import {
+  canonicalHotkey,
+  formatHotkey,
+  hotkeysOverlap,
+  isAskAiKey,
+} from "./hotkeys";
 
 describe("formatHotkey", () => {
   it("renders Mac modifiers as symbols", () => {
@@ -64,5 +69,19 @@ describe("canonicalHotkey", () => {
   it("keeps sequences and the plus key", () => {
     expect(canonicalHotkey("g i", false)).toBe("g i");
     expect(canonicalHotkey("ctrl++", false)).toBe("ctrl++");
+  });
+});
+
+describe("hotkeysOverlap", () => {
+  it("matches equal keys and a single key inside a sequence", () => {
+    expect(hotkeysOverlap("g", "g")).toBe(true);
+    expect(hotkeysOverlap("g i", "g")).toBe(true);
+    expect(hotkeysOverlap("i", "g i")).toBe(true);
+  });
+
+  it("does not match different keys or different sequences", () => {
+    expect(hotkeysOverlap("g", "h")).toBe(false);
+    expect(hotkeysOverlap("g i", "g h")).toBe(false);
+    expect(hotkeysOverlap("ctrl+g", "g")).toBe(false);
   });
 });

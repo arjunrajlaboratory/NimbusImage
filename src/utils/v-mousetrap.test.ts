@@ -57,15 +57,16 @@ describe("v-mousetrap allowInInputs", () => {
 describe("v-mousetrap pauseHotkeysWhile", () => {
   // Mousetrap matches plain letters on keypress.
   function pressG() {
-    document.body.dispatchEvent(
-      new KeyboardEvent("keypress", {
-        key: "g",
-        charCode: 103,
-        keyCode: 103,
-        which: 103,
-        bubbles: true,
-      } as KeyboardEventInit),
-    );
+    const event = new KeyboardEvent("keypress", {
+      key: "g",
+      charCode: 103,
+      keyCode: 103,
+      which: 103,
+      bubbles: true,
+      cancelable: true,
+    } as KeyboardEventInit);
+    document.body.dispatchEvent(event);
+    return event;
   }
 
   it("runs no bound handler while a pause condition holds", () => {
@@ -82,6 +83,13 @@ describe("v-mousetrap pauseHotkeysWhile", () => {
     release();
     pressG();
     expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it("still blocks the browser's default for a paused key", () => {
+    bindHotkeys([{ bind: "g", handler: vi.fn() }]);
+    const release = pauseHotkeysWhile(() => true);
+    expect(pressG().defaultPrevented).toBe(true);
+    release();
   });
 });
 

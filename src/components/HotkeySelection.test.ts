@@ -205,6 +205,13 @@ describe("HotkeySelection", () => {
       );
     });
 
+    it("warns when a sequence runs a bound single key", () => {
+      const wrapper = mountComponent({ modelValue: "g i" });
+      expect(wrapper.find(".hotkey-conflict").text()).toBe(
+        'G then I is already used for "Show/hide transcripts" (View, G). Pressing it will do both.',
+      );
+    });
+
     it("still warns about another binding on the tool's own key", () => {
       boundKeys.value = {
         g: [

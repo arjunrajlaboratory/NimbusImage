@@ -88,6 +88,10 @@ function bind(el: any, value: IHotkey | IHotkey[], bindElement: any) {
     }
     mousetrap.bind(_bind, function (this: any, ...args) {
       if (hotkeysPaused()) {
+        // Still keep the browser's own action for the key from running
+        // (Ctrl+K would focus the address bar mid-recording): the key is
+        // being recorded, not typed.
+        (args[0] as Event | undefined)?.preventDefault?.();
         return;
       }
       handler.apply(this, [el, ...args]);

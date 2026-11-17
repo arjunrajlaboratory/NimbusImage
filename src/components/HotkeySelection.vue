@@ -32,7 +32,11 @@
 import { ref, computed, onBeforeUnmount } from "vue";
 import Mousetrap from "mousetrap";
 import { boundKeys, pauseHotkeysWhile } from "@/utils/v-mousetrap";
-import { canonicalHotkey, formatHotkey } from "@/commands/hotkeys";
+import {
+  canonicalHotkey,
+  formatHotkey,
+  hotkeysOverlap,
+} from "@/commands/hotkeys";
 
 const props = defineProps<{
   modelValue?: string | null;
@@ -66,26 +70,41 @@ const conflict = computed(() => {
     return null;
   }
   const canonical = canonicalHotkey(key);
-  const others = Object.entries(boundKeys.value)
-    .filter(([bound]) => canonicalHotkey(bound) === canonical)
-    .flatMap(([, bindings]) => bindings);
-  if (
-    props.ownHotkey != null &&
-    canonicalHotkey(props.ownHotkey) === canonical
-  ) {
-    // Drop only the tool's own binding; another one on the key still clashes.
-    const own = others.findIndex(
-      (bound) => bound.description === props.ownDescription,
-    );
-    if (own >= 0) {
-      others.splice(own, 1);
-    }
-  }
-  if (others.length === 0) {
+  const ownCanonical =
+    props.ownHotkey != null ? canonicalHotkey(props.ownHotkey) : null;
+  const clashes = Object.entries(boundKeys.value).flatMap(
+    ([bound, bindings]) => {
+      const boundCanonical = canonicalHotkey(bound);
+      if (!hotkeysOverlap(canonical, boundCanonical)) {
+        return [];
+      }
+      const others = [...bindings];
+      if (boundCanonical === ownCanonical) {
+        // Drop only the tool's own binding; another one on it still clashes.
+        const own = others.findIndex(
+          (binding) => binding.description === props.ownDescription,
+        );
+        if (own >= 0) {
+          others.splice(own, 1);
+        }
+      }
+      return others.map((binding) => ({
+        ...binding,
+        // Name the bound key when it differs (a step of a sequence).
+        key: boundCanonical === canonical ? null : bound,
+      }));
+    },
+  );
+  if (clashes.length === 0) {
     return null;
   }
-  const uses = others
-    .map((bound) => `"${bound.description}" (${bound.section})`)
+  const uses = clashes
+    .map(
+      (clash) =>
+        `"${clash.description}" (${clash.section}${
+          clash.key ? `, ${formatHotkey(clash.key)}` : ""
+        })`,
+    )
     .join(" and ");
   return `${formatHotkey(key)} is already used for ${uses}. Pressing it will do both.`;
 });
