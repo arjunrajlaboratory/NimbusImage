@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mount } from "@vue/test-utils";
 import HotkeySelection from "./HotkeySelection.vue";
+import { boundKeys } from "@/utils/v-mousetrap";
 
 // Mock Mousetrap to avoid DOM key event dependencies
 vi.mock("mousetrap", () => ({
@@ -54,5 +55,35 @@ describe("HotkeySelection", () => {
     // Mousetrap.record is mocked to immediately call back with ["ctrl+s"]
     expect(wrapper.emitted("update:modelValue")).toBeTruthy();
     expect(wrapper.emitted("update:modelValue")![0]).toEqual(["ctrl+s"]);
+  });
+
+  describe("conflict warning", () => {
+    beforeEach(() => {
+      boundKeys.value = {
+        g: { section: "View", description: "Show/hide transcripts" },
+      };
+    });
+    afterEach(() => {
+      boundKeys.value = {};
+    });
+
+    it("warns when the hotkey is already bound", () => {
+      const wrapper = mountComponent({ modelValue: "g" });
+      expect(wrapper.find(".hotkey-conflict").text()).toBe(
+        'G is already used for "Show/hide transcripts" (View). Pressing it will do both.',
+      );
+    });
+
+    it("does not warn for a free key or the tool's own hotkey", () => {
+      expect(
+        mountComponent({ modelValue: "q" }).find(".hotkey-conflict").exists(),
+      ).toBe(false);
+      expect(
+        mountComponent({ modelValue: "g", ownHotkey: "g" })
+          .find(".hotkey-conflict")
+          .exists(),
+      ).toBe(false);
+      expect(mountComponent().find(".hotkey-conflict").exists()).toBe(false);
+    });
   });
 });

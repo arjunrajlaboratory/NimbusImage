@@ -18,7 +18,7 @@
       />
       <div class="ma-6 mb-0">
         <div class="title text-white">Tool Hotkey</div>
-        <hotkey-selection v-model="toolHotkey" />
+        <hotkey-selection v-model="toolHotkey" :own-hotkey="tool.hotkey" />
       </div>
     </v-card-text>
     <v-card-actions class="py-4">

@@ -1,34 +1,43 @@
 <template>
-  <div class="hotkey-selection">
-    <span class="hotkey-label">
-      {{ hotkey === null ? "No hotkey yet" : `Hotkey: ${hotkey}` }}
-    </span>
-    <v-btn
-      variant="outlined"
-      color="primary"
-      size="small"
-      class="mr-2"
-      @click="editHotkey()"
-      :disabled="isRecordingHotkey"
-    >
-      <v-progress-circular
-        size="16"
-        indeterminate
-        v-if="isRecordingHotkey"
-        class="mr-1"
-      />
-      {{ isRecordingHotkey ? "Recording..." : "Record" }}
-    </v-btn>
-    <v-btn variant="text" size="small" @click="hotkey = null"> Clear </v-btn>
+  <div>
+    <div class="hotkey-selection">
+      <span class="hotkey-label">
+        {{ hotkey === null ? "No hotkey yet" : `Hotkey: ${hotkey}` }}
+      </span>
+      <v-btn
+        variant="outlined"
+        color="primary"
+        size="small"
+        class="mr-2"
+        @click="editHotkey()"
+        :disabled="isRecordingHotkey"
+      >
+        <v-progress-circular
+          size="16"
+          indeterminate
+          v-if="isRecordingHotkey"
+          class="mr-1"
+        />
+        {{ isRecordingHotkey ? "Recording..." : "Record" }}
+      </v-btn>
+      <v-btn variant="text" size="small" @click="hotkey = null"> Clear </v-btn>
+    </div>
+    <div v-if="conflict" class="hotkey-conflict text-caption text-warning">
+      {{ conflict }}
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import Mousetrap from "mousetrap";
+import { boundKeys } from "@/utils/v-mousetrap";
+import { formatHotkey } from "@/commands/hotkeys";
 
 const props = defineProps<{
   modelValue?: string | null;
+  // The hotkey the edited tool already has: its own binding is not a clash.
+  ownHotkey?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -42,6 +51,20 @@ const hotkey = computed({
 });
 
 const isRecordingHotkey = ref(false);
+
+// Mousetrap runs every handler bound to a key, so a hotkey that is already
+// bound fires both actions. Only keys bound right now are known: a key that
+// only exists in another dataset (e.g. transcripts) is not checked.
+const conflict = computed(() => {
+  const key = hotkey.value;
+  if (key === null || key === props.ownHotkey) {
+    return null;
+  }
+  const existing = boundKeys.value[key];
+  return existing
+    ? `${formatHotkey(key)} is already used for "${existing.description}" (${existing.section}). Pressing it will do both.`
+    : null;
+});
 
 function editHotkey() {
   // The extensions of Mousetrap are loaded in main.ts
@@ -60,6 +83,10 @@ function editHotkey() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.hotkey-conflict {
+  margin-top: 4px;
 }
 
 .hotkey-label {
