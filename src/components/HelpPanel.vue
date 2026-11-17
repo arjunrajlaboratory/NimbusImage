@@ -83,15 +83,16 @@ defineEmits<{ close: [] }>();
 const hotkeyItems = computed(() => {
   const sections: Map<string, { key: string; description: string }[]> =
     new Map();
-  for (const [key, data] of Object.entries(boundKeys.value)) {
-    if (!sections.has(data.section)) {
-      sections.set(data.section, []);
+  for (const [key, bindings] of Object.entries(boundKeys.value)) {
+    for (const data of bindings) {
+      if (!sections.has(data.section)) {
+        sections.set(data.section, []);
+      }
+      sections.get(data.section)!.push({
+        key,
+        description: data.description,
+      });
     }
-    const section = sections.get(data.section);
-    section!.push({
-      key,
-      description: data.description,
-    });
   }
   const items = [...sections.entries()];
   items.sort();

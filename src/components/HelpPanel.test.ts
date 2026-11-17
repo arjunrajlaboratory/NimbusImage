@@ -5,9 +5,12 @@ import { ref } from "vue";
 vi.mock("@/utils/v-mousetrap", () => ({
   default: vi.fn(),
   boundKeys: ref({
-    "ctrl+z": { section: "General", description: "Undo" },
-    "ctrl+y": { section: "General", description: "Redo" },
-    d: { section: "Annotation", description: "Delete selected" },
+    "ctrl+z": [{ section: "General", description: "Undo" }],
+    "ctrl+y": [{ section: "General", description: "Redo" }],
+    d: [
+      { section: "Annotation", description: "Delete selected" },
+      { section: "Tools", description: "Toggle tool:  Dots" },
+    ],
   }),
 }));
 
@@ -80,6 +83,15 @@ describe("HelpPanel", () => {
       ([name]: [string, any]) => name === "Annotation",
     );
     expect(annotationSection![1]).toHaveLength(1);
+  });
+
+  it("lists every binding on a shared key", () => {
+    const wrapper = mountComponent();
+    const items = wrapper.vm.hotkeyItems;
+    const tools = items.find(([name]: [string, any]) => name === "Tools");
+    expect(tools![1]).toEqual([
+      { key: "d", description: "Toggle tool:  Dots" },
+    ]);
   });
 
   it("has correct number of items per feature section", () => {

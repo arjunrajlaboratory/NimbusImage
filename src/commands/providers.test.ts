@@ -60,9 +60,9 @@ vi.mock("@/utils/v-mousetrap", async () => {
   const { ref } = await import("vue");
   return {
     boundKeys: ref({
-      "1": { section: "Layer control", description: "Show/hide layer: DAPI" },
-      "3": { section: "Layer control", description: "Show/hide layer: GFP" },
-      "4": { section: "Layer control", description: "Show/hide layer: GFP" },
+      "1": [{ section: "Layer control", description: "Show/hide layer: DAPI" }],
+      "3": [{ section: "Layer control", description: "Show/hide layer: GFP" }],
+      "4": [{ section: "Layer control", description: "Show/hide layer: GFP" }],
     }),
   };
 });
