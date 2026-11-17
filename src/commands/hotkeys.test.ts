@@ -79,6 +79,12 @@ describe("hotkeysOverlap", () => {
     expect(hotkeysOverlap("i", "g i")).toBe(true);
   });
 
+  it("matches a sequence running inside a longer one", () => {
+    expect(hotkeysOverlap("g i", "g i x")).toBe(true);
+    expect(hotkeysOverlap("i x", "g i x")).toBe(true);
+    expect(hotkeysOverlap("g i x", "g x")).toBe(false);
+  });
+
   it("does not match different keys or different sequences", () => {
     expect(hotkeysOverlap("g", "h")).toBe(false);
     expect(hotkeysOverlap("g i", "g h")).toBe(false);

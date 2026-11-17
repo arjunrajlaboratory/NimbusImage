@@ -95,22 +95,27 @@ export function canonicalHotkey(
     .join(" ");
 }
 
+/** Whether `inner`'s steps appear consecutively within `outer`'s. */
+function containsRun(outer: string[], inner: string[]): boolean {
+  for (let start = 0; start + inner.length <= outer.length; start++) {
+    if (inner.every((step, offset) => outer[start + offset] === step)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Whether pressing one canonical hotkey also runs the other. Every binding
- * has its own Mousetrap instance, so a single key fires even while it is a
- * step of another binding's sequence: "g" clashes with "g i" (typing the
- * sequence runs it), as do equal keys. Two different sequences do not.
+ * has its own Mousetrap instance that tracks its own sequence, so typing a
+ * hotkey runs every other binding whose steps it contains in a row: "g"
+ * inside "g i", "g i" inside "g i x", and equal keys. "g i" and "g h" do not
+ * overlap.
  */
 export function hotkeysOverlap(a: string, b: string): boolean {
-  if (a === b) {
-    return true;
-  }
   const stepsA = a.split(" ");
   const stepsB = b.split(" ");
-  return (
-    (stepsA.length === 1 && stepsB.includes(a)) ||
-    (stepsB.length === 1 && stepsA.includes(b))
-  );
+  return containsRun(stepsA, stepsB) || containsRun(stepsB, stepsA);
 }
 
 /**

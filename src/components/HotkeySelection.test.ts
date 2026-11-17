@@ -212,6 +212,16 @@ describe("HotkeySelection", () => {
       );
     });
 
+    it("warns when a longer sequence contains a bound one", () => {
+      boundKeys.value = {
+        "g i": [{ section: "Tools", description: "Toggle tool:  Spots" }],
+      };
+      const wrapper = mountComponent({ modelValue: "g i x" });
+      expect(wrapper.find(".hotkey-conflict").text()).toBe(
+        'G then I then X is already used for "Toggle tool:  Spots" (Tools, G then I). Pressing it will do both.',
+      );
+    });
+
     it("still warns about another binding on the tool's own key", () => {
       boundKeys.value = {
         g: [
