@@ -238,10 +238,10 @@ refetch. `TranscriptsPanel.vue` is a right-zone palette (`transcriptsPanel`), sh
 for registered stores and while discovery is loading or has failed, so a failed
 lookup remains reachable for retry. The **G** key ("Show/hide transcripts") and the
 `transcripts.toggle` palette command flip the overlay's `enabled` switch; `R`, the
-key first asked for, already steps forward through XY. The palette's content stays
-mounted while hidden, so the key works with the palette closed, but it is bound only
-while `hasTranscripts`, so other datasets neither list it in the help overlay nor
-claim it.
+key first asked for, already steps forward through XY. The palette stays mounted on
+every route with its content hidden, so the key works with the palette closed; it is
+bound only in the viewer (`useInViewer`) of a dataset with `hasTranscripts`, so other
+pages and datasets neither list it in the help overlay nor claim it.
 
 ## Phase 4: recompute and table versions
 
@@ -490,9 +490,10 @@ The V2 feature list (what users ask for, ranked) is in `SPATIAL_V2_ROADMAP.md`.
   dataset switches — `TranscriptsPanel.test.ts` (`clears populated gene choices and searches the new dataset`,
   `invalidates pending results on a hidden dataset switch`).
 - The G key toggles transcripts, and is unbound (and its command disabled) for a
-  dataset without a transcript store — `TranscriptsPanel.test.ts`
-  (*"binds the g key to toggle transcripts"*,
-  *"leaves the g key unbound without a transcript store"*).
+  dataset without a transcript store and off the viewer route —
+  `TranscriptsPanel.test.ts` (*"binds the g key to toggle transcripts"*,
+  *"leaves the g key unbound without a transcript store"*,
+  *"leaves the g key unbound outside the viewer"*).
 - Expression gene choices discard queued old queries, feature types and late
   responses when datasets change or clear — `SpatialFeaturePicker.test.ts`
   (`cancels queued searches and clears query and feature types on dataset change`,

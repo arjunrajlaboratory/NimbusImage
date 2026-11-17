@@ -226,6 +226,7 @@ import { extractErrorMessage } from "@/utils/errors";
 import { IHotkey } from "@/utils/v-mousetrap";
 import { useCommand } from "@/commands/registry";
 import { boundHotkey } from "@/commands/hotkeys";
+import { useInViewer } from "@/commands/context";
 
 /**
  * The Transcripts palette (SPATIAL_PLUGIN.md, Phase 3): picks the genes the
@@ -244,15 +245,20 @@ function toggleTranscripts() {
   transcriptsStore.setEnabled(!transcriptsStore.enabled);
 }
 
-// The palette content stays mounted while hidden, so the key works with the
-// palette closed; it is bound only for a dataset with a transcript store, so
-// the help overlay never lists it elsewhere. A computed keeps the array's
-// identity stable, so v-mousetrap rebinds only when availability changes.
+// The palette stays mounted on every route and hides its content, so the key
+// works with the palette closed but must be gated on the viewer itself: it is
+// bound only in the viewer of a dataset with a transcript store, so the help
+// overlay never lists it elsewhere. A computed keeps the array's identity
+// stable, so v-mousetrap rebinds only when availability changes.
+const inViewer = useInViewer();
+const canToggleTranscripts = () =>
+  inViewer() && transcriptsStore.hasTranscripts;
+
 const transcriptHotkeys = computed((): IHotkey[] => [
   {
     bind: TRANSCRIPTS_HOTKEY,
     handler: toggleTranscripts,
-    disabled: !transcriptsStore.hasTranscripts,
+    disabled: !canToggleTranscripts(),
     data: {
       section: "View",
       description: TRANSCRIPTS_HOTKEY_DESCRIPTION,
@@ -275,7 +281,7 @@ useCommand(() => ({
   ],
   icon: transcriptsStore.enabled ? "mdi-eye-off-outline" : "mdi-eye-outline",
   hotkey: boundHotkey(TRANSCRIPTS_HOTKEY, TRANSCRIPTS_HOTKEY_DESCRIPTION),
-  enabled: () => transcriptsStore.hasTranscripts,
+  enabled: canToggleTranscripts,
   run: toggleTranscripts,
 }));
 

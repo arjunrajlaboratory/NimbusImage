@@ -4,6 +4,13 @@ import { shallowMount, enableAutoUnmount } from "@vue/test-utils";
 
 enableAutoUnmount(afterEach);
 
+const route = vi.hoisted(() => ({ value: null as any }));
+vi.mock("vue-router", async () => {
+  const { reactive } = await import("vue");
+  route.value = reactive({ name: "datasetview" });
+  return { useRoute: () => route.value };
+});
+
 const mocks = vi.hoisted(() => ({
   searchTranscriptGenes: vi.fn(),
   ensureSchema: vi.fn(),
@@ -59,6 +66,8 @@ import TranscriptsPanel from "./TranscriptsPanel.vue";
 import transcriptsStore from "@/store/transcripts";
 import store from "@/store";
 import { allCommands } from "@/commands/registry";
+// Evaluates the vue-router mock even if the component stops importing it.
+import "vue-router";
 
 function transcriptsCommand() {
   return allCommands.value.find(
@@ -82,6 +91,7 @@ describe("TranscriptsPanel", () => {
     (transcriptsStore as any).hasTranscripts = true;
     (transcriptsStore as any).error = null;
     (transcriptsStore as any).mode = "auto";
+    route.value.name = "datasetview";
   });
 
   afterEach(() => {
@@ -329,5 +339,20 @@ describe("TranscriptsPanel", () => {
     expect(transcriptsStore.enabled).toBe(false);
     await nextTick();
     expect(transcriptsCommand().title).toBe("Show transcripts");
+  });
+
+  it("leaves the g key unbound outside the viewer", async () => {
+    // The palette stays mounted on every route, e.g. the dataset info page.
+    route.value.name = "dataset";
+    const wrapper = shallowMount(TranscriptsPanel, {
+      props: { visible: false },
+    });
+    const vm = wrapper.vm as any;
+    expect(vm.transcriptHotkeys[0].disabled).toBe(true);
+    expect(transcriptsCommand().enabled!()).toBe(false);
+    route.value.name = "datasetview";
+    await nextTick();
+    expect(vm.transcriptHotkeys[0].disabled).toBe(false);
+    expect(transcriptsCommand().enabled!()).toBe(true);
   });
 });
