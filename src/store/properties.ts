@@ -893,6 +893,20 @@ export class Properties extends VuexModule {
           "hide columns to make room for others.",
       );
     }
+    // Keep the array when nothing changed. updateDisplayedFromComputedProperties
+    // runs on every propertyValues write, and the lazy-mode visible fetch
+    // watches this array: a fresh copy re-ran the fetch after each merge, which
+    // refetched forever for visible annotations the property has no value for.
+    if (
+      unique.length === this.displayedPropertyPaths.length &&
+      unique.every(
+        (path, index) =>
+          serializePropertyPath(path) ===
+          serializePropertyPath(this.displayedPropertyPaths[index]),
+      )
+    ) {
+      return;
+    }
     this.displayedPropertyPaths = unique;
   }
 

@@ -55,6 +55,7 @@ vi.mock("geojs", () => ({
 
 import properties from "@/store/properties";
 import main from "@/store/index";
+import store from "@/store/root";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -186,6 +187,84 @@ describe("ensureVisiblePropertyValues stale guard (Finding 6)", () => {
     only.resolve([{ annotationId: "a", values: { propA: 9 } }]);
     await flush();
     expect(properties.propertyValues).toEqual({ a: { propA: 9 } });
+  });
+});
+
+// A tab left open on a 105K-annotation dataset sent the visible-value batch
+// ~7 times a second for hours. The cycle: the fetch merges into propertyValues,
+// the global propertyValues watcher prunes displayedPropertyPaths, and the
+// viewer's displayedPropertyPaths watcher fetches again. Visible annotations
+// the property has no value for (another tag) stay "missing", so every pass
+// fetched them again. The watchers below are the ones setupWatchers (index.ts)
+// and AnnotationViewer.vue register.
+describe("visible property value fetch does not loop", () => {
+  const unwatchers: (() => void)[] = [];
+
+  // After a few calls the mock stops resolving, so a regression fails the call
+  // count instead of spinning the microtask queue and hanging the run.
+  function respondWith(entries: any[]) {
+    getPropertyValuesForIds.mockImplementation(() =>
+      getPropertyValuesForIds.mock.calls.length > 5
+        ? new Promise(() => {})
+        : Promise.resolve(entries),
+    );
+  }
+
+  beforeEach(() => {
+    getPropertyValuesForIds.mockReset();
+    properties.resetPropertyState();
+    properties.updatePropertyValues({});
+    (properties as any).setPropertiesImpl([{ id: "propA", name: "A" }]);
+    properties.setDiscoveredPropertyPaths([["propA", "Area"]]);
+    properties.hydrateDisplayedPropertyPaths([["propA", "Area"]]);
+    annotationMock.stubOnlyMode = true;
+    unwatchers.push(
+      store.watch(
+        (state: any) => state.properties.propertyValues,
+        () => properties.updateDisplayedFromComputedProperties(),
+      ),
+      store.watch(
+        (state: any) => state.properties.displayedPropertyPaths,
+        () => properties.ensureVisiblePropertyValues(),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    unwatchers.splice(0).forEach((unwatch) => unwatch());
+    (properties as any).setPropertiesImpl([]);
+  });
+
+  it("fetches once when a visible annotation has no value for the column", async () => {
+    // "b" is not tagged for propA, so the server never returns a value for it.
+    respondWith([{ annotationId: "a", values: { propA: { Area: 10 } } }]);
+    annotationMock.visibleAnnotationIds = new Set(["a", "b"]);
+
+    properties.ensureVisiblePropertyValues();
+    for (let i = 0; i < 10; i++) {
+      await flush();
+    }
+
+    expect(properties.propertyValues).toEqual({ a: { propA: { Area: 10 } } });
+    expect(getPropertyValuesForIds).toHaveBeenCalledTimes(1);
+  });
+
+  it("still prunes a displayed path that is no longer computed", async () => {
+    respondWith([]);
+    annotationMock.visibleAnnotationIds = new Set(["a"]);
+
+    // Adding the column fetches through the displayedPropertyPaths watcher.
+    properties.hydrateDisplayedPropertyPaths([
+      ["propA", "Area"],
+      ["propA", "Gone"],
+    ]);
+    for (let i = 0; i < 10; i++) {
+      await flush();
+    }
+
+    expect(properties.displayedPropertyPaths).toEqual([["propA", "Area"]]);
+    // One fetch, and one more for the pruned column set; then it settles.
+    expect(getPropertyValuesForIds).toHaveBeenCalledTimes(2);
   });
 });
 

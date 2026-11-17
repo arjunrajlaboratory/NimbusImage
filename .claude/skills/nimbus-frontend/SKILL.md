@@ -298,6 +298,22 @@ Watch out for stringify cost on large objects.
 
 Not every `{ deep: true }` is this bug — it only applies when the watched source is a **getter function that rebuilds a fresh object/array on each call** (a Vuex/Pinia getter, a `computed`, or a plain function reading store state). A `ref()`/`reactive()` passed **directly** as the watch source (not wrapped in a function) is the correct, safe use of `deep: true` — Vue tracks its stable identity and only fires on genuine in-place mutations. Don't blanket-remove `deep: true` without checking which case you're in.
 
+### A state write that a watcher fires must skip equal values, or watchers loop
+
+The mirror of the trap above, on the writing side. A plain `watch(() => store.someArray, fetch)` compares by identity, so a mutation that assigns a **fresh copy with the same contents** still fires it. That is harmless until two watchers form a ring through a fetch. A tab left open on a 105K-annotation dataset sent `POST annotation_property_values/batch` about 7 times a second for 9 hours (the prod Atlas CPU went from 1% to 7%) because:
+
+1. `ensureVisiblePropertyValues` fetches values for visible annotations missing a displayed path, then merges them into `propertyValues` (always a new object);
+2. the global `propertyValues` watcher (`setupWatchers` in `index.ts`) runs `updateDisplayedFromComputedProperties`, whose `setDisplayedPropertyPaths` assigned a new array even when nothing was pruned;
+3. `AnnotationViewer.vue`'s `displayedPropertyPaths` watcher calls `ensureVisiblePropertyValues` again;
+4. visible annotations the property has no value for (another tag) are still "missing", so it refetches the same ids and the cycle restarts.
+
+Fixed by returning early from `setDisplayedPropertyPaths` when the clamped list equals the current one. Two lessons generalize:
+
+- **A setter fed by a watcher keeps the old reference when nothing changed.** That is the one place that breaks every ring at once, and it also stops needless re-renders of every column consumer.
+- **"Fetch what's missing" needs a fixed point.** If the server can legitimately return nothing for an id, "missing" never clears, so anything that re-runs the fetch re-requests the same ids. Check that each re-run trigger only fires on a real change.
+
+To test a ring, wire the real watchers with `store.watch` against the real module (see `"fetches once when a visible annotation has no value for the column"` in `src/store/__tests__/properties.test.ts`). Make the API mock **stop resolving after a few calls**: an unbounded promise ring starves `setTimeout`, so without the cap the pre-fix run hangs the test file instead of failing it.
+
 ### An "unknown" value needs ONE spelling and ONE predicate
 
 An uncalibrated dataset's pixel size had three stored spellings — `0` (the intended marker), `null` (JSON's rendering of a `NaN` from `(undefined + undefined) / 2`) and `{1, "m"}` (the configuration default) — and every consumer checked a different subset: the scale bar and blob-metrics worker tested `0`, the line scan tested `1 m`, nothing tested `null`. Each gap was a real bug: a 1.5 km scale bar, a worker crash on `None * 1e-3`, the spatial plugin refusing to adopt a size because "1 m" looked set.
