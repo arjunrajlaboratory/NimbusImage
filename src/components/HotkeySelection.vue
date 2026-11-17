@@ -29,9 +29,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, onBeforeUnmount } from "vue";
 import Mousetrap from "mousetrap";
-import { boundKeys } from "@/utils/v-mousetrap";
+import { boundKeys, setHotkeysPaused } from "@/utils/v-mousetrap";
 import { formatHotkey } from "@/commands/hotkeys";
 
 const props = defineProps<{
@@ -85,12 +85,26 @@ function editHotkey() {
   // The extensions of Mousetrap are loaded in main.ts
   // but they don't update the types, hence the ts-ignore
   isRecordingHotkey.value = true;
+  // The key being recorded must not also run what is already bound to it.
+  setHotkeysPaused(true);
   // @ts-ignore
   Mousetrap.record((sequence: string[]) => {
+    if (!isRecordingHotkey.value) {
+      // Closed before a key was pressed; the pause is already lifted.
+      return;
+    }
     hotkey.value = sequence.join(" ");
     isRecordingHotkey.value = false;
+    setHotkeysPaused(false);
   });
 }
+
+onBeforeUnmount(() => {
+  if (isRecordingHotkey.value) {
+    isRecordingHotkey.value = false;
+    setHotkeysPaused(false);
+  }
+});
 </script>
 
 <style scoped>

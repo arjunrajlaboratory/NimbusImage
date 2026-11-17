@@ -4,13 +4,19 @@ import HotkeySelection from "./HotkeySelection.vue";
 import { boundKeys } from "@/utils/v-mousetrap";
 
 // Mock Mousetrap to avoid DOM key event dependencies
-vi.mock("mousetrap", () => ({
-  default: {
-    record: vi.fn((callback: (sequence: string[]) => void) => {
-      // Simulate recording "ctrl+s"
-      callback(["ctrl+s"]);
-    }),
-  },
+const mocks = vi.hoisted(() => ({
+  setHotkeysPaused: vi.fn(),
+  // Simulate recording "ctrl+s" at once; a test can hold the callback.
+  record: vi.fn((callback: (sequence: string[]) => void) => {
+    callback(["ctrl+s"]);
+  }),
+}));
+
+vi.mock("mousetrap", () => ({ default: { record: mocks.record } }));
+
+vi.mock("@/utils/v-mousetrap", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/utils/v-mousetrap")>()),
+  setHotkeysPaused: mocks.setHotkeysPaused,
 }));
 
 function mountComponent(props = {}) {
@@ -55,6 +61,34 @@ describe("HotkeySelection", () => {
     // Mousetrap.record is mocked to immediately call back with ["ctrl+s"]
     expect(wrapper.emitted("update:modelValue")).toBeTruthy();
     expect(wrapper.emitted("update:modelValue")![0]).toEqual(["ctrl+s"]);
+  });
+
+  it("pauses bound hotkeys while recording", async () => {
+    let finish!: (sequence: string[]) => void;
+    mocks.record.mockImplementationOnce((callback) => {
+      finish = callback;
+    });
+    const wrapper = mountComponent();
+    await wrapper.findAll(".v-btn").at(0)!.trigger("click");
+    expect(mocks.setHotkeysPaused.mock.calls).toEqual([[true]]);
+    finish(["g"]);
+    expect(mocks.setHotkeysPaused.mock.calls).toEqual([[true], [false]]);
+    expect(wrapper.emitted("update:modelValue")![0]).toEqual(["g"]);
+  });
+
+  it("lifts the pause when closed mid-recording", async () => {
+    let finish!: (sequence: string[]) => void;
+    mocks.record.mockImplementationOnce((callback) => {
+      finish = callback;
+    });
+    const wrapper = mountComponent();
+    await wrapper.findAll(".v-btn").at(0)!.trigger("click");
+    wrapper.unmount();
+    expect(mocks.setHotkeysPaused.mock.calls).toEqual([[true], [false]]);
+    // A late recording neither re-lifts the pause nor sets a hotkey.
+    finish(["g"]);
+    expect(mocks.setHotkeysPaused).toHaveBeenCalledTimes(2);
+    expect(wrapper.emitted("update:modelValue")).toBeUndefined();
   });
 
   describe("conflict warning", () => {

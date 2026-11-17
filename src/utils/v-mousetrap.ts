@@ -28,6 +28,16 @@ const _raw = new Map<string, Map<Element, IHotkeyDescription>>();
 // description currently bound to each key, in binding order.
 export const boundKeys = ref<Record<string, IHotkeyDescription[]>>({});
 
+// Set while HotkeySelection records a new hotkey. Mousetrap's record plugin
+// only intercepts keys on its global instance, and every binding here has
+// its own instance, so without this the key being recorded would also run
+// whatever is already bound to it.
+let hotkeysPaused = false;
+
+export function setHotkeysPaused(paused: boolean) {
+  hotkeysPaused = paused;
+}
+
 function flush() {
   boundKeys.value = Object.fromEntries(
     [..._raw].map(([key, owners]) => [key, [...owners.values()]]),
@@ -63,6 +73,9 @@ function bind(el: any, value: IHotkey | IHotkey[], bindElement: any) {
       return;
     }
     mousetrap.bind(_bind, function (this: any, ...args) {
+      if (hotkeysPaused) {
+        return;
+      }
       handler.apply(this, [el, ...args]);
     });
     if (data) {

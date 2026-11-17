@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { boundKeys, mousetrapDirective } from "./v-mousetrap";
+import { boundKeys, mousetrapDirective, setHotkeysPaused } from "./v-mousetrap";
 
 // Real Mousetrap (not mocked): the behaviour under test is its stopCallback,
 // which ignores keys typed into text fields.
@@ -47,6 +47,34 @@ describe("v-mousetrap allowInInputs", () => {
     // Outside a text field both fire, as before.
     keydownIn(document.body, "j", { ctrlKey: true });
     expect(plain).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("v-mousetrap setHotkeysPaused", () => {
+  afterEach(() => setHotkeysPaused(false));
+
+  // Mousetrap matches plain letters on keypress.
+  function pressG() {
+    document.body.dispatchEvent(
+      new KeyboardEvent("keypress", {
+        key: "g",
+        charCode: 103,
+        keyCode: 103,
+        which: 103,
+        bubbles: true,
+      } as KeyboardEventInit),
+    );
+  }
+
+  it("runs no bound handler while paused", () => {
+    const handler = vi.fn();
+    bindHotkeys([{ bind: "g", handler }]);
+    setHotkeysPaused(true);
+    pressG();
+    expect(handler).not.toHaveBeenCalled();
+    setHotkeysPaused(false);
+    pressG();
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });
 
