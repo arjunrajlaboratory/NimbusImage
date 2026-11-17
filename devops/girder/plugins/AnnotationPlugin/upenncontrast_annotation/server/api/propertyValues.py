@@ -30,6 +30,7 @@ from ..helpers.validation import (
     validateAnnotationIdCount,
     validateDisjointPropertyPaths,
     validatePropertyPaths,
+    validateSampledPropertyIds,
 )
 from ..models.propertyValues import (
     AnnotationPropertyValues as PropertyValuesModel,
@@ -46,6 +47,7 @@ class PropertyValues(Resource):
         self.route("POST", (), self.add)
         self.route("POST", ("multiple",), self.addMultiple)
         self.route("POST", ("batch",), self.batch)
+        self.route("POST", ("sample",), self.sample)
         self.route("GET", (), self.find)
         self.route("GET", ("count",), self.count)
         self.route("GET", ("histogram",), self.histogram)
@@ -216,6 +218,40 @@ class PropertyValues(Resource):
         # the same JSON form as the raw path (orjson: Infinity/NaN as null).
         setResponseHeader("Content-Type", "application/json")
         return streamJsonArray(documents, default=orJsonDefaults)
+
+    @access.public(scope=TokenScope.DATA_READ)
+    @describeRoute(
+        Description("Value documents that cover a set of properties")
+        .notes(
+            "For each property id with values in the dataset, its oldest "
+            "and newest value document, projected to the requested "
+            "properties. Lazy-mode clients discover property paths from "
+            "these. POST to send the id list."
+        )
+        .param(
+            "body",
+            "{ datasetId: string, propertyIds: string[] }",
+            paramType="body",
+        )
+        .errorResponse()
+        .errorResponse("Read access was denied for the dataset.", 403)
+    )
+    def sample(self, params):
+        body = requireObjectBody(self.getBodyJson())
+        datasetId = requireObjectId(body.get("datasetId"), "datasetId")
+        propertyIds = body.get("propertyIds")
+        validateSampledPropertyIds(propertyIds)
+        Folder().load(
+            datasetId,
+            user=self.getCurrentUser(),
+            level=AccessType.READ,
+            exc=True,
+        )
+        return jsonSafe(
+            self._annotationPropertyValuesModel.samplesCoveringProperties(
+                datasetId, propertyIds
+            )
+        )
 
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(

@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   addVirtualPropertyPaths: vi.fn(),
   fetchProperties: vi.fn(),
   adoptServerRegisteredProperty: vi.fn(),
-  fetchPropertyPathsSample: vi.fn(),
   fetchPropertyValues: vi.fn(),
   updateHistograms: vi.fn(),
   fetchJob: vi.fn(),
@@ -38,7 +37,6 @@ vi.mock("@/store/properties", () => ({
   default: {
     fetchProperties: mocks.fetchProperties,
     adoptServerRegisteredProperty: mocks.adoptServerRegisteredProperty,
-    fetchPropertyPathsSample: mocks.fetchPropertyPathsSample,
     fetchPropertyValues: mocks.fetchPropertyValues,
     addVirtualPropertyPaths: mocks.addVirtualPropertyPaths,
   },
@@ -112,7 +110,6 @@ describe("MaterializeGenesDialog", () => {
     vi.useFakeTimers();
     mocks.materialize.mockReset();
     mocks.fetchProperties.mockReset().mockResolvedValue(undefined);
-    mocks.fetchPropertyPathsSample.mockReset().mockResolvedValue(undefined);
     mocks.fetchPropertyValues.mockReset().mockResolvedValue(undefined);
     mocks.updateHistograms.mockReset().mockResolvedValue(undefined);
     (store as any).dataset = { id: "ds1", name: "Lymph" };
@@ -202,7 +199,6 @@ describe("MaterializeGenesDialog", () => {
       mocks.adoptServerRegisteredProperty.mock.invocationCallOrder[0],
     ).toBeLessThan(mocks.fetchProperties.mock.invocationCallOrder[0]);
     expect(mocks.fetchProperties).toHaveBeenCalledTimes(1);
-    expect(mocks.fetchPropertyPathsSample).toHaveBeenCalledTimes(1);
     // The values themselves and the histograms, as after a worker job: the
     // revision bump is what histograms, gates and columns key on.
     expect(mocks.fetchPropertyValues).toHaveBeenCalledTimes(1);

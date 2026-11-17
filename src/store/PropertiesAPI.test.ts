@@ -9,7 +9,10 @@ vi.mock("@/utils/fetch", () => ({ fetchAllPages: vi.fn() }));
 
 import PropertiesAPI from "./PropertiesAPI";
 import type { IAnnotationProperty } from "./model";
-import { MAX_PROPERTY_COMPUTE_BATCH } from "./constants";
+import {
+  MAX_PROPERTY_COMPUTE_BATCH,
+  MAX_SAMPLED_PROPERTIES_PER_REQUEST,
+} from "./constants";
 
 const makeProperty = (
   id: string,
@@ -95,6 +98,47 @@ describe("property compute batch cap", () => {
     );
     const serverCap = source.match(/^MAX_COMPUTE_PROPERTIES = (\d+)$/m)?.[1];
     expect(Number(serverCap)).toBe(MAX_PROPERTY_COMPUTE_BATCH);
+  });
+});
+
+describe("PropertiesAPI.getPropertyValueSamples", () => {
+  it("matches the server's MAX_SAMPLED_PROPERTIES", () => {
+    const source = readFileSync(
+      resolve(
+        __dirname,
+        "../../devops/girder/plugins/AnnotationPlugin/upenncontrast_annotation/server/helpers/validation.py",
+      ),
+      "utf8",
+    );
+    const serverCap = source.match(/^MAX_SAMPLED_PROPERTIES = (\d+)$/m)?.[1];
+    expect(Number(serverCap)).toBe(MAX_SAMPLED_PROPERTIES_PER_REQUEST);
+  });
+
+  it("splits a configuration over the server's cap across requests", async () => {
+    const propertyIds = Array.from(
+      { length: MAX_SAMPLED_PROPERTIES_PER_REQUEST + 1 },
+      (_, index) => `p${index}`,
+    );
+    const post = vi.fn(async (_path: string, body: any) => ({
+      data: body.propertyIds.map((propertyId: string) => ({
+        annotationId: `a-${propertyId}`,
+        values: { [propertyId]: { x: 1 } },
+      })),
+    }));
+    const api = new PropertiesAPI({ post } as any);
+
+    const documents = await api.getPropertyValueSamples("ds", propertyIds);
+
+    expect(post.mock.calls.map(([, body]) => body.propertyIds)).toEqual([
+      propertyIds.slice(0, MAX_SAMPLED_PROPERTIES_PER_REQUEST),
+      propertyIds.slice(MAX_SAMPLED_PROPERTIES_PER_REQUEST),
+    ]);
+    expect(post.mock.calls.every(([, body]) => body.datasetId === "ds")).toBe(
+      true,
+    );
+    expect(documents.flatMap((doc) => Object.keys(doc.values))).toEqual(
+      propertyIds,
+    );
   });
 });
 

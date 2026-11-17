@@ -1186,8 +1186,9 @@ What shipped:
   `api/propertyValues.py`. Tests: `test_property_values_batch.py` (5).
 - **Frontend** `propertyValues` is now a **bounded merge cache** scoped to the rendered
   set. `fetchPropertyValues` is lazy-aware: in lazy mode it discovers paths from a bounded
-  **sample** (`fetchPropertyPathsSample`, reuses `find` with a 512-doc limit — no new
-  endpoint) and loads values only for the **visible set × displayed columns**
+  **sample** (originally `fetchPropertyPathsSample`, `find` with a 512-doc limit; replaced
+  by per-property discovery, see "Property path discovery" below) and loads values only
+  for the **visible set × displayed columns**
   (`ensureVisiblePropertyValues`, coupled to `updateVisibility` in `AnnotationViewer`).
   `computedPropertyPaths` sources from the sample in lazy mode (via the new pure
   `collectLeafPaths`), so the path picker / prune-watcher don't depend on the full map.
@@ -1366,6 +1367,53 @@ min-heap + capture stub map: action ~1.9 s → ~0.31 s), **draw-path incremental
 - **D5 — explicit LRU eviction** of the property-value cache — Stage 1/2 already bound it via
   visible-set scoping; low priority.
 - **B3 — streaming partial counts** — low value.
+
+### Property path discovery (issue #1463, also #1338)
+
+In lazy mode the columns a property offers (its leaf paths, e.g. `[propertyId, "Area"]`)
+come from `discoveredPropertyPaths`, not from the resident values. They used to come from
+the dataset's 512 oldest value documents. That missed any property not computed on the
+oldest annotations: a property covers only annotations matching its tags and shape, and
+each annotation has one value document whose `_id` is the annotation's. Computing a
+property on an older population could hide every property computed on newer ones.
+
+Now `fetchPropertyPaths` sends the loaded property ids to
+`POST annotation_property_values/sample`. For each property with values, the server
+returns its oldest and newest document, projected to the requested properties, and the
+client runs `collectLeafPaths` over them. The newest document catches sub-keys a later
+compute added. This still assumes a property's documents share their sub-keys: no
+property in the local databases (139 dataset-property pairs, about 3.3M documents)
+violated it.
+
+The model (`samplesCoveringProperties`) walks the `(datasetId, _id)` index and stops at
+the first document carrying any property not yet covered, then resumes after it, so a
+property with values costs a few documents. A property with no values is only known
+absent at the end of the range; absent properties share that one scan.
+
+Measured on the 709K-document Xenium dataset (local Mongo 9, warm, medians):
+
+| Approach | Time |
+|---|---|
+| Old 512-document sample | ~50 ms |
+| This walk, every property has values | ~3 ms (plus ~3 ms for the newest documents) |
+| This walk, 3 / 20 never-computed properties | 0.56 s / 1.8 s |
+| Existing `uncomputedCounts` value-document pass, for scale | 1.3–1.6 s |
+| Exact paths by aggregation: `$mergeObjects` / `$addToSet` key sets / full structure | 4.7 s / 13 s / 33 s |
+
+The aggregations were rejected as too slow to run at every open, and a write-time path
+registry because every value writer (compute, import, materialize, property delete,
+annotation moves, undo/redo) would have to maintain it. `MAX_SAMPLED_PROPERTIES` (100)
+bounds a request, since each property is an `$or` clause tested on every scanned document.
+Configurations have no such limit, so `PropertiesAPI.getPropertyValueSamples` splits a
+larger one into requests of `MAX_SAMPLED_PROPERTIES_PER_REQUEST`, sent one at a time
+(*"splits a configuration over the server's cap across requests"*; *"matches the server's
+MAX_SAMPLED_PROPERTIES"* keeps the two constants equal).
+
+The discovery needs the property list, which loads independently of the stubs, so it runs
+from `fetchPropertyValues` (always) and from `fetchProperties` (when the property set
+changed), with a sequence guard so a stale answer never lands. Tests:
+`test_property_values_sample.py`, and *"shows the columns of a property computed only on
+newer annotations"* and its neighbors in `src/store/__tests__/properties.test.ts`.
 
 ---
 

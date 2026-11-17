@@ -41,7 +41,6 @@ vi.mock("@/store/properties", () => ({
   SPATIAL_PROPERTY_ID: "spatial",
   default: {
     fetchProperties: mocks.refresh,
-    fetchPropertyPathsSample: mocks.refresh,
     // The dialogs adopt a server-registered property when the request
     // returns.
     adoptServerRegisteredProperty: vi.fn(),

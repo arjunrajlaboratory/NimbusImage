@@ -208,7 +208,13 @@ invariants extracted from these rounds.
   `_id`-sorted sample; a track-ID property computed only on a sparse subset
   may not appear in that sample, so the picker never offers its path — and
   the component only fetches values for an already-selected path.
-- **Status:** deferred to issue
+- **Status:** fixed by issue
+  [#1463](https://github.com/arjunrajlaboratory/NimbusImage/issues/1463)
+  (duplicate of #1338): lazy mode now discovers paths per configured
+  property (`fetchPropertyPaths`, `POST annotation_property_values/sample`),
+  so a sparse property's paths are found wherever its documents are. See
+  `ANNOTATION-STUBS.md` "Property path discovery". Original deferral: this
+  was deferred to
   [#1338](https://github.com/arjunrajlaboratory/NimbusImage/issues/1338)
   (server-side path discovery, fixing all consumers at once). This is a
   pre-existing

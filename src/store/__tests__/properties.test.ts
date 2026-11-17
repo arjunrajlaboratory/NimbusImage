@@ -5,11 +5,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const {
   getPropertyValuesForIds,
   getPropertyValues,
+  getPropertyValueSamples,
+  getProperties,
   annotationMock,
   scheduleBrowserSave,
 } = vi.hoisted(() => ({
   getPropertyValuesForIds: vi.fn(),
   getPropertyValues: vi.fn(),
+  getPropertyValueSamples: vi.fn<(...args: any[]) => Promise<any[]>>(
+    async () => [],
+  ),
+  getProperties: vi.fn<(...args: any[]) => Promise<any[]>>(async () => []),
   scheduleBrowserSave: vi.fn(),
   annotationMock: {
     stubOnlyMode: true,
@@ -24,7 +30,9 @@ vi.mock("@/store/index", () => ({
     propertiesAPI: {
       getPropertyValuesForIds: (...a: any[]) => getPropertyValuesForIds(...a),
       getPropertyValues: (...a: any[]) => getPropertyValues(...a),
-      getPropertyValuesSample: async () => [],
+      getPropertyValueSamples: (...a: any[]) => getPropertyValueSamples(...a),
+      getProperties: (...a: any[]) => getProperties(...a),
+      getUncomputedCounts: async () => ({}),
     },
     scheduleAnnotationBrowserSave: scheduleBrowserSave,
   },
@@ -375,5 +383,120 @@ describe("property value loads across a dataset switch", () => {
     await first;
 
     expect(properties.propertyValues).toEqual({ a: { propA: "new" } });
+  });
+});
+
+describe("lazy-mode property path discovery (issue #1463)", () => {
+  const mainMock = main as any;
+
+  async function loadProperties(ids: string[]) {
+    mainMock.configuration = { id: "conf1", propertyIds: ids };
+    getProperties.mockResolvedValueOnce(
+      ids.map((id) => ({
+        id,
+        name: id,
+        image: "",
+        tags: { tags: [], exclusive: false },
+        shape: "polygon",
+        workerInterface: {},
+      })),
+    );
+    await properties.fetchProperties();
+    await flush();
+  }
+
+  beforeEach(async () => {
+    mainMock.dataset = { id: "ds1" };
+    annotationMock.stubOnlyMode = true;
+    await loadProperties([]);
+    properties.resetPropertyState();
+    getPropertyValueSamples.mockReset().mockResolvedValue([]);
+  });
+
+  afterEach(async () => {
+    mainMock.dataset = { id: "ds1" };
+    annotationMock.stubOnlyMode = true;
+    await loadProperties([]);
+    mainMock.configuration = undefined;
+  });
+
+  it("shows the columns of a property computed only on newer annotations", async () => {
+    await loadProperties(["nucleus", "perfTest"]);
+    // The server answers per property: the older annotations carry only the
+    // nucleus property, the newer ones only perfTest.
+    getPropertyValueSamples.mockResolvedValue([
+      { annotationId: "old", values: { nucleus: { Area: 1 } } },
+      { annotationId: "new", values: { perfTest: { MeanIntensity: 2 } } },
+    ]);
+
+    await properties.fetchPropertyValues();
+
+    expect(getPropertyValueSamples).toHaveBeenLastCalledWith("ds1", [
+      "nucleus",
+      "perfTest",
+    ]);
+    expect(properties.computedPropertyPaths).toEqual(
+      expect.arrayContaining([
+        ["nucleus", "Area"],
+        ["perfTest", "MeanIntensity"],
+      ]),
+    );
+  });
+
+  it("rediscovers when a property set loads, but not for the same set again", async () => {
+    await loadProperties(["propA"]);
+    expect(getPropertyValueSamples).toHaveBeenCalledTimes(1);
+    expect(getPropertyValueSamples).toHaveBeenLastCalledWith("ds1", ["propA"]);
+
+    await loadProperties(["propA"]);
+    expect(getPropertyValueSamples).toHaveBeenCalledTimes(1);
+
+    await loadProperties(["propA", "propB"]);
+    expect(getPropertyValueSamples).toHaveBeenCalledTimes(2);
+    expect(getPropertyValueSamples).toHaveBeenLastCalledWith("ds1", [
+      "propA",
+      "propB",
+    ]);
+  });
+
+  it("asks nothing without properties or in wholesale mode", async () => {
+    await properties.fetchPropertyPaths();
+    expect(getPropertyValueSamples).not.toHaveBeenCalled();
+    expect(properties.discoveredPropertyPaths).toEqual([]);
+
+    annotationMock.stubOnlyMode = false;
+    await loadProperties(["propA"]);
+    await properties.fetchPropertyPaths();
+    expect(getPropertyValueSamples).not.toHaveBeenCalled();
+  });
+
+  it("drops a discovery for the previous dataset that resolves after a switch", async () => {
+    await loadProperties(["propA"]);
+    const oldDiscovery = deferred<any[]>();
+    getPropertyValueSamples.mockReturnValueOnce(oldDiscovery.promise);
+
+    const first = properties.fetchPropertyPaths();
+    mainMock.dataset = { id: "ds2" };
+    oldDiscovery.resolve([{ annotationId: "a", values: { propA: { x: 1 } } }]);
+    await first;
+
+    expect(properties.discoveredPropertyPaths).toEqual([]);
+  });
+
+  it("a newer discovery wins over an older one that resolves last", async () => {
+    await loadProperties(["propA"]);
+    const older = deferred<any[]>();
+    getPropertyValueSamples
+      .mockReturnValueOnce(older.promise)
+      .mockResolvedValueOnce([
+        { annotationId: "a", values: { propA: { fresh: 1 } } },
+      ]);
+
+    const first = properties.fetchPropertyPaths();
+    await properties.fetchPropertyPaths();
+    older.resolve([{ annotationId: "a", values: { propA: { stale: 1 } } }]);
+    await first;
+
+    expect(properties.discoveredPropertyPaths).toEqual([["propA", "fresh"]]);
   });
 });
