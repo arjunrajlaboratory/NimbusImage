@@ -66,6 +66,7 @@ import TranscriptsPanel from "./TranscriptsPanel.vue";
 import transcriptsStore from "@/store/transcripts";
 import store from "@/store";
 import { allCommands } from "@/commands/registry";
+import { boundKeys } from "@/utils/v-mousetrap";
 // Evaluates the vue-router mock even if the component stops importing it.
 import "vue-router";
 
@@ -354,5 +355,19 @@ describe("TranscriptsPanel", () => {
     await nextTick();
     expect(vm.transcriptHotkeys[0].disabled).toBe(false);
     expect(transcriptsCommand().enabled!()).toBe(true);
+  });
+
+  it("hints the key in the switch label only while it is bound", async () => {
+    const wrapper = shallowMount(TranscriptsPanel, {
+      props: { visible: false },
+    });
+    const vm = wrapper.vm as any;
+    expect(vm.switchLabel).toBe("Show transcripts");
+    boundKeys.value = {
+      g: { section: "View", description: "Show/hide transcripts" },
+    };
+    await nextTick();
+    expect(vm.switchLabel).toBe("Show transcripts (G)");
+    boundKeys.value = {};
   });
 });

@@ -32,7 +32,7 @@
     <template v-else>
       <v-switch
         :model-value="transcriptsStore.enabled"
-        :label="`Show transcripts (${TRANSCRIPTS_HOTKEY.toUpperCase()})`"
+        :label="switchLabel"
         color="primary"
         density="compact"
         hide-details
@@ -225,7 +225,7 @@ import { logError } from "@/utils/log";
 import { extractErrorMessage } from "@/utils/errors";
 import { IHotkey } from "@/utils/v-mousetrap";
 import { useCommand } from "@/commands/registry";
-import { boundHotkey } from "@/commands/hotkeys";
+import { boundHotkey, formatHotkey } from "@/commands/hotkeys";
 import { useInViewer } from "@/commands/context";
 
 /**
@@ -266,6 +266,16 @@ const transcriptHotkeys = computed((): IHotkey[] => [
   },
 ]);
 
+// Hint the key only while it is actually bound, like the palette command.
+const transcriptsHotkeyHint = computed(() =>
+  boundHotkey(TRANSCRIPTS_HOTKEY, TRANSCRIPTS_HOTKEY_DESCRIPTION),
+);
+const switchLabel = computed(() =>
+  transcriptsHotkeyHint.value
+    ? `Show transcripts (${formatHotkey(transcriptsHotkeyHint.value)})`
+    : "Show transcripts",
+);
+
 useCommand(() => ({
   id: "transcripts.toggle",
   title: transcriptsStore.enabled ? "Hide transcripts" : "Show transcripts",
@@ -280,7 +290,7 @@ useCommand(() => ({
     "toggle",
   ],
   icon: transcriptsStore.enabled ? "mdi-eye-off-outline" : "mdi-eye-outline",
-  hotkey: boundHotkey(TRANSCRIPTS_HOTKEY, TRANSCRIPTS_HOTKEY_DESCRIPTION),
+  hotkey: transcriptsHotkeyHint.value,
   enabled: canToggleTranscripts,
   run: toggleTranscripts,
 }));
@@ -461,7 +471,7 @@ onBeforeUnmount(() => {
 
 defineExpose({
   transcriptHotkeys,
-  toggleTranscripts,
+  switchLabel,
   statusText,
   qualityCaveat,
   cellText,
