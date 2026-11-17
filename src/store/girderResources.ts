@@ -329,9 +329,7 @@ export class GirderResources extends VuexModule {
   }
 
   @Action
-  public async getAllLargeImages(
-    id: string,
-  ): Promise<IGirderLargeImage[] | undefined> {
+  public async getAllLargeImages(id: string): Promise<IGirderLargeImage[]> {
     const [folder, items] = await Promise.all([
       this.getFolder(id),
       main.api.getItems(id),

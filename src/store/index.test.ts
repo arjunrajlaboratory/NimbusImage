@@ -28,6 +28,14 @@ import "./connectionList";
 import { RestClient } from "@/girder";
 import ShareLinkAPI from "./ShareLinkAPI";
 import batchRuns, { runBatch } from "./batchRuns";
+import { logError } from "@/utils/log";
+
+// logError is console.error captured at import, so a console spy can't see
+// it; replace it for the loadLargeImages assertions.
+vi.mock("@/utils/log", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/utils/log")>()),
+  logError: vi.fn(),
+}));
 
 describe("share-link bootstrap identity", () => {
   let originalClient: typeof main.girderRest;
@@ -1189,6 +1197,134 @@ describe("initialize: authRestored", () => {
       Object.assign(client, { token });
       vi.restoreAllMocks();
     }
+  });
+});
+
+describe("loadLargeImages", () => {
+  const image = (id: string) => ({ _id: id, name: id }) as any;
+  const state = () => (rootStore.state as any).main;
+
+  beforeEach(() => {
+    state().dataset = { id: "ds-1" };
+    state().allLargeImages = [];
+    state().currentLargeImage = null;
+    vi.mocked(logError).mockClear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    state().dataset = null;
+    state().allLargeImages = [];
+    state().currentLargeImage = null;
+  });
+
+  it("does not log when a large image is already current", async () => {
+    const original = image("original");
+    state().currentLargeImage = original;
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([
+      original,
+    ]);
+    const getCurrent = vi.spyOn(girderResources, "getCurrentLargeImage");
+
+    expect(await main.loadLargeImages()).toBeNull();
+
+    expect(logError).not.toHaveBeenCalled();
+    expect(getCurrent).not.toHaveBeenCalled();
+    expect(main.allLargeImages).toEqual([original]);
+    expect(toRaw(main.currentLargeImage)).toBe(original);
+  });
+
+  it("selects and returns the dataset's large image when none is current", async () => {
+    const original = image("original");
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([
+      original,
+    ]);
+    vi.spyOn(girderResources, "getCurrentLargeImage").mockResolvedValue(
+      original,
+    );
+
+    expect(await main.loadLargeImages()).toBe(original);
+
+    expect(toRaw(main.currentLargeImage)).toBe(original);
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("logs when large images exist but none can be selected", async () => {
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([
+      image("original"),
+    ]);
+    vi.spyOn(girderResources, "getCurrentLargeImage").mockResolvedValue(null);
+
+    expect(await main.loadLargeImages()).toBeNull();
+
+    expect(logError).toHaveBeenCalledWith(
+      "Store",
+      "Large images exist but none could be selected",
+    );
+  });
+
+  it("logs and clears the list when the dataset has no large images", async () => {
+    state().allLargeImages = [image("deleted")];
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([]);
+
+    expect(await main.loadLargeImages()).toBeNull();
+
+    expect(main.allLargeImages).toEqual([]);
+    expect(logError).toHaveBeenCalledWith("Store", "No large images found");
+  });
+
+  it("replaces a held image that is not one of this dataset's", async () => {
+    // A dataset switch does not reset the current image, so the outgoing
+    // dataset's image must not count as this dataset's selection.
+    const outgoing = image("outgoing");
+    const own = image("own");
+    state().currentLargeImage = outgoing;
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([own]);
+    vi.spyOn(girderResources, "getCurrentLargeImage").mockResolvedValue(own);
+
+    expect(await main.loadLargeImages()).toBe(own);
+
+    expect(toRaw(main.currentLargeImage)).toBe(own);
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("switches to and returns a newly created large image", async () => {
+    const original = image("original");
+    const computed = image("computed");
+    state().allLargeImages = [original];
+    state().currentLargeImage = original;
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([
+      original,
+      computed,
+    ]);
+    // updateCurrentLargeImage is fired, not awaited; never resolving keeps
+    // it from reaching refreshDataset.
+    const setCurrent = vi
+      .spyOn(girderResources, "setCurrentLargeImage")
+      .mockReturnValue(new Promise(() => {}));
+
+    expect(await main.loadLargeImages(true)).toBe(computed);
+
+    expect(setCurrent).toHaveBeenCalledWith({
+      datasetId: "ds-1",
+      largeImage: computed,
+    });
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("returns null without logging when switching finds no new image", async () => {
+    const original = image("original");
+    state().allLargeImages = [original];
+    state().currentLargeImage = original;
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([
+      original,
+    ]);
+    const setCurrent = vi.spyOn(girderResources, "setCurrentLargeImage");
+
+    expect(await main.loadLargeImages(true)).toBeNull();
+
+    expect(setCurrent).not.toHaveBeenCalled();
+    expect(logError).not.toHaveBeenCalled();
   });
 });
 
