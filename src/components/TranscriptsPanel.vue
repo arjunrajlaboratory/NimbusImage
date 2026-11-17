@@ -1,5 +1,5 @@
 <template>
-  <div class="transcripts-panel pa-3">
+  <div v-mousetrap="transcriptHotkeys" class="transcripts-panel pa-3">
     <div v-if="transcriptsStore.error" class="mb-2">
       <p class="text-body-2 text-error">{{ transcriptsStore.error }}</p>
       <v-btn
@@ -32,11 +32,12 @@
     <template v-else>
       <v-switch
         :model-value="transcriptsStore.enabled"
-        label="Show transcripts"
+        :label="`Show transcripts (${TRANSCRIPTS_HOTKEY.toUpperCase()})`"
         color="primary"
         density="compact"
         hide-details
         class="mb-2"
+        data-command-id="transcripts.toggle"
         @update:model-value="transcriptsStore.setEnabled(!!$event)"
       />
       <v-autocomplete
@@ -222,6 +223,9 @@ import ColorPickerMenu from "@/components/ColorPickerMenu.vue";
 import CellTableCard from "@/components/CellTableCard.vue";
 import { logError } from "@/utils/log";
 import { extractErrorMessage } from "@/utils/errors";
+import { IHotkey } from "@/utils/v-mousetrap";
+import { useCommand } from "@/commands/registry";
+import { boundHotkey } from "@/commands/hotkeys";
 
 /**
  * The Transcripts palette (SPATIAL_PLUGIN.md, Phase 3): picks the genes the
@@ -230,6 +234,50 @@ import { extractErrorMessage } from "@/utils/errors";
  */
 
 const props = defineProps<{ visible: boolean }>();
+
+// "r" was the requested key, but it already steps forward through XY
+// positions (NavigatorPanel), so transcripts take "g" for genes.
+const TRANSCRIPTS_HOTKEY = "g";
+const TRANSCRIPTS_HOTKEY_DESCRIPTION = "Show/hide transcripts";
+
+function toggleTranscripts() {
+  transcriptsStore.setEnabled(!transcriptsStore.enabled);
+}
+
+// The palette content stays mounted while hidden, so the key works with the
+// palette closed; it is bound only for a dataset with a transcript store, so
+// the help overlay never lists it elsewhere. A computed keeps the array's
+// identity stable, so v-mousetrap rebinds only when availability changes.
+const transcriptHotkeys = computed((): IHotkey[] => [
+  {
+    bind: TRANSCRIPTS_HOTKEY,
+    handler: toggleTranscripts,
+    disabled: !transcriptsStore.hasTranscripts,
+    data: {
+      section: "View",
+      description: TRANSCRIPTS_HOTKEY_DESCRIPTION,
+    },
+  },
+]);
+
+useCommand(() => ({
+  id: "transcripts.toggle",
+  title: transcriptsStore.enabled ? "Hide transcripts" : "Show transcripts",
+  group: "Actions",
+  keywords: [
+    "transcripts",
+    "molecules",
+    "genes",
+    "spatial",
+    "xenium",
+    "overlay",
+    "toggle",
+  ],
+  icon: transcriptsStore.enabled ? "mdi-eye-off-outline" : "mdi-eye-outline",
+  hotkey: boundHotkey(TRANSCRIPTS_HOTKEY, TRANSCRIPTS_HOTKEY_DESCRIPTION),
+  enabled: () => transcriptsStore.hasTranscripts,
+  run: toggleTranscripts,
+}));
 
 const search = ref("");
 const searching = ref(false);
@@ -406,6 +454,8 @@ onBeforeUnmount(() => {
 });
 
 defineExpose({
+  transcriptHotkeys,
+  toggleTranscripts,
   statusText,
   qualityCaveat,
   cellText,
