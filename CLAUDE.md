@@ -134,6 +134,8 @@ See `TOOLS.md` for detailed documentation on adding new tools.
 - Histograms cached per-layer for performance
 - Resource metadata cached in `girderResources` module
 
+**Response compression:** API responses under `/api/v1` with JSON, GeoJSON, CSV or TSV content types are zstd-compressed by the plugin (`server/helpers/compression.py`) when the client sends `zstd` in `Accept-Encoding`; everything else, and every client that doesn't ask for zstd, gets an uncompressed body. See the `nimbus-backend` skill for what this means for new endpoints.
+
 **API Endpoint Reference:**
 
 Plugin endpoints are registered in `__init__.py` (lines 159-173). Endpoint names differ from what you might expect:
