@@ -36,8 +36,10 @@ import { formatHotkey } from "@/commands/hotkeys";
 
 const props = defineProps<{
   modelValue?: string | null;
-  // The hotkey the edited tool already has: its own binding is not a clash.
+  // The edited tool's saved hotkey and help description: that one binding
+  // is the tool itself, not a clash.
   ownHotkey?: string | null;
+  ownDescription?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -57,13 +59,26 @@ const isRecordingHotkey = ref(false);
 // only exists in another dataset (e.g. transcripts) is not checked.
 const conflict = computed(() => {
   const key = hotkey.value;
-  if (key === null || key === props.ownHotkey) {
+  if (key === null) {
     return null;
   }
-  const existing = boundKeys.value[key];
-  return existing
-    ? `${formatHotkey(key)} is already used for "${existing.description}" (${existing.section}). Pressing it will do both.`
-    : null;
+  const others = [...(boundKeys.value[key] ?? [])];
+  if (key === props.ownHotkey) {
+    // Drop only the tool's own binding; another one on the key still clashes.
+    const own = others.findIndex(
+      (bound) => bound.description === props.ownDescription,
+    );
+    if (own >= 0) {
+      others.splice(own, 1);
+    }
+  }
+  if (others.length === 0) {
+    return null;
+  }
+  const uses = others
+    .map((bound) => `"${bound.description}" (${bound.section})`)
+    .join(" and ");
+  return `${formatHotkey(key)} is already used for ${uses}. Pressing it will do both.`;
 });
 
 function editHotkey() {

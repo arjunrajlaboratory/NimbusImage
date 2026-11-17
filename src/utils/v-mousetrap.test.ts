@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { mousetrapDirective } from "./v-mousetrap";
+import { boundKeys, mousetrapDirective } from "./v-mousetrap";
 
 // Real Mousetrap (not mocked): the behaviour under test is its stopCallback,
 // which ignores keys typed into text fields.
@@ -47,5 +47,38 @@ describe("v-mousetrap allowInInputs", () => {
     // Outside a text field both fire, as before.
     keydownIn(document.body, "j", { ctrlKey: true });
     expect(plain).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("v-mousetrap boundKeys", () => {
+  const tool = { section: "Tools", description: "Toggle tool:  Cells" };
+  const transcripts = { section: "View", description: "Show/hide transcripts" };
+
+  function bindOn(el: Element, value: any[]) {
+    mousetrapDirective.mounted(el, { value, modifiers: {} });
+  }
+
+  it("lists every binding on a shared key and keeps the others on unbind", () => {
+    const toolEl = document.createElement("div");
+    const transcriptsEl = document.createElement("div");
+    bindOn(toolEl, [{ bind: "g", handler: vi.fn(), data: tool }]);
+    bindOn(transcriptsEl, [{ bind: "g", handler: vi.fn(), data: transcripts }]);
+    expect(boundKeys.value.g).toEqual([tool, transcripts]);
+
+    mousetrapDirective.unmounted(toolEl);
+    expect(boundKeys.value.g).toEqual([transcripts]);
+
+    mousetrapDirective.unmounted(transcriptsEl);
+    expect(boundKeys.value.g).toBeUndefined();
+  });
+
+  it("does not list a disabled binding", () => {
+    const el = document.createElement("div");
+    bindOn(el, [
+      { bind: "g", handler: vi.fn(), data: transcripts, disabled: true },
+    ]);
+    expect(boundKeys.value.g).toBeUndefined();
+    mousetrapDirective.unmounted(el);
+    expect(boundKeys.value.g).toBeUndefined();
   });
 });

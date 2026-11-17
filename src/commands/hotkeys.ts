@@ -105,5 +105,14 @@ export function boundHotkey(
   key: string,
   description: string,
 ): string | undefined {
-  return boundKeys.value?.[key]?.description === description ? key : undefined;
+  return boundKeys.value?.[key]?.some(
+    (bound) => bound.description === description,
+  )
+    ? key
+    : undefined;
+}
+
+/** The help-overlay description of a tool's hotkey binding (ToolItem). */
+export function toolHotkeyDescription(toolName: string): string {
+  return `Toggle tool:  ${toolName}`;
 }

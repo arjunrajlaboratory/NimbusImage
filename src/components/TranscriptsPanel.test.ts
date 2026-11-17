@@ -364,7 +364,10 @@ describe("TranscriptsPanel", () => {
     const vm = wrapper.vm as any;
     expect(vm.switchLabel).toBe("Show transcripts");
     boundKeys.value = {
-      g: { section: "View", description: "Show/hide transcripts" },
+      g: [
+        { section: "Tools", description: "Toggle tool:  Cells" },
+        { section: "View", description: "Show/hide transcripts" },
+      ],
     };
     await nextTick();
     expect(vm.switchLabel).toBe("Show transcripts (G)");

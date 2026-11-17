@@ -60,7 +60,8 @@ describe("HotkeySelection", () => {
   describe("conflict warning", () => {
     beforeEach(() => {
       boundKeys.value = {
-        g: { section: "View", description: "Show/hide transcripts" },
+        g: [{ section: "View", description: "Show/hide transcripts" }],
+        p: [{ section: "Tools", description: "Toggle tool:  Spots" }],
       };
     });
     afterEach(() => {
@@ -79,11 +80,32 @@ describe("HotkeySelection", () => {
         mountComponent({ modelValue: "q" }).find(".hotkey-conflict").exists(),
       ).toBe(false);
       expect(
-        mountComponent({ modelValue: "g", ownHotkey: "g" })
+        mountComponent({
+          modelValue: "p",
+          ownHotkey: "p",
+          ownDescription: "Toggle tool:  Spots",
+        })
           .find(".hotkey-conflict")
           .exists(),
       ).toBe(false);
       expect(mountComponent().find(".hotkey-conflict").exists()).toBe(false);
+    });
+
+    it("still warns about another binding on the tool's own key", () => {
+      boundKeys.value = {
+        g: [
+          { section: "Tools", description: "Toggle tool:  Spots" },
+          { section: "View", description: "Show/hide transcripts" },
+        ],
+      };
+      const wrapper = mountComponent({
+        modelValue: "g",
+        ownHotkey: "g",
+        ownDescription: "Toggle tool:  Spots",
+      });
+      expect(wrapper.find(".hotkey-conflict").text()).toBe(
+        'G is already used for "Show/hide transcripts" (View). Pressing it will do both.',
+      );
     });
   });
 });

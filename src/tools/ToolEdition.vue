@@ -18,7 +18,11 @@
       />
       <div class="ma-6 mb-0">
         <div class="title text-white">Tool Hotkey</div>
-        <hotkey-selection v-model="toolHotkey" :own-hotkey="tool.hotkey" />
+        <hotkey-selection
+          v-model="toolHotkey"
+          :own-hotkey="tool.hotkey"
+          :own-description="toolHotkeyDescription(tool.name)"
+        />
       </div>
     </v-card-text>
     <v-card-actions class="py-4">
@@ -57,6 +61,7 @@ import { IToolConfiguration } from "@/store/model";
 import store from "@/store";
 import ToolConfiguration from "@/tools/creation/ToolConfiguration.vue";
 import HotkeySelection from "@/components/HotkeySelection.vue";
+import { toolHotkeyDescription } from "@/commands/hotkeys";
 
 const props = defineProps<{
   tool: IToolConfiguration;

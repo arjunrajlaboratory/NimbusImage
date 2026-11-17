@@ -20,12 +20,18 @@ export interface IHotkeyDescription {
 
 // Internal mutable store — not reactive, so directive hooks don't create
 // dependency-tracking loops when they run inside a component's render watcher.
-const _raw: Record<string, IHotkeyDescription> = {};
-// Exposed reactive ref — consumers (HelpPanel) read this to render.
-export const boundKeys = ref<Record<string, IHotkeyDescription>>({});
+// Keyed by key, then by the element that bound it: Mousetrap runs every
+// handler bound to a key, so several bindings can share one (a tool hotkey
+// and a built-in key), and unbinding one must leave the others listed.
+const _raw = new Map<string, Map<Element, IHotkeyDescription>>();
+// Exposed reactive ref — consumers (HelpPanel) read this to render. Every
+// description currently bound to each key, in binding order.
+export const boundKeys = ref<Record<string, IHotkeyDescription[]>>({});
 
 function flush() {
-  boundKeys.value = { ..._raw };
+  boundKeys.value = Object.fromEntries(
+    [..._raw].map(([key, owners]) => [key, [...owners.values()]]),
+  );
 }
 
 function bind(el: any, value: IHotkey | IHotkey[], bindElement: any) {
@@ -60,7 +66,10 @@ function bind(el: any, value: IHotkey | IHotkey[], bindElement: any) {
       handler.apply(this, [el, ...args]);
     });
     if (data) {
-      _raw[_bind] = data;
+      if (!_raw.has(_bind)) {
+        _raw.set(_bind, new Map());
+      }
+      _raw.get(_bind)!.set(el, data);
       changed = true;
     }
   });
@@ -73,8 +82,11 @@ function unbind(el: any) {
   el.mousetrap.reset();
   let changed = false;
   el.mousetrapValues.forEach(({ bind: _bind, data }: IHotkey) => {
-    if (data) {
-      delete _raw[_bind];
+    const owners = _raw.get(_bind);
+    if (data && owners?.delete(el)) {
+      if (owners.size === 0) {
+        _raw.delete(_bind);
+      }
       changed = true;
     }
   });
