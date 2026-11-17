@@ -28,14 +28,28 @@ const _raw = new Map<string, Map<Element, IHotkeyDescription>>();
 // description currently bound to each key, in binding order.
 export const boundKeys = ref<Record<string, IHotkeyDescription[]>>({});
 
-// Set while HotkeySelection records a new hotkey. Mousetrap's record plugin
-// only intercepts keys on its global instance, and every binding here has
-// its own instance, so without this the key being recorded would also run
-// whatever is already bound to it.
-let hotkeysPaused = false;
+// Mousetrap's record plugin only intercepts keys on its global instance,
+// and every binding here has its own, so without a pause the key being
+// recorded (HotkeySelection) would also run whatever is bound to it.
+// Conditions are read at each key press, so a recorder that is hidden but
+// still mounted (a closed dialog) stops pausing without having to notice.
+const pauseConditions = new Set<() => boolean>();
 
-export function setHotkeysPaused(paused: boolean) {
-  hotkeysPaused = paused;
+/** Pause every bound hotkey while `condition()` holds; returns the release. */
+export function pauseHotkeysWhile(condition: () => boolean): () => void {
+  pauseConditions.add(condition);
+  return () => {
+    pauseConditions.delete(condition);
+  };
+}
+
+function hotkeysPaused(): boolean {
+  for (const condition of pauseConditions) {
+    if (condition()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function flush() {
@@ -73,7 +87,7 @@ function bind(el: any, value: IHotkey | IHotkey[], bindElement: any) {
       return;
     }
     mousetrap.bind(_bind, function (this: any, ...args) {
-      if (hotkeysPaused) {
+      if (hotkeysPaused()) {
         return;
       }
       handler.apply(this, [el, ...args]);

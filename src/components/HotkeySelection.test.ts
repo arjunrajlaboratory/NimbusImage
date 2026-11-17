@@ -1,11 +1,21 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  beforeAll,
+  afterAll,
+} from "vitest";
 import { mount } from "@vue/test-utils";
 import HotkeySelection from "./HotkeySelection.vue";
 import { boundKeys } from "@/utils/v-mousetrap";
 
 // Mock Mousetrap to avoid DOM key event dependencies
 const mocks = vi.hoisted(() => ({
-  setHotkeysPaused: vi.fn(),
+  pauseConditions: [] as (() => boolean)[],
+  releases: 0,
   // Simulate recording "ctrl+s" at once; a test can hold the callback.
   record: vi.fn((callback: (sequence: string[]) => void) => {
     callback(["ctrl+s"]);
@@ -16,8 +26,54 @@ vi.mock("mousetrap", () => ({ default: { record: mocks.record } }));
 
 vi.mock("@/utils/v-mousetrap", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/utils/v-mousetrap")>()),
-  setHotkeysPaused: mocks.setHotkeysPaused,
+  pauseHotkeysWhile: (condition: () => boolean) => {
+    mocks.pauseConditions.push(condition);
+    return () => {
+      mocks.releases++;
+    };
+  },
 }));
+
+vi.mock("@/commands/hotkeys", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/commands/hotkeys")>();
+  // Windows/Linux spellings, whatever machine runs the tests.
+  return {
+    ...actual,
+    canonicalHotkey: (binding: string) =>
+      actual.canonicalHotkey(binding, false),
+    formatHotkey: (binding: string) => actual.formatHotkey(binding, false),
+  };
+});
+
+// jsdom does no layout, so offsetParent is always null; stand in for whether
+// the recorder is on screen (a closed dialog keeps it mounted but hidden).
+let shown = true;
+const offsetParent = Object.getOwnPropertyDescriptor(
+  HTMLElement.prototype,
+  "offsetParent",
+)!;
+beforeAll(() => {
+  Object.defineProperty(HTMLElement.prototype, "offsetParent", {
+    configurable: true,
+    get: () => (shown ? document.body : null),
+  });
+});
+afterAll(() => {
+  Object.defineProperty(HTMLElement.prototype, "offsetParent", offsetParent);
+});
+beforeEach(() => {
+  shown = true;
+  mocks.pauseConditions.length = 0;
+  mocks.releases = 0;
+});
+
+function holdRecording() {
+  let finish!: (sequence: string[]) => void;
+  mocks.record.mockImplementationOnce((callback) => {
+    finish = callback;
+  });
+  return (sequence: string[]) => finish(sequence);
+}
 
 function mountComponent(props = {}) {
   return mount(HotkeySelection, {
@@ -64,31 +120,43 @@ describe("HotkeySelection", () => {
   });
 
   it("pauses bound hotkeys while recording", async () => {
-    let finish!: (sequence: string[]) => void;
-    mocks.record.mockImplementationOnce((callback) => {
-      finish = callback;
-    });
+    const finish = holdRecording();
     const wrapper = mountComponent();
     await wrapper.findAll(".v-btn").at(0)!.trigger("click");
-    expect(mocks.setHotkeysPaused.mock.calls).toEqual([[true]]);
+    const [paused] = mocks.pauseConditions;
+    expect(paused()).toBe(true);
     finish(["g"]);
-    expect(mocks.setHotkeysPaused.mock.calls).toEqual([[true], [false]]);
+    expect(paused()).toBe(false);
+    expect(mocks.releases).toBe(1);
     expect(wrapper.emitted("update:modelValue")![0]).toEqual(["g"]);
   });
 
-  it("lifts the pause when closed mid-recording", async () => {
-    let finish!: (sequence: string[]) => void;
-    mocks.record.mockImplementationOnce((callback) => {
-      finish = callback;
-    });
+  it("lifts the pause when unmounted mid-recording", async () => {
+    const finish = holdRecording();
     const wrapper = mountComponent();
     await wrapper.findAll(".v-btn").at(0)!.trigger("click");
     wrapper.unmount();
-    expect(mocks.setHotkeysPaused.mock.calls).toEqual([[true], [false]]);
-    // A late recording neither re-lifts the pause nor sets a hotkey.
+    expect(mocks.releases).toBe(1);
+    // A late recording neither releases again nor sets a hotkey.
     finish(["g"]);
-    expect(mocks.setHotkeysPaused).toHaveBeenCalledTimes(2);
+    expect(mocks.releases).toBe(1);
     expect(wrapper.emitted("update:modelValue")).toBeUndefined();
+  });
+
+  it("neither pauses nor takes a key once its dialog is hidden", async () => {
+    const finish = holdRecording();
+    const wrapper = mountComponent();
+    await wrapper.findAll(".v-btn").at(0)!.trigger("click");
+    const [paused] = mocks.pauseConditions;
+    shown = false;
+    expect(paused()).toBe(false);
+    finish(["a"]);
+    expect(wrapper.emitted("update:modelValue")).toBeUndefined();
+    expect(mocks.releases).toBe(1);
+    shown = true;
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain("Record");
+    expect(wrapper.text()).not.toContain("Recording...");
   });
 
   describe("conflict warning", () => {
@@ -123,6 +191,18 @@ describe("HotkeySelection", () => {
           .exists(),
       ).toBe(false);
       expect(mountComponent().find(".hotkey-conflict").exists()).toBe(false);
+    });
+
+    it("warns when a recorded spelling is an alias of a bound key", () => {
+      boundKeys.value = {
+        "mod+shift+z": [
+          { section: "Objects", description: "Redo last action" },
+        ],
+      };
+      const wrapper = mountComponent({ modelValue: "ctrl+shift+z" });
+      expect(wrapper.find(".hotkey-conflict").text()).toBe(
+        'Ctrl+Shift+Z is already used for "Redo last action" (Objects). Pressing it will do both.',
+      );
     });
 
     it("still warns about another binding on the tool's own key", () => {

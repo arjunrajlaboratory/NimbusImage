@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div ref="rootRef">
     <div class="hotkey-selection">
       <span class="hotkey-label">
         {{ hotkey === null ? "No hotkey yet" : `Hotkey: ${hotkey}` }}
@@ -31,8 +31,8 @@
 <script setup lang="ts">
 import { ref, computed, onBeforeUnmount } from "vue";
 import Mousetrap from "mousetrap";
-import { boundKeys, setHotkeysPaused } from "@/utils/v-mousetrap";
-import { formatHotkey } from "@/commands/hotkeys";
+import { boundKeys, pauseHotkeysWhile } from "@/utils/v-mousetrap";
+import { canonicalHotkey, formatHotkey } from "@/commands/hotkeys";
 
 const props = defineProps<{
   modelValue?: string | null;
@@ -53,17 +53,26 @@ const hotkey = computed({
 });
 
 const isRecordingHotkey = ref(false);
+const rootRef = ref<HTMLElement | null>(null);
 
 // Mousetrap runs every handler bound to a key, so a hotkey that is already
 // bound fires both actions. Only keys bound right now are known: a key that
-// only exists in another dataset (e.g. transcripts) is not checked.
+// only exists in another dataset (e.g. transcripts) is not checked. Keys are
+// compared canonically: a recorded "ctrl+z" is the built-in "mod+z" on
+// Windows.
 const conflict = computed(() => {
   const key = hotkey.value;
   if (key === null) {
     return null;
   }
-  const others = [...(boundKeys.value[key] ?? [])];
-  if (key === props.ownHotkey) {
+  const canonical = canonicalHotkey(key);
+  const others = Object.entries(boundKeys.value)
+    .filter(([bound]) => canonicalHotkey(bound) === canonical)
+    .flatMap(([, bindings]) => bindings);
+  if (
+    props.ownHotkey != null &&
+    canonicalHotkey(props.ownHotkey) === canonical
+  ) {
     // Drop only the tool's own binding; another one on the key still clashes.
     const own = others.findIndex(
       (bound) => bound.description === props.ownDescription,
@@ -81,30 +90,42 @@ const conflict = computed(() => {
   return `${formatHotkey(key)} is already used for ${uses}. Pressing it will do both.`;
 });
 
+// Dialogs hide their content without unmounting it, so a recorder whose
+// dialog closed mid-recording is still mounted: it must neither keep the
+// other hotkeys paused nor take the next key pressed elsewhere.
+function isShown(): boolean {
+  return rootRef.value?.offsetParent != null;
+}
+
+let releasePause: (() => void) | null = null;
+
+function stopRecording() {
+  isRecordingHotkey.value = false;
+  releasePause?.();
+  releasePause = null;
+}
+
 function editHotkey() {
+  isRecordingHotkey.value = true;
+  releasePause?.();
+  // The key being recorded must not also run what is already bound to it.
+  releasePause = pauseHotkeysWhile(() => isRecordingHotkey.value && isShown());
   // The extensions of Mousetrap are loaded in main.ts
   // but they don't update the types, hence the ts-ignore
-  isRecordingHotkey.value = true;
-  // The key being recorded must not also run what is already bound to it.
-  setHotkeysPaused(true);
   // @ts-ignore
   Mousetrap.record((sequence: string[]) => {
     if (!isRecordingHotkey.value) {
-      // Closed before a key was pressed; the pause is already lifted.
       return;
     }
-    hotkey.value = sequence.join(" ");
-    isRecordingHotkey.value = false;
-    setHotkeysPaused(false);
+    // Pressed while this recorder was hidden: not meant for it.
+    if (isShown()) {
+      hotkey.value = sequence.join(" ");
+    }
+    stopRecording();
   });
 }
 
-onBeforeUnmount(() => {
-  if (isRecordingHotkey.value) {
-    isRecordingHotkey.value = false;
-    setHotkeysPaused(false);
-  }
-});
+onBeforeUnmount(stopRecording);
 </script>
 
 <style scoped>
