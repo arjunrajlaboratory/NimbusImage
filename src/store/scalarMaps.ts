@@ -109,7 +109,7 @@ export class ScalarMaps extends VuexModule {
    * threshold, which may not fit the new values.
    */
   @Mutation
-  setMaps(payload: { datasetId: string; maps: unknown[] }) {
+  setScalarMaps(payload: { datasetId: string; maps: unknown[] }) {
     const sameDataset = payload.datasetId === this.mapsDatasetId;
     const previous = new Map(this.maps.map((map) => [map.itemId, map]));
     const maps: IScalarMap[] = [];
@@ -140,19 +140,19 @@ export class ScalarMaps extends VuexModule {
   }
 
   @Mutation
-  setLoading(loading: boolean) {
+  setScalarMapsLoading(loading: boolean) {
     this.loading = loading;
   }
 
   @Mutation
-  setError(error: string | null) {
+  setScalarMapsError(error: string | null) {
     this.error = error;
   }
 
   /** Visibility, opacity, colormap, range and the threshold switch. The
-   * threshold itself goes through the setThreshold* mutations. */
+   * threshold itself goes through the setScalarMapThreshold* mutations. */
   @Mutation
-  updateDisplay(payload: {
+  updateScalarMapDisplay(payload: {
     itemId: string;
     changes: Partial<
       Pick<
@@ -172,7 +172,7 @@ export class ScalarMaps extends VuexModule {
 
   /** Threshold by share of tissue: the share is kept, the value derived. */
   @Mutation
-  setThresholdPercent(payload: { itemId: string; percent: number }) {
+  setScalarMapThresholdPercent(payload: { itemId: string; percent: number }) {
     const map = this.maps.find(
       (candidate) => candidate.itemId === payload.itemId,
     );
@@ -194,7 +194,7 @@ export class ScalarMaps extends VuexModule {
 
   /** Threshold by value: the share is then read from the value. */
   @Mutation
-  setThresholdValue(payload: { itemId: string; value: number }) {
+  setScalarMapThresholdValue(payload: { itemId: string; value: number }) {
     const current = this.display[payload.itemId];
     if (current) {
       this.display[payload.itemId] = {
@@ -207,7 +207,10 @@ export class ScalarMaps extends VuexModule {
 
   /** Switch sides; a share picked in percent mode stays the same share. */
   @Mutation
-  setThresholdSide(payload: { itemId: string; side: TScalarMapThresholdSide }) {
+  setScalarMapThresholdSide(payload: {
+    itemId: string;
+    side: TScalarMapThresholdSide;
+  }) {
     const map = this.maps.find(
       (candidate) => candidate.itemId === payload.itemId,
     );
@@ -231,7 +234,7 @@ export class ScalarMaps extends VuexModule {
 
   /** Reset a map's display range to its full (widened if constant) range. */
   @Mutation
-  resetRange(itemId: string) {
+  resetScalarMapRange(itemId: string) {
     const map = this.maps.find((candidate) => candidate.itemId === itemId);
     const current = this.display[itemId];
     if (map && current) {
@@ -241,20 +244,20 @@ export class ScalarMaps extends VuexModule {
   }
 
   @Mutation
-  setColormapStops(stops: Record<string, string[]>) {
+  setScalarMapColormapStops(stops: Record<string, string[]>) {
     this.colormapStops = stops;
   }
 
   /** Load the legend gradients once; on failure the legend is left out and
    * the next call asks again. */
   @Action
-  async ensureColormapStops(): Promise<void> {
+  async ensureScalarMapColormapStops(): Promise<void> {
     if (this.colormapStops !== null) {
       return;
     }
     colormapStopsRequest ??= main.annotationsAPI
       .getColorByPropertyOptions()
-      .then((options) => this.setColormapStops(options.colormaps))
+      .then((options) => this.setScalarMapColormapStops(options.colormaps))
       .catch((error) => {
         logError("Failed to load the colormap tables:", error);
       })
@@ -265,7 +268,7 @@ export class ScalarMaps extends VuexModule {
   }
 
   @Mutation
-  removeMap(itemId: string) {
+  removeScalarMap(itemId: string) {
     this.maps = this.maps.filter((map) => map.itemId !== itemId);
     const display = { ...this.display };
     delete display[itemId];
@@ -278,7 +281,7 @@ export class ScalarMaps extends VuexModule {
    * since it was sent (a job finished, the user pressed Refresh).
    */
   @Action
-  async refreshMaps(force: boolean = false): Promise<void> {
+  async refreshScalarMaps(force: boolean = false): Promise<void> {
     const datasetId = main.dataset?.id ?? null;
     if (
       !force &&
@@ -293,29 +296,29 @@ export class ScalarMaps extends VuexModule {
     const generation = ++listRequestGeneration;
     listInFlight = null;
     if (datasetId === null) {
-      this.setMaps({ datasetId: "", maps: [] });
-      this.setError(null);
-      this.setLoading(false);
+      this.setScalarMaps({ datasetId: "", maps: [] });
+      this.setScalarMapsError(null);
+      this.setScalarMapsLoading(false);
       return;
     }
-    this.setLoading(true);
-    this.setError(null);
+    this.setScalarMapsLoading(true);
+    this.setScalarMapsError(null);
     const stillCurrent = () =>
       generation === listRequestGeneration && main.dataset?.id === datasetId;
     const promise = (async () => {
       try {
         const maps = await main.scalarMapAPI.listMaps(datasetId);
         if (stillCurrent()) {
-          this.setMaps({ datasetId, maps });
+          this.setScalarMaps({ datasetId, maps });
         }
       } catch (error) {
         logError("Failed to list the dataset's scalar maps:", error);
         if (stillCurrent()) {
-          this.setError("Could not read the dataset's saved maps.");
+          this.setScalarMapsError("Could not read the dataset's saved maps.");
         }
       } finally {
         if (generation === listRequestGeneration) {
-          this.setLoading(false);
+          this.setScalarMapsLoading(false);
         }
         forgetListRequest(generation);
       }
@@ -326,7 +329,7 @@ export class ScalarMaps extends VuexModule {
 
   /** Delete a saved map (WRITE on the item); throws the server's reason. */
   @Action({ rawError: true })
-  async deleteMap(itemId: string): Promise<void> {
+  async deleteScalarMap(itemId: string): Promise<void> {
     await main.scalarMapAPI.deleteMap(itemId);
     // A list response captured before the delete would bring the map back:
     // invalidate it, and list again if one was pending (it may carry a map
@@ -334,9 +337,9 @@ export class ScalarMaps extends VuexModule {
     const wasListing = listInFlight !== null;
     listRequestGeneration++;
     listInFlight = null;
-    this.removeMap(itemId);
+    this.removeScalarMap(itemId);
     if (wasListing) {
-      void this.refreshMaps(true);
+      void this.refreshScalarMaps(true);
     }
   }
 }

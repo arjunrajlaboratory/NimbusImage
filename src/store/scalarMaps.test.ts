@@ -88,14 +88,14 @@ describe("scalarMaps store", () => {
     mocks.logWarning.mockReset();
     // Settle and invalidate anything a previous test left in flight.
     mocks.main.dataset = null;
-    await scalarMapsStore.refreshMaps();
+    await scalarMapsStore.refreshScalarMaps();
     mocks.main.dataset = { id: "ds1" };
-    scalarMapsStore.setError(null);
-    scalarMapsStore.setLoading(false);
+    scalarMapsStore.setScalarMapsError(null);
+    scalarMapsStore.setScalarMapsLoading(false);
   });
 
   it("lists the dataset's maps with default display settings", async () => {
-    await scalarMapsStore.refreshMaps();
+    await scalarMapsStore.refreshScalarMaps();
     expect(mocks.listMaps).toHaveBeenCalledWith("ds1");
     expect(scalarMapsStore.hasMaps).toBe(true);
     expect(scalarMapsStore.display.a).toEqual({
@@ -115,20 +115,20 @@ describe("scalarMaps store", () => {
 
   it("widens a constant map's default range and its reset range", async () => {
     mocks.listMaps.mockResolvedValueOnce([scalarMap("flat", [4, 4])]);
-    await scalarMapsStore.refreshMaps();
+    await scalarMapsStore.refreshScalarMaps();
     expect(scalarMapsStore.display.flat).toMatchObject({ min: 3.5, max: 4.5 });
-    scalarMapsStore.updateDisplay({
+    scalarMapsStore.updateScalarMapDisplay({
       itemId: "flat",
       changes: { min: 3.9, max: 4.1 },
     });
-    scalarMapsStore.resetRange("flat");
+    scalarMapsStore.resetScalarMapRange("flat");
     expect(scalarMapsStore.display.flat).toMatchObject({ min: 3.5, max: 4.5 });
   });
 
   it("skips a malformed map instead of losing the list", async () => {
     const broken = { ...scalarMap("bad"), meta: { name: "bad" } };
     mocks.listMaps.mockResolvedValueOnce([broken, scalarMap("good")]);
-    await scalarMapsStore.refreshMaps();
+    await scalarMapsStore.refreshScalarMaps();
     expect(ids()).toEqual(["good"]);
     expect(scalarMapsStore.display.bad).toBeUndefined();
     expect(mocks.logWarning).toHaveBeenCalledTimes(1);
@@ -136,20 +136,20 @@ describe("scalarMaps store", () => {
 
   it("keeps 'could not ask' distinct from 'no maps', and retries", async () => {
     mocks.listMaps.mockRejectedValueOnce(new Error("offline"));
-    await scalarMapsStore.refreshMaps();
+    await scalarMapsStore.refreshScalarMaps();
     expect(scalarMapsStore.error).toContain("Could not read");
     expect(scalarMapsStore.hasMaps).toBe(false);
     mocks.listMaps.mockResolvedValueOnce([]);
-    await scalarMapsStore.refreshMaps();
+    await scalarMapsStore.refreshScalarMaps();
     expect(scalarMapsStore.error).toBeNull();
     expect(scalarMapsStore.hasMaps).toBe(false);
     expect(scalarMapsStore.mapsDatasetId).toBe("ds1");
   });
 
   it("lists again for every call once the previous one finished", async () => {
-    await scalarMapsStore.refreshMaps();
+    await scalarMapsStore.refreshScalarMaps();
     mocks.listMaps.mockResolvedValueOnce([scalarMap("a"), scalarMap("new")]);
-    await scalarMapsStore.refreshMaps();
+    await scalarMapsStore.refreshScalarMaps();
     expect(mocks.listMaps).toHaveBeenCalledTimes(2);
     expect(ids()).toEqual(["a", "new"]);
   });
@@ -157,8 +157,8 @@ describe("scalarMaps store", () => {
   it("shares a request in flight for the same dataset unless forced", async () => {
     const first = deferred<any[]>();
     mocks.listMaps.mockReturnValueOnce(first.promise);
-    const opening = scalarMapsStore.refreshMaps();
-    const panel = scalarMapsStore.refreshMaps();
+    const opening = scalarMapsStore.refreshScalarMaps();
+    const panel = scalarMapsStore.refreshScalarMaps();
     expect(mocks.listMaps).toHaveBeenCalledTimes(1);
     first.resolve([scalarMap("a")]);
     await Promise.all([opening, panel]);
@@ -167,10 +167,10 @@ describe("scalarMaps store", () => {
     // A dataset switch does not share the previous dataset's request.
     const pending = deferred<any[]>();
     mocks.listMaps.mockReturnValueOnce(pending.promise);
-    const old = scalarMapsStore.refreshMaps();
+    const old = scalarMapsStore.refreshScalarMaps();
     mocks.main.dataset = { id: "ds2" };
     mocks.listMaps.mockResolvedValueOnce([scalarMap("b")]);
-    await scalarMapsStore.refreshMaps();
+    await scalarMapsStore.refreshScalarMaps();
     expect(mocks.listMaps).toHaveBeenLastCalledWith("ds2");
     pending.resolve([scalarMap("a")]);
     await old;
@@ -180,9 +180,9 @@ describe("scalarMaps store", () => {
   it("ignores an answer that lands after a newer (forced) request", async () => {
     const first = deferred<any[]>();
     mocks.listMaps.mockReturnValueOnce(first.promise);
-    const stale = scalarMapsStore.refreshMaps();
+    const stale = scalarMapsStore.refreshScalarMaps();
     mocks.listMaps.mockResolvedValueOnce([scalarMap("new")]);
-    await scalarMapsStore.refreshMaps(true);
+    await scalarMapsStore.refreshScalarMaps(true);
     first.resolve([scalarMap("old")]);
     await stale;
     expect(ids()).toEqual(["new"]);
@@ -192,10 +192,10 @@ describe("scalarMaps store", () => {
   it("does not let a request for the previous dataset land after the dataset is cleared", async () => {
     const first = deferred<any[]>();
     mocks.listMaps.mockReturnValueOnce(first.promise);
-    const stale = scalarMapsStore.refreshMaps();
+    const stale = scalarMapsStore.refreshScalarMaps();
     mocks.main.dataset = null;
     // Early return without a dataset still claims the sequence token.
-    await scalarMapsStore.refreshMaps();
+    await scalarMapsStore.refreshScalarMaps();
     mocks.main.dataset = { id: "ds1" };
     first.resolve([scalarMap("old")]);
     await stale;
@@ -205,22 +205,22 @@ describe("scalarMaps store", () => {
   it("drops a failure for a request that was superseded", async () => {
     const first = deferred<any[]>();
     mocks.listMaps.mockReturnValueOnce(first.promise);
-    const stale = scalarMapsStore.refreshMaps();
-    await scalarMapsStore.refreshMaps(true);
+    const stale = scalarMapsStore.refreshScalarMaps();
+    await scalarMapsStore.refreshScalarMaps(true);
     first.reject(new Error("late"));
     await stale;
     expect(scalarMapsStore.error).toBeNull();
   });
 
   it("resets with the dataset and keeps display settings across a re-list", async () => {
-    await scalarMapsStore.refreshMaps();
-    scalarMapsStore.updateDisplay({
+    await scalarMapsStore.refreshScalarMaps();
+    scalarMapsStore.updateScalarMapDisplay({
       itemId: "a",
       changes: { visible: true, colormap: "magma", opacity: 5 },
     });
     expect(scalarMapsStore.display.a.opacity).toBe(1);
     mocks.listMaps.mockResolvedValueOnce([scalarMap("a"), scalarMap("b")]);
-    await scalarMapsStore.refreshMaps();
+    await scalarMapsStore.refreshScalarMaps();
     expect(scalarMapsStore.display.a.colormap).toBe("magma");
     expect(scalarMapsStore.display.b.visible).toBe(false);
 
@@ -229,7 +229,7 @@ describe("scalarMaps store", () => {
     expect(scalarMapsStore.currentMaps).toEqual([]);
     expect(scalarMapsStore.hasMaps).toBe(false);
     mocks.listMaps.mockResolvedValueOnce([scalarMap("a")]);
-    await scalarMapsStore.refreshMaps();
+    await scalarMapsStore.refreshScalarMaps();
     expect(mocks.listMaps).toHaveBeenLastCalledWith("ds2");
     // Same item id on the new dataset still starts from defaults.
     expect(scalarMapsStore.display.a.visible).toBe(false);
@@ -237,13 +237,13 @@ describe("scalarMaps store", () => {
   });
 
   it("re-derives range and threshold when a map's file changes, keeping how it is shown", async () => {
-    await scalarMapsStore.refreshMaps();
-    scalarMapsStore.updateDisplay({
+    await scalarMapsStore.refreshScalarMaps();
+    scalarMapsStore.updateScalarMapDisplay({
       itemId: "a",
       changes: { visible: true, colormap: "gray", min: 50, max: 60 },
     });
     mocks.listMaps.mockResolvedValueOnce([scalarMap("a", [0, 10], "r2")]);
-    await scalarMapsStore.refreshMaps();
+    await scalarMapsStore.refreshScalarMaps();
     expect(scalarMapsStore.display.a).toMatchObject({
       visible: true,
       colormap: "gray",
@@ -254,38 +254,38 @@ describe("scalarMaps store", () => {
   });
 
   it("keeps the requested share and derives the value; setting a value clears it", async () => {
-    await scalarMapsStore.refreshMaps();
-    scalarMapsStore.setThresholdPercent({ itemId: "a", percent: 30 });
+    await scalarMapsStore.refreshScalarMaps();
+    scalarMapsStore.setScalarMapThresholdPercent({ itemId: "a", percent: 30 });
     expect(scalarMapsStore.display.a).toMatchObject({
       thresholdPercent: 30,
       threshold: 140,
     });
-    scalarMapsStore.setThresholdSide({ itemId: "a", side: "below" });
+    scalarMapsStore.setScalarMapThresholdSide({ itemId: "a", side: "below" });
     expect(scalarMapsStore.display.a).toMatchObject({
       thresholdPercent: 30,
       threshold: 60,
       thresholdSide: "below",
     });
-    scalarMapsStore.setThresholdValue({ itemId: "a", value: 12 });
+    scalarMapsStore.setScalarMapThresholdValue({ itemId: "a", value: 12 });
     expect(scalarMapsStore.display.a).toMatchObject({
       thresholdPercent: null,
       threshold: 12,
     });
     // Set by value, switching sides keeps the value.
-    scalarMapsStore.setThresholdSide({ itemId: "a", side: "above" });
+    scalarMapsStore.setScalarMapThresholdSide({ itemId: "a", side: "above" });
     expect(scalarMapsStore.display.a.threshold).toBe(12);
   });
 
   it("deletes a map and forgets its display; a failed delete keeps it", async () => {
     mocks.listMaps.mockResolvedValueOnce([scalarMap("a"), scalarMap("b")]);
-    await scalarMapsStore.refreshMaps();
-    await scalarMapsStore.deleteMap("a");
+    await scalarMapsStore.refreshScalarMaps();
+    await scalarMapsStore.deleteScalarMap("a");
     expect(mocks.deleteMap).toHaveBeenCalledWith("a");
     expect(ids()).toEqual(["b"]);
     expect(scalarMapsStore.display.a).toBeUndefined();
 
     mocks.deleteMap.mockRejectedValueOnce(new Error("Write access denied"));
-    await expect(scalarMapsStore.deleteMap("b")).rejects.toMatchObject({
+    await expect(scalarMapsStore.deleteScalarMap("b")).rejects.toMatchObject({
       message: "Write access denied",
     });
     expect(scalarMapsStore.currentMaps).toHaveLength(1);
@@ -293,13 +293,13 @@ describe("scalarMaps store", () => {
 
   it("does not let a list captured before a delete bring the map back", async () => {
     mocks.listMaps.mockResolvedValueOnce([scalarMap("a"), scalarMap("b")]);
-    await scalarMapsStore.refreshMaps();
+    await scalarMapsStore.refreshScalarMaps();
     const before = deferred<any[]>();
     mocks.listMaps.mockReturnValueOnce(before.promise);
-    const stale = scalarMapsStore.refreshMaps();
+    const stale = scalarMapsStore.refreshScalarMaps();
     // The list after the delete, which the store asks for again.
     mocks.listMaps.mockResolvedValueOnce([scalarMap("b"), scalarMap("c")]);
-    await scalarMapsStore.deleteMap("a");
+    await scalarMapsStore.deleteScalarMap("a");
     before.resolve([scalarMap("a"), scalarMap("b")]);
     await stale;
     await vi.waitFor(() => expect(ids()).toEqual(["b", "c"]));
@@ -310,10 +310,10 @@ describe("scalarMaps store", () => {
     mocks.getColorByPropertyOptions
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValue({ colormaps: { viridis: ["#000", "#fff"] } });
-    await scalarMapsStore.ensureColormapStops();
+    await scalarMapsStore.ensureScalarMapColormapStops();
     expect(scalarMapsStore.colormapStops).toBeNull();
-    await scalarMapsStore.ensureColormapStops();
-    await scalarMapsStore.ensureColormapStops();
+    await scalarMapsStore.ensureScalarMapColormapStops();
+    await scalarMapsStore.ensureScalarMapColormapStops();
     expect(scalarMapsStore.colormapStops).toEqual({
       viridis: ["#000", "#fff"],
     });

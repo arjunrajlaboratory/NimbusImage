@@ -13,7 +13,7 @@
             aria-label="Refresh saved maps"
             :loading="scalarMapsStore.loading"
             :disabled="scalarMapsStore.loading"
-            @click="scalarMapsStore.refreshMaps(true)"
+            @click="scalarMapsStore.refreshScalarMaps(true)"
           />
         </template>
       </v-tooltip>
@@ -26,7 +26,7 @@
         size="small"
         :loading="scalarMapsStore.loading"
         :disabled="scalarMapsStore.loading"
-        @click="scalarMapsStore.refreshMaps(true)"
+        @click="scalarMapsStore.refreshScalarMaps(true)"
         >Retry map lookup</v-btn
       >
     </div>
@@ -134,7 +134,7 @@
           <v-btn
             variant="text"
             size="small"
-            @click="scalarMapsStore.resetRange(map.itemId)"
+            @click="scalarMapsStore.resetScalarMapRange(map.itemId)"
             >Reset</v-btn
           >
         </div>
@@ -167,7 +167,7 @@
               variant="outlined"
               divided
               @update:model-value="
-                scalarMapsStore.setThresholdSide({
+                scalarMapsStore.setScalarMapThresholdSide({
                   itemId: map.itemId,
                   side: $event,
                 })
@@ -321,9 +321,11 @@ function displayOf(map: IScalarMap): IScalarMapDisplay {
 
 function update(
   map: IScalarMap,
-  changes: Parameters<typeof scalarMapsStore.updateDisplay>[0]["changes"],
+  changes: Parameters<
+    typeof scalarMapsStore.updateScalarMapDisplay
+  >[0]["changes"],
 ) {
-  scalarMapsStore.updateDisplay({ itemId: map.itemId, changes });
+  scalarMapsStore.updateScalarMapDisplay({ itemId: map.itemId, changes });
 }
 
 function hasDataHere(map: IScalarMap): boolean {
@@ -366,7 +368,7 @@ function thresholdPosition(map: IScalarMap): number {
 }
 
 function onThresholdPosition(map: IScalarMap, position: number) {
-  scalarMapsStore.setThresholdValue({
+  scalarMapsStore.setScalarMapThresholdValue({
     itemId: map.itemId,
     value: sliderPositionToValue(position, bounds(map)),
   });
@@ -383,7 +385,7 @@ function shareOf(map: IScalarMap) {
 }
 
 function onShare(map: IScalarMap, percent: number) {
-  scalarMapsStore.setThresholdPercent({ itemId: map.itemId, percent });
+  scalarMapsStore.setScalarMapThresholdPercent({ itemId: map.itemId, percent });
 }
 
 function thresholdText(map: IScalarMap): string {
@@ -427,7 +429,7 @@ async function confirmDelete() {
   deleting.value = true;
   deleteError.value = null;
   try {
-    await scalarMapsStore.deleteMap(map.itemId);
+    await scalarMapsStore.deleteScalarMap(map.itemId);
     deleteDialog.value = false;
     pendingDelete.value = null;
   } catch (error) {
@@ -446,8 +448,8 @@ watch(
   () => [props.visible, store.dataset?.id],
   () => {
     if (props.visible && store.dataset?.id) {
-      scalarMapsStore.refreshMaps();
-      scalarMapsStore.ensureColormapStops();
+      scalarMapsStore.refreshScalarMaps();
+      scalarMapsStore.ensureScalarMapColormapStops();
     }
   },
   { immediate: true },

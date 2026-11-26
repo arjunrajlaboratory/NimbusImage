@@ -63,7 +63,7 @@ vi.mock("@/store/scalarMaps", async () => {
       hasMaps: false,
       error: null,
       loading: false,
-      refreshMaps: vi.fn(),
+      refreshScalarMaps: vi.fn(),
     }),
   };
 });
@@ -186,12 +186,12 @@ describe("App", () => {
 
   it("offers Map Layers only with saved maps, and keeps it reachable after a failed lookup", async () => {
     const wrapper = mountWithAppBar();
-    expect(scalarMapsStore.refreshMaps).toHaveBeenCalledTimes(1);
+    expect(scalarMapsStore.refreshScalarMaps).toHaveBeenCalledTimes(1);
     // Reopening the same dataset (a reload swaps the object) lists again: a
     // worker may have saved a map since.
     (store as any).dataset = { id: "ds1", name: "Dataset" };
     await nextTick();
-    expect(scalarMapsStore.refreshMaps).toHaveBeenCalledTimes(2);
+    expect(scalarMapsStore.refreshScalarMaps).toHaveBeenCalledTimes(2);
     expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(false);
     (scalarMapsStore as any).error = "Could not read the dataset's saved maps.";
     await nextTick();

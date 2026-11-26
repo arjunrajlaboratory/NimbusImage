@@ -48,7 +48,9 @@ vi.mock("@/store/progress", () => ({
 }));
 
 vi.mock("@/store/scalarMaps", () => ({
-  default: { refreshMaps: (...args: any[]) => mocks.refreshMaps(...args) },
+  default: {
+    refreshScalarMaps: (...args: any[]) => mocks.refreshMaps(...args),
+  },
 }));
 
 vi.mock("@/utils/log", () => ({ logError: vi.fn(), logWarning: vi.fn() }));

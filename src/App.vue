@@ -1052,7 +1052,7 @@ watch(
   ],
   ([dataset, inViewer]) => {
     if (dataset && inViewer) {
-      scalarMapsStore.refreshMaps();
+      scalarMapsStore.refreshScalarMaps();
     }
   },
   { immediate: true },

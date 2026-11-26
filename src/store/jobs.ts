@@ -499,7 +499,7 @@ export class Jobs extends VuexModule {
       jobInfo.listeners.some((listener) => listener.datasetId === openDatasetId)
     ) {
       void import("./scalarMaps").then(({ default: scalarMaps }) =>
-        scalarMaps.refreshMaps(true),
+        scalarMaps.refreshScalarMaps(true),
       );
     }
     // A job is done, add badge to annotation panel if it is closed
