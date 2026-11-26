@@ -53,10 +53,10 @@ def batch(server, user, body):
     return resp.json
 
 
-def createSharedResources(admin, user):
+def createSharedResources(admin, user, folderName="shared_ds"):
     """A folder, item and configuration owned by admin, READ-shared."""
     folder = utilities.createPrivateFolder(
-        admin, "shared_ds", upenn_utilities.datasetMetadata
+        admin, folderName, upenn_utilities.datasetMetadata
     )
     folder = Folder().setUserAccess(
         folder, user, AccessType.READ, save=True
@@ -180,6 +180,47 @@ class TestResourceBatch:
             assertStatusOk(resp)
             assert resp.json["_canEditMetadata"] is expected
             assert result["item"][itemId] == resp.json
+
+    def testSiteAdminItemMatchesItemEndpoint(self, admin, user, server):
+        # A site admin can edit every item's metadata without any grant.
+        folder = utilities.createPrivateFolder(
+            user, "user_ds", upenn_utilities.datasetMetadata
+        )
+        itemId = str(Item().createItem("image.tif", user, folder)["_id"])
+
+        result = batch(server, admin, {"item": [itemId]})
+
+        resp = server.request(
+            path="/item/%s" % itemId, method="GET", user=admin
+        )
+        assertStatusOk(resp)
+        assert resp.json["_canEditMetadata"] is True
+        assert result["item"][itemId] == resp.json
+
+    def testItemWhoseFolderVanishesIsOmitted(
+            self, admin, user, server, monkeypatch):
+        """A folder deleted after its items were read drops those items
+        instead of failing the whole batch."""
+        _, keptItem, _ = createSharedResources(admin, user)
+        goneFolder, goneItem, _ = createSharedResources(
+            admin, user, "gone_ds"
+        )
+        originalFind = Folder.find
+
+        def findWithoutGoneFolder(self, query, *args, **kwargs):
+            return [
+                folder
+                for folder in originalFind(self, query, *args, **kwargs)
+                if folder["_id"] != goneFolder["_id"]
+            ]
+
+        monkeypatch.setattr(Folder, "find", findWithoutGoneFolder)
+
+        result = batch(server, user, {
+            "item": [str(keptItem["_id"]), str(goneItem["_id"])],
+        })
+
+        assert list(result["item"]) == [str(keptItem["_id"])]
 
     def testItemsAcrossFoldersGetTheirOwnFolderAccess(
             self, admin, user, server):

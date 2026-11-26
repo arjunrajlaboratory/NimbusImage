@@ -147,29 +147,36 @@ class CustomResource(Resource):
             }
 
         if result.get('item'):
-            self._addCanEditMetadata(result['item'].values(), user)
+            result['item'] = self._addCanEditMetadata(result['item'], user)
 
         return result
 
-    def _addCanEditMetadata(self, items, user):
+    def _addCanEditMetadata(self, itemsById, user):
         """
         Set ``_canEditMetadata`` on filtered item documents, as GET item/{id}
         does: the user has WRITE access or the edit-metadata access flag on
         the item's folder. Girder's per-item check loads the folder for each
-        item, so load the parent folders in one query and apply the same
-        Folder ACL checks to them.
+        item, so load the parent folders in one query and evaluate the same
+        Folder ACL checks once per folder.
+
+        Returns the items whose folder still exists; one deleted since the
+        items were read is omitted, as an unreadable item would be.
         """
         folderModel = Folder()
-        folderIds = list({item['folderId'] for item in items})
-        foldersById = {
-            str(folder['_id']): folder
-            for folder in folderModel.find(
-                {'_id': {'$in': folderIds}},
-                fields=['access', 'public', 'publicFlags'])
-        }
-        for item in items:
-            folder = foldersById[str(item['folderId'])]
-            item['_canEditMetadata'] = (
+        canEditByFolderId = {
+            folder['_id']: (
                 folderModel.hasAccess(folder, user, AccessType.WRITE)
                 or folderModel.hasAccessFlags(
                     folder, user, EDIT_METADATA_FLAG))
+            for folder in folderModel.find(
+                {'_id': {'$in': list(
+                    {item['folderId'] for item in itemsById.values()})}},
+                fields=['access', 'public', 'publicFlags'])
+        }
+        itemsInFolders = {}
+        for itemId, item in itemsById.items():
+            canEdit = canEditByFolderId.get(item['folderId'])
+            if canEdit is not None:
+                item['_canEditMetadata'] = canEdit
+                itemsInFolders[itemId] = item
+        return itemsInFolders
