@@ -31,11 +31,12 @@ import batchRuns, { runBatch } from "./batchRuns";
 import { logError } from "@/utils/log";
 
 // logError is console.error captured at import, so a console spy can't see
-// it; replace it for the loadLargeImages assertions.
-vi.mock("@/utils/log", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/utils/log")>()),
-  logError: vi.fn(),
-}));
+// it. Wrap it so the loadLargeImages tests can assert on it; everywhere else
+// in this file it still calls through.
+vi.mock("@/utils/log", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/utils/log")>();
+  return { ...original, logError: vi.fn(original.logError) };
+});
 
 describe("share-link bootstrap identity", () => {
   let originalClient: typeof main.girderRest;
@@ -1207,14 +1208,20 @@ describe("loadLargeImages", () => {
   beforeEach(() => {
     state().dataset = { id: "ds-1" };
     state().allLargeImages = [];
+    state().allLargeImagesDatasetId = null;
     state().currentLargeImage = null;
+    // Silenced here only: these tests log on purpose
     vi.mocked(logError).mockClear();
+    vi.mocked(logError).mockImplementation(() => {});
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    // Back to calling through to the real logError
+    vi.mocked(logError).mockReset();
     state().dataset = null;
     state().allLargeImages = [];
+    state().allLargeImagesDatasetId = null;
     state().currentLargeImage = null;
   });
 
@@ -1292,6 +1299,7 @@ describe("loadLargeImages", () => {
     const original = image("original");
     const computed = image("computed");
     state().allLargeImages = [original];
+    state().allLargeImagesDatasetId = "ds-1";
     state().currentLargeImage = original;
     vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([
       original,
@@ -1315,6 +1323,7 @@ describe("loadLargeImages", () => {
   it("returns null without logging when switching finds no new image", async () => {
     const original = image("original");
     state().allLargeImages = [original];
+    state().allLargeImagesDatasetId = "ds-1";
     state().currentLargeImage = original;
     vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([
       original,
@@ -1325,6 +1334,33 @@ describe("loadLargeImages", () => {
 
     expect(setCurrent).not.toHaveBeenCalled();
     expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("treats no image as new when the held list is another dataset's", async () => {
+    // A worker finishing while a dataset switch is still loading: the list
+    // is the outgoing dataset's, so every image here would look new.
+    const outgoing = image("outgoing");
+    state().allLargeImages = [outgoing];
+    state().allLargeImagesDatasetId = "ds-0";
+    state().currentLargeImage = outgoing;
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([
+      image("own"),
+    ]);
+    const setCurrent = vi.spyOn(girderResources, "setCurrentLargeImage");
+
+    expect(await main.loadLargeImages(true)).toBeNull();
+
+    expect(setCurrent).not.toHaveBeenCalled();
+    expect(main.allLargeImagesDatasetId).toBe("ds-1");
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("records the dataset the list was loaded for", async () => {
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([]);
+
+    await main.loadLargeImages();
+
+    expect(main.allLargeImagesDatasetId).toBe("ds-1");
   });
 });
 
