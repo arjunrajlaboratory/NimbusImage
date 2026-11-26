@@ -4,8 +4,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 // vuex-module-decorators action `this` is the module accessor, which carries
 // only state, getters, mutations and actions - a plain class method is not on
 // it. The logged-out notification used to be such a method, so every action
-// below rejected with "this.createNotLoggedInNotification is not a function"
-// instead of warning the user. A mocked store cannot see that.
+// below rejected instead of warning the user: syncConfiguration (rawError)
+// with "this.createNotLoggedInNotification is not a function", the others
+// with the ERR_ACTION_ACCESS_UNDEFINED wrapper. A mocked store cannot see
+// that.
 import main from "./index";
 import store from "./root";
 import progress from "./progress";
@@ -61,9 +63,9 @@ const guardedActions: [string, () => Promise<unknown>, unknown][] = [
   [
     "deleteConfiguration",
     () => main.deleteConfiguration({ id: "config1" } as any),
-    undefined,
+    false,
   ],
-  ["deleteDataset", () => main.deleteDataset({ id: "ds1" } as any), undefined],
+  ["deleteDataset", () => main.deleteDataset({ id: "ds1" } as any), false],
   ["renameConfiguration", () => main.renameConfiguration("new"), undefined],
   ["addLayer", () => main.addLayer(), undefined],
 ];
@@ -143,6 +145,8 @@ describe("actions refused while logged out", () => {
     );
     expect(createNotification).toHaveBeenCalledTimes(1);
     expect(createNotification).toHaveBeenCalledWith(notLoggedInNotification);
-    expect(apiCalls[0]).not.toHaveBeenCalled();
+    for (const apiCall of apiCalls) {
+      expect(apiCall).not.toHaveBeenCalled();
+    }
   });
 });

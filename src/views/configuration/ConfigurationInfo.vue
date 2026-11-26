@@ -499,7 +499,10 @@ function toSlice(slice: IDisplaySlice) {
 }
 
 function remove() {
-  store.deleteConfiguration(store.configuration!).then(() => {
+  store.deleteConfiguration(store.configuration!).then((deleted) => {
+    if (!deleted) {
+      return;
+    }
     removeConfirm.value = false;
     router.back();
   });

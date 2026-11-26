@@ -629,7 +629,10 @@ function toRoute(datasetView: IDatasetView) {
 }
 
 function removeDataset() {
-  store.deleteDataset(dataset.value!).then(() => {
+  store.deleteDataset(dataset.value!).then((deleted) => {
+    if (!deleted) {
+      return;
+    }
     removeDatasetConfirm.value = false;
     router.push({ name: "root" });
   });

@@ -1240,3 +1240,50 @@ describe("sync indicator: balanced saves", () => {
     expect(sync.saving).toBe(true);
   });
 });
+
+// DatasetInfo and ConfigurationInfo navigate away only when these resolve to
+// true. Both swallow their errors, so the resolved value is the only way a
+// caller can tell a delete from a failure.
+describe("delete actions report whether they deleted", () => {
+  let originalIdentity: typeof main.girderUser;
+  beforeEach(() => {
+    originalIdentity = main.girderUser;
+    (rootStore.state as any).main.girderUser = { _id: "u1" };
+    vi.spyOn(main.api, "findDatasetViews").mockResolvedValue([]);
+    vi.spyOn(main.api, "deleteDatasetView").mockResolvedValue(undefined as any);
+    vi.spyOn(sync, "setSaving").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    (rootStore.state as any).main.girderUser = originalIdentity;
+  });
+
+  it("deleteDataset resolves to true after deleting", async () => {
+    vi.spyOn(main.api, "deleteDataset").mockResolvedValue(undefined as any);
+    await expect(main.deleteDataset({ id: "ds1" } as any)).resolves.toBe(true);
+  });
+
+  it("deleteDataset resolves to false when the request fails", async () => {
+    vi.spyOn(main.api, "deleteDataset").mockRejectedValue(new Error("boom"));
+    await expect(main.deleteDataset({ id: "ds1" } as any)).resolves.toBe(false);
+  });
+
+  it("deleteConfiguration resolves to true after deleting", async () => {
+    vi.spyOn(main.api, "deleteConfiguration").mockResolvedValue(
+      undefined as any,
+    );
+    await expect(
+      main.deleteConfiguration({ id: "config1" } as any),
+    ).resolves.toBe(true);
+  });
+
+  it("deleteConfiguration resolves to false when listing its views fails", async () => {
+    vi.spyOn(main.api, "deleteConfiguration").mockResolvedValue(
+      undefined as any,
+    );
+    vi.spyOn(main.api, "findDatasetViews").mockRejectedValue(new Error("boom"));
+    await expect(
+      main.deleteConfiguration({ id: "config1" } as any),
+    ).resolves.toBe(false);
+  });
+});

@@ -3094,11 +3094,15 @@ export class Main extends VuexModule {
     }
   }
 
+  // Resolves to whether the collection was deleted, so a caller can tell a
+  // refusal or a failure from a delete before it navigates away.
   @Action
-  async deleteConfiguration(configuration: IDatasetConfiguration) {
+  async deleteConfiguration(
+    configuration: IDatasetConfiguration,
+  ): Promise<boolean> {
     if (!this.isLoggedIn) {
       createNotLoggedInNotification();
-      return;
+      return false;
     }
     try {
       sync.setSaving(true);
@@ -3114,8 +3118,10 @@ export class Main extends VuexModule {
       await this.context.dispatch("ressourceDeleted", configuration.id);
       this.deleteConfigurationImpl(configuration);
       sync.setSaving(false);
+      return true;
     } catch (error) {
       sync.setSaving(error as Error);
+      return false;
     }
   }
 
@@ -3131,11 +3137,12 @@ export class Main extends VuexModule {
     }
   }
 
+  // Resolves to whether the dataset was deleted (see deleteConfiguration).
   @Action
-  async deleteDataset(dataset: IDataset) {
+  async deleteDataset(dataset: IDataset): Promise<boolean> {
     if (!this.isLoggedIn) {
       createNotLoggedInNotification();
-      return;
+      return false;
     }
     try {
       sync.setSaving(true);
@@ -3150,8 +3157,10 @@ export class Main extends VuexModule {
       await Promise.all(promises);
       this.deleteDatasetImpl(dataset);
       sync.setSaving(false);
+      return true;
     } catch (error) {
       sync.setSaving(error as Error);
+      return false;
     }
   }
 

@@ -242,7 +242,7 @@ describe("ConfigurationInfo", () => {
   });
 
   it("remove calls deleteConfiguration and $router.back()", async () => {
-    mockDeleteConfiguration.mockResolvedValue(undefined);
+    mockDeleteConfiguration.mockResolvedValue(true);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     vm.remove();
@@ -251,6 +251,20 @@ describe("ConfigurationInfo", () => {
       (store as any).configuration,
     );
     expect(mockRouter.back).toHaveBeenCalled();
+  });
+
+  it("remove stays on the page when the collection was not deleted", async () => {
+    // deleteConfiguration resolves to false when it is refused (nobody logged
+    // in) or fails; going back would tell the user the collection is gone.
+    mockDeleteConfiguration.mockResolvedValue(false);
+    mockRouter.back.mockClear();
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.removeConfirm = true;
+    vm.remove();
+    await flushPromises();
+    expect(mockRouter.back).not.toHaveBeenCalled();
+    expect(vm.removeConfirm).toBe(true);
   });
 
   it("removeConfirm dialog toggles state", () => {

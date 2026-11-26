@@ -100,7 +100,7 @@ async function submit(configurations: IDatasetConfiguration[]) {
     return;
   }
 
-  await Promise.all(
+  const datasetViews = await Promise.all(
     configurations.map((configuration) =>
       store.createDatasetView({
         configurationId: configuration.id,
@@ -108,6 +108,12 @@ async function submit(configurations: IDatasetConfiguration[]) {
       }),
     ),
   );
+
+  // createDatasetView resolves to null when it is refused (nobody logged in).
+  // Stay on the page then, instead of leaving as if the import happened.
+  if (datasetViews.some((datasetView) => !datasetView)) {
+    return;
+  }
 
   router.back();
 }

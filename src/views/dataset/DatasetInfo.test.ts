@@ -220,13 +220,27 @@ describe("DatasetInfo", () => {
   });
 
   it("removeDataset calls deleteDataset and navigates to root", async () => {
-    mockDeleteDataset.mockResolvedValue(undefined);
+    mockDeleteDataset.mockResolvedValue(true);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     vm.removeDataset();
     await flushPromises();
     expect(mockDeleteDataset).toHaveBeenCalledWith((store as any).dataset);
     expect(mockRouter.push).toHaveBeenCalledWith({ name: "root" });
+  });
+
+  it("removeDataset stays on the page when the dataset was not deleted", async () => {
+    // deleteDataset resolves to false when it is refused (nobody logged in)
+    // or fails; leaving would tell the user the dataset is gone.
+    mockDeleteDataset.mockResolvedValue(false);
+    mockRouter.push.mockClear();
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.removeDatasetConfirm = true;
+    vm.removeDataset();
+    await flushPromises();
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    expect(vm.removeDatasetConfirm).toBe(true);
   });
 
   it("openRemoveConfigurationDialog sets dialog state", () => {
