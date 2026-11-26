@@ -14,7 +14,7 @@
             handler: toggleTool,
             data: {
               section: 'Tools',
-              description: `Toggle tool:  ${tool.name}`,
+              description: toolHotkeyDescription(tool.name),
             },
           }
         : []
@@ -88,6 +88,7 @@ import ToolEdition from "@/tools/ToolEdition.vue";
 import jobs from "@/store/jobs";
 import batchRuns, { sessionEndedSignal } from "@/store/batchRuns";
 import { getTourAnchorId } from "@/utils/strings";
+import { toolHotkeyDescription } from "@/commands/hotkeys";
 
 const props = defineProps<{
   tool: IToolConfiguration;

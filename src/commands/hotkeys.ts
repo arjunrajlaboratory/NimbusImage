@@ -59,6 +59,65 @@ export function formatHotkey(binding: string, mac = isMacPlatform()): string {
     .join(" then ");
 }
 
+const MODIFIER_ALIASES: Record<string, string> = {
+  command: "meta",
+  cmd: "meta",
+  option: "alt",
+  control: "ctrl",
+};
+const MODIFIERS = new Set(["shift", "ctrl", "alt", "meta"]);
+
+/**
+ * One spelling per key Mousetrap treats as the same: "mod" resolves to the
+ * platform's modifier (⌘ on a Mac, Ctrl elsewhere), aliases are unified and
+ * modifiers sorted, so "mod+shift+z" and a recorded "ctrl+shift+z" compare
+ * equal on Windows. Sequences ("g i") keep their steps.
+ */
+export function canonicalHotkey(
+  binding: string,
+  mac = isMacPlatform(),
+): string {
+  return binding
+    .split(" ")
+    .filter(Boolean)
+    .map((combo) => {
+      const keys = combo.split(/\+(?=.)/).map((key) => {
+        const lower = key.toLowerCase();
+        if (lower === "mod") {
+          return mac ? "meta" : "ctrl";
+        }
+        return MODIFIER_ALIASES[lower] ?? lower;
+      });
+      const modifiers = keys.filter((key) => MODIFIERS.has(key)).sort();
+      const rest = keys.filter((key) => !MODIFIERS.has(key));
+      return [...modifiers, ...rest].join("+");
+    })
+    .join(" ");
+}
+
+/** Whether `inner`'s steps appear consecutively within `outer`'s. */
+function containsRun(outer: string[], inner: string[]): boolean {
+  for (let start = 0; start + inner.length <= outer.length; start++) {
+    if (inner.every((step, offset) => outer[start + offset] === step)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether pressing one canonical hotkey also runs the other. Every binding
+ * has its own Mousetrap instance that tracks its own sequence, so typing a
+ * hotkey runs every other binding whose steps it contains in a row: "g"
+ * inside "g i", "g i" inside "g i x", and equal keys. "g i" and "g h" do not
+ * overlap.
+ */
+export function hotkeysOverlap(a: string, b: string): boolean {
+  const stepsA = a.split(" ");
+  const stepsB = b.split(" ");
+  return containsRun(stepsA, stepsB) || containsRun(stepsB, stepsA);
+}
+
 /**
  * The palette's own toggle (Mousetrap "mod+k"): ⌘K on a Mac, Ctrl+K
  * elsewhere, with no other modifier.
@@ -105,5 +164,14 @@ export function boundHotkey(
   key: string,
   description: string,
 ): string | undefined {
-  return boundKeys.value?.[key]?.description === description ? key : undefined;
+  return boundKeys.value?.[key]?.some(
+    (bound) => bound.description === description,
+  )
+    ? key
+    : undefined;
+}
+
+/** The help-overlay description of a tool's hotkey binding (ToolItem). */
+export function toolHotkeyDescription(toolName: string): string {
+  return `Toggle tool:  ${toolName}`;
 }
