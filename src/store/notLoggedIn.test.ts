@@ -20,15 +20,9 @@ const notLoggedInNotification = {
   timeout: 5,
 };
 
-// Every action that guards on isLoggedIn, with the value it resolves to when
-// the guard trips.
+// Every action that refuses a guest before changing anything, with the value
+// it resolves to. A caller that reports success checks that value.
 const guardedActions: [string, () => Promise<unknown>, unknown][] = [
-  ["syncConfiguration", () => main.syncConfiguration("layers"), undefined],
-  [
-    "syncConfiguration (object payload)",
-    () => main.syncConfiguration({ key: "layers" }),
-    undefined,
-  ],
   [
     "deleteLargeImage",
     () => main.deleteLargeImage({ _id: "li1" } as any),
@@ -42,8 +36,8 @@ const guardedActions: [string, () => Promise<unknown>, unknown][] = [
   ],
   [
     "deleteDatasetView",
-    async () => main.deleteDatasetView({ id: "view1" } as any),
-    undefined,
+    () => main.deleteDatasetView({ id: "view1" } as any),
+    false,
   ],
   [
     "createDataset",
@@ -126,6 +120,26 @@ describe("actions refused while logged out", () => {
     },
   );
 
+  it("warns once when one submission is refused several times", async () => {
+    // Adding five datasets to a collection calls createDatasetView five
+    // times; the user should see one warning, not five. This needs the real
+    // notification list, so the spy is lifted.
+    createNotification.mockRestore();
+    const before = progress.notifications.length;
+    await Promise.all(
+      ["ds1", "ds2", "ds3"].map((datasetId) =>
+        main.createDatasetView({ datasetId, configurationId: "config1" }),
+      ),
+    );
+    const added = progress.notifications.slice(before);
+    expect(added.map((notification) => notification.title)).toEqual([
+      "Authentication Required",
+    ]);
+    added.forEach((notification) =>
+      progress.dismissNotification(notification.id),
+    );
+  });
+
   it("addLayer leaves the layers untouched", async () => {
     const layersBefore = main.layers.length;
     await main.addLayer();
@@ -151,10 +165,11 @@ describe("actions refused while logged out", () => {
   });
 });
 
-// A guest may change how the image is shown; the change lasts for the session
-// and is not saved. These actions apply it locally, so warning that the user
-// "must be logged in to perform this action" would be wrong, and loading a
-// snapshot would warn twice. Same rule as toggleLayerVisibility.
+// A guest may change the configuration they are looking at; the change lasts
+// for the session and is not saved. Every action below applies it locally and
+// then calls syncConfiguration, so warning that the user "must be logged in to
+// perform this action" would be wrong, and loading a snapshot would warn
+// twice. The rule lives in syncConfiguration, not at each call site.
 describe("view changes kept for the session while logged out", () => {
   let createNotification: ReturnType<typeof vi.spyOn>;
   let updateConfigurationKey: ReturnType<typeof vi.spyOn>;
@@ -185,6 +200,20 @@ describe("view changes kept for the session while logged out", () => {
     state.configuration = null;
     state.dataset = null;
     vi.restoreAllMocks();
+  });
+
+  it("syncConfiguration skips the save without warning", async () => {
+    await expect(main.syncConfiguration("layers")).resolves.toBeUndefined();
+    await expect(
+      main.syncConfiguration({ key: "layers" }),
+    ).resolves.toBeUndefined();
+    expectSilentAndUnsaved();
+  });
+
+  it("removeLayer removes the layer without warning or saving", async () => {
+    await main.removeLayer("l1");
+    expect(main.layers.map((l) => l.id)).toEqual(["l2"]);
+    expectSilentAndUnsaved();
   });
 
   function expectSilentAndUnsaved() {

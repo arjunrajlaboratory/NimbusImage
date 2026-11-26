@@ -1242,48 +1242,102 @@ describe("sync indicator: balanced saves", () => {
 });
 
 // DatasetInfo and ConfigurationInfo navigate away only when these resolve to
-// true. Both swallow their errors, so the resolved value is the only way a
-// caller can tell a delete from a failure.
+// true, so the value has to mean "the dataset or collection itself is gone".
+// The cleanup of its views is best effort: failing it flags the sync indicator
+// but must not keep the user on the page of something already deleted, and a
+// failed delete must not be reported as a success because the cleanup worked.
 describe("delete actions report whether they deleted", () => {
   let originalIdentity: typeof main.girderUser;
+  let setSaving: ReturnType<typeof vi.spyOn>;
+  const boom = new Error("boom");
+  const cleanupFailures: [string, () => void][] = [
+    [
+      "listing its views fails",
+      () => vi.spyOn(main.api, "findDatasetViews").mockRejectedValue(boom),
+    ],
+    [
+      "deleting one of its views fails",
+      () => vi.spyOn(main.api, "deleteDatasetView").mockRejectedValue(boom),
+    ],
+  ];
   beforeEach(() => {
     originalIdentity = main.girderUser;
     (rootStore.state as any).main.girderUser = { _id: "u1" };
-    vi.spyOn(main.api, "findDatasetViews").mockResolvedValue([]);
+    vi.spyOn(main.api, "findDatasetViews").mockResolvedValue([
+      { id: "view1" },
+    ] as any);
     vi.spyOn(main.api, "deleteDatasetView").mockResolvedValue(undefined as any);
-    vi.spyOn(sync, "setSaving").mockImplementation(() => {});
+    vi.spyOn(main.api, "deleteDataset").mockResolvedValue(undefined as any);
+    vi.spyOn(main.api, "deleteConfiguration").mockResolvedValue(
+      undefined as any,
+    );
+    setSaving = vi.spyOn(sync, "setSaving").mockImplementation(() => {});
   });
   afterEach(() => {
     vi.restoreAllMocks();
     (rootStore.state as any).main.girderUser = originalIdentity;
   });
 
-  it("deleteDataset resolves to true after deleting", async () => {
-    vi.spyOn(main.api, "deleteDataset").mockResolvedValue(undefined as any);
+  it("deleteDataset resolves to true after deleting, and removes its views", async () => {
     await expect(main.deleteDataset({ id: "ds1" } as any)).resolves.toBe(true);
+    expect(main.api.findDatasetViews).toHaveBeenCalledWith({
+      datasetId: "ds1",
+    });
+    expect(main.api.deleteDatasetView).toHaveBeenCalledWith("view1");
+    expect(setSaving).toHaveBeenLastCalledWith(false);
   });
 
-  it("deleteDataset resolves to false when the request fails", async () => {
-    vi.spyOn(main.api, "deleteDataset").mockRejectedValue(new Error("boom"));
+  it("deleteDataset resolves to false when the delete request fails", async () => {
+    vi.spyOn(main.api, "deleteDataset").mockRejectedValue(boom);
     await expect(main.deleteDataset({ id: "ds1" } as any)).resolves.toBe(false);
+    expect(setSaving).toHaveBeenLastCalledWith(boom);
   });
 
-  it("deleteConfiguration resolves to true after deleting", async () => {
-    vi.spyOn(main.api, "deleteConfiguration").mockResolvedValue(
-      undefined as any,
-    );
+  it.each(cleanupFailures)(
+    "deleteDataset still resolves to true when %s",
+    async (_name, failCleanup) => {
+      failCleanup();
+      await expect(main.deleteDataset({ id: "ds1" } as any)).resolves.toBe(
+        true,
+      );
+      expect(setSaving).toHaveBeenLastCalledWith(boom);
+    },
+  );
+
+  it("deleteConfiguration resolves to true after deleting, and removes its views", async () => {
     await expect(
       main.deleteConfiguration({ id: "config1" } as any),
     ).resolves.toBe(true);
+    expect(main.api.findDatasetViews).toHaveBeenCalledWith({
+      configurationId: "config1",
+    });
+    expect(main.api.deleteDatasetView).toHaveBeenCalledWith("view1");
+    expect(setSaving).toHaveBeenLastCalledWith(false);
   });
 
-  it("deleteConfiguration resolves to false when listing its views fails", async () => {
-    vi.spyOn(main.api, "deleteConfiguration").mockResolvedValue(
-      undefined as any,
-    );
-    vi.spyOn(main.api, "findDatasetViews").mockRejectedValue(new Error("boom"));
+  it("deleteConfiguration resolves to false when the delete request fails", async () => {
+    vi.spyOn(main.api, "deleteConfiguration").mockRejectedValue(boom);
     await expect(
       main.deleteConfiguration({ id: "config1" } as any),
     ).resolves.toBe(false);
+    expect(setSaving).toHaveBeenLastCalledWith(boom);
+  });
+
+  it.each(cleanupFailures)(
+    "deleteConfiguration still resolves to true when %s",
+    async (_name, failCleanup) => {
+      failCleanup();
+      await expect(
+        main.deleteConfiguration({ id: "config1" } as any),
+      ).resolves.toBe(true);
+      expect(setSaving).toHaveBeenLastCalledWith(boom);
+    },
+  );
+
+  it("deleteDatasetView resolves to true after deleting", async () => {
+    await expect(main.deleteDatasetView({ id: "view1" } as any)).resolves.toBe(
+      true,
+    );
+    expect(main.api.deleteDatasetView).toHaveBeenCalledWith("view1");
   });
 });

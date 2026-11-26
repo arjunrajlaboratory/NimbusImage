@@ -262,6 +262,31 @@ describe("DatasetInfo", () => {
     expect(vm.viewToRemove).toBeNull();
   });
 
+  it("removeDatasetView closes the dialog after the view is deleted", async () => {
+    mockDeleteDatasetView.mockResolvedValue(true);
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.openRemoveConfigurationDialog({ id: "view-1" });
+    vm.removeDatasetView();
+    await flushPromises();
+    expect(vm.removeDatasetViewConfirm).toBe(false);
+    expect(vm.viewToRemove).toBeNull();
+  });
+
+  it("removeDatasetView keeps the dialog open when the view was not deleted", async () => {
+    // deleteDatasetView resolves to false when it is refused (nobody logged
+    // in); closing would tell the user the view is gone.
+    mockDeleteDatasetView.mockResolvedValue(false);
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    const view = { id: "view-1" };
+    vm.openRemoveConfigurationDialog(view);
+    vm.removeDatasetView();
+    await flushPromises();
+    expect(vm.removeDatasetViewConfirm).toBe(true);
+    expect(vm.viewToRemove).toEqual(view);
+  });
+
   it("datasetViewItems maps views with cached config info", async () => {
     const views = [
       { id: "view-1", datasetId: "ds-1", configurationId: "config-1" },

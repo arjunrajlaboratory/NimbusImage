@@ -475,14 +475,14 @@ function removeDatasetView() {
   if (!viewToRemove.value) {
     return;
   }
-  const promise = store.deleteDatasetView(viewToRemove.value);
-  if (promise) {
-    promise.then(() => {
-      removeDatasetViewConfirm.value = false;
-      viewToRemove.value = null;
-      updateConfigurationViews();
-    });
-  }
+  store.deleteDatasetView(viewToRemove.value).then((deleted) => {
+    if (!deleted) {
+      return;
+    }
+    removeDatasetViewConfirm.value = false;
+    viewToRemove.value = null;
+    updateConfigurationViews();
+  });
 }
 
 function toSlice(slice: IDisplaySlice) {

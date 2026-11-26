@@ -772,10 +772,23 @@ async function followJobToEnd(
 // module accessor, which carries only state, getters, mutations and actions,
 // so a plain method called as `this.method()` is not a function there.
 function createNotLoggedInNotification() {
+  const title = "Authentication Required";
+  const message = "You must be logged in to perform this action.";
+  // One submission can refuse several actions at once (adding five datasets
+  // to a collection calls createDatasetView five times). Show the warning
+  // once while it is on screen, not once per refusal.
+  if (
+    progress.notifications.some(
+      (notification) =>
+        notification.title === title && notification.message === message,
+    )
+  ) {
+    return;
+  }
   progress.createNotification({
     type: NotificationType.WARNING,
-    title: "Authentication Required",
-    message: "You must be logged in to perform this action.",
+    title,
+    message,
     timeout: 5,
   });
 }
@@ -2826,13 +2839,15 @@ export class Main extends VuexModule {
     return { ...(await request) };
   }
 
+  // Resolves to whether the view was deleted; a failed request still rejects.
   @Action
-  deleteDatasetView(datasetView: IDatasetView) {
+  async deleteDatasetView(datasetView: IDatasetView): Promise<boolean> {
     if (!this.isLoggedIn) {
       createNotLoggedInNotification();
-      return;
+      return false;
     }
-    return this.api.deleteDatasetView(datasetView.id);
+    await this.api.deleteDatasetView(datasetView.id);
+    return true;
   }
 
   @Action
@@ -3094,8 +3109,10 @@ export class Main extends VuexModule {
     }
   }
 
-  // Resolves to whether the collection was deleted, so a caller can tell a
-  // refusal or a failure from a delete before it navigates away.
+  // Resolves to whether the collection itself was deleted, so a caller can
+  // tell a refusal or a failed delete from a delete before it navigates away.
+  // A failure to clean up its views is flagged on the sync indicator but does
+  // not change the answer: the collection is gone either way.
   @Action
   async deleteConfiguration(
     configuration: IDatasetConfiguration,
@@ -3104,24 +3121,36 @@ export class Main extends VuexModule {
       createNotLoggedInNotification();
       return false;
     }
-    try {
-      sync.setSaving(true);
-      const promises: Promise<any>[] = [];
-      promises.push(this.api.deleteConfiguration(configuration));
-      const views = await this.api.findDatasetViews({
-        configurationId: configuration.id,
-      });
-      for (const { id } of views) {
-        promises.push(this.api.deleteDatasetView(id));
-      }
-      await Promise.allSettled(promises);
-      await this.context.dispatch("ressourceDeleted", configuration.id);
-      this.deleteConfigurationImpl(configuration);
-      sync.setSaving(false);
-      return true;
-    } catch (error) {
-      sync.setSaving(error as Error);
+    sync.setSaving(true);
+    const [deletion, cleanup] = await Promise.allSettled([
+      this.api.deleteConfiguration(configuration),
+      this.deleteDatasetViewsMatching({ configurationId: configuration.id }),
+    ]);
+    if (deletion.status === "rejected") {
+      sync.setSaving(deletion.reason as Error);
       return false;
+    }
+    await this.context.dispatch("ressourceDeleted", configuration.id);
+    this.deleteConfigurationImpl(configuration);
+    sync.setSaving(cleanup.status === "rejected" ? cleanup.reason : false);
+    return true;
+  }
+
+  // Best-effort removal of the views that pointed at a deleted dataset or
+  // collection. Rejects when listing them or deleting any of them fails, so
+  // the caller can flag it, but never decides whether the delete happened.
+  @Action({ rawError: true })
+  async deleteDatasetViewsMatching(
+    filter: { datasetId: string } | { configurationId: string },
+  ) {
+    const views = await this.api.findDatasetViews(filter);
+    const failed = (
+      await Promise.allSettled(
+        views.map(({ id }: IDatasetView) => this.api.deleteDatasetView(id)),
+      )
+    ).find((result) => result.status === "rejected");
+    if (failed) {
+      throw (failed as PromiseRejectedResult).reason;
     }
   }
 
@@ -3144,24 +3173,18 @@ export class Main extends VuexModule {
       createNotLoggedInNotification();
       return false;
     }
-    try {
-      sync.setSaving(true);
-      const promises: Promise<any>[] = [];
-      promises.push(this.api.deleteDataset(dataset));
-      const views = await this.api.findDatasetViews({
-        datasetId: dataset.id,
-      });
-      for (const { id } of views) {
-        promises.push(this.api.deleteDatasetView(id));
-      }
-      await Promise.all(promises);
-      this.deleteDatasetImpl(dataset);
-      sync.setSaving(false);
-      return true;
-    } catch (error) {
-      sync.setSaving(error as Error);
+    sync.setSaving(true);
+    const [deletion, cleanup] = await Promise.allSettled([
+      this.api.deleteDataset(dataset),
+      this.deleteDatasetViewsMatching({ datasetId: dataset.id }),
+    ]);
+    if (deletion.status === "rejected") {
+      sync.setSaving(deletion.reason as Error);
       return false;
     }
+    this.deleteDatasetImpl(dataset);
+    sync.setSaving(cleanup.status === "rejected" ? cleanup.reason : false);
+    return true;
   }
 
   @Action
@@ -3403,10 +3426,16 @@ export class Main extends VuexModule {
     const throwOnError =
       typeof payload === "string" ? false : payload.throwOnError ?? false;
     if (!this.isLoggedIn) {
-      createNotLoggedInNotification();
       if (throwOnError) {
+        createNotLoggedInNotification();
         throw new Error("Authentication is required to save configuration");
       }
+      // Every caller of this has already applied its change to the local
+      // configuration. A guest keeps that change for the session and it is
+      // not saved, so there is nothing to warn about: "you must be logged in
+      // to perform this action" would be false for an action that worked.
+      // Actions that need the server refuse before changing anything and
+      // warn themselves (addLayer, deleteDataset).
       return;
     }
     if (!this.configuration) {
@@ -3441,11 +3470,7 @@ export class Main extends VuexModule {
       return;
     }
     this.setConfigurationVisibilityConfig(config);
-    // A guest keeps this change for the session; only a logged-in user saves
-    // it. Unguarded, syncConfiguration would warn about a change that worked.
-    if (this.isLoggedIn) {
-      await this.syncConfiguration("visibilityConfig");
-    }
+    await this.syncConfiguration("visibilityConfig");
   }
 
   @Action
@@ -3454,11 +3479,7 @@ export class Main extends VuexModule {
       return;
     }
     this.setConfigurationOverviewConfig(config);
-    // A guest keeps this change for the session; only a logged-in user saves
-    // it. Unguarded, syncConfiguration would warn about a change that worked.
-    if (this.isLoggedIn) {
-      await this.syncConfiguration("overviewConfig");
-    }
+    await this.syncConfiguration("overviewConfig");
   }
 
   // Debounced entry point called by the properties/filters stores whenever
@@ -3467,9 +3488,8 @@ export class Main extends VuexModule {
   @Action
   scheduleAnnotationBrowserSave() {
     // Anonymous viewers can filter and gate; their state just stays
-    // session-only. Without this, syncConfiguration's own isLoggedIn branch
-    // fires createNotLoggedInNotification, so every lasso drag or filter tweak
-    // popped a login notification for a read-only visitor.
+    // session-only, so there is no save to schedule (syncConfiguration would
+    // skip it anyway).
     if (!this.isLoggedIn) {
       return;
     }
@@ -3629,11 +3649,7 @@ export class Main extends VuexModule {
         // reusable across datasets, so "same configuration" does not imply
         // the captured dataset is still the one open.
         this.setConfigurationColorByProperty({ datasetId, state });
-        // A guest keeps the legend change for the session; only a logged-in
-        // user saves it (see saveVisibilityConfig).
-        if (this.isLoggedIn) {
-          await this.syncConfiguration("colorByProperty");
-        }
+        await this.syncConfiguration("colorByProperty");
         return;
       }
       // The recolor outlived a configuration switch, so there is no live
@@ -4526,11 +4542,7 @@ export class Main extends VuexModule {
     }
     this.configuration.layers = [];
     layers.forEach(this.pushLayer);
-    // A guest keeps this change for the session; only a logged-in user saves
-    // it. Unguarded, syncConfiguration would warn about a change that worked.
-    if (this.isLoggedIn) {
-      await this.syncConfiguration("layers");
-    }
+    await this.syncConfiguration("layers");
   }
 
   @Mutation
@@ -4571,11 +4583,7 @@ export class Main extends VuexModule {
         sync: false,
       });
     }
-    // A guest keeps this change for the session; only a logged-in user saves
-    // it. Unguarded, syncConfiguration would warn about a change that worked.
-    if (this.isLoggedIn) {
-      await this.syncConfiguration("layers");
-    }
+    await this.syncConfiguration("layers");
   }
 
   @Action

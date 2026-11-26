@@ -655,21 +655,21 @@ function removeDatasetView() {
   const isRemovingSelected =
     viewToRemove.value.id === selectedDatasetViewId.value;
 
-  const promise = store.deleteDatasetView(viewToRemove.value);
-  if (promise) {
-    promise.then(() => {
-      removeDatasetViewConfirm.value = false;
-      viewToRemove.value = null;
+  store.deleteDatasetView(viewToRemove.value).then((deleted) => {
+    if (!deleted) {
+      return;
+    }
+    removeDatasetViewConfirm.value = false;
+    viewToRemove.value = null;
 
-      updateDatasetViews().then(() => {
-        if (isRemovingSelected && datasetViews.value.length > 0) {
-          selectedDatasetViewId.value = datasetViews.value[0].id;
-        } else if (datasetViews.value.length === 0) {
-          selectedDatasetViewId.value = null;
-        }
-      });
+    updateDatasetViews().then(() => {
+      if (isRemovingSelected && datasetViews.value.length > 0) {
+        selectedDatasetViewId.value = datasetViews.value[0].id;
+      } else if (datasetViews.value.length === 0) {
+        selectedDatasetViewId.value = null;
+      }
     });
-  }
+  });
 }
 
 async function duplicateView(

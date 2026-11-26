@@ -192,12 +192,14 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
   // and notifications never land on top of the left palette stack (Tools panel).
   bottom: 56px;
   left: 10px;
-  z-index: 2000;
+  // Above Vuetify dialogs and their scrim (2400, plus 10 per stacked overlay):
+  // a refused action can leave its confirm dialog open, and the warning that
+  // explains why must not sit dimmed underneath it.
+  z-index: 10000;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-width: 400px;
-  max-width: 400px;
+  width: min(400px, calc(100vw - 20px));
   // Animate the palette-driven shift via transform (GPU-composited, doesn't
   // trigger layout) rather than `left`.
   transition: transform 0.2s ease;

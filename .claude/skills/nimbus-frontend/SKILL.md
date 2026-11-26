@@ -198,12 +198,16 @@ Inside an `@Action`, `this` is the module accessor built by `getModule`: it carr
 
 ### Logged-Out Users: Refuse and Warn, or Apply and Stay Silent
 
-`syncConfiguration` warns "Authentication Required" when nobody is logged in. An action has two honest choices for a guest, and mixing them tells the user an action failed when it worked:
+An action has two honest choices for a guest. Mixing them tells the user an action failed when it worked.
 
-- **Refuse**: return before changing anything and call `createNotLoggedInNotification()` (`addLayer`, `deleteDataset`). Resolve to a value the caller can check (`false`/`null`); callers must not run their success path (navigate, close a dialog, emit) on it.
-- **Apply for the session**: make the local change and wrap the save in `if (this.isLoggedIn)` (`toggleLayerVisibility`, `saveVisibilityConfig`, `setConfigurationLayers`). View state belongs here.
+- **Refuse**: return before changing anything and call `createNotLoggedInNotification()` (`addLayer`, `deleteDataset`, `createDatasetView`). Actions that need the server belong here.
+- **Apply for the session**: change the local configuration and call `syncConfiguration`, which skips the save for a guest without warning. Edits to the open configuration belong here (layers, tools, snapshots, visibility settings).
 
-Calling `syncConfiguration` unguarded after a local change is the mixed case. Notifications render from `ProgressBarGroup`, mounted once in `App.vue`, so they show on every page.
+Three traps this produced on one PR:
+
+- **A refusal resolves; it does not reject.** A caller that runs its success path on any resolution (`.then(() => router.back())`, close a dialog, emit) reports a success that did not happen. When a caller acts on the outcome, make the action resolve to a boolean or `null` and check it. `if (promise)` on a dispatch is always true.
+- **"Deleted" must mean the thing itself is gone.** `deleteDataset` and `deleteConfiguration` also clean up dataset views. Joining both in one `Promise.all` reports failure after the dataset was deleted; one `Promise.allSettled` reports success after the delete failed. Decide the result from the delete request alone.
+- **Notifications render from `ProgressBarGroup`, mounted once in `App.vue`** above dialogs. Mounted inside a page component, a notification raised anywhere else is created and never shown.
 
 ### Actions That Throw Need `@Action({ rawError: true })`
 
