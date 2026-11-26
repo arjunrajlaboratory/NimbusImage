@@ -13,8 +13,11 @@ Everything here is pure numpy and raises ValueError; the API layer
 (`server/api/scalarMap.py`) maps that to HTTP errors.
 """
 
+import contextlib
 import functools
+import hashlib
 import io
+import json
 import math
 import threading
 import zipfile
@@ -157,15 +160,35 @@ def scalarMapMeta(item):
     return meta
 
 
-def scalarMapRevision(fileDoc):
-    """A string that changes whenever the map's file changes: a re-upload
-    gets a new file id, contents replaced in place change size (and
-    checksum, when Girder has one). Used by the list route, the tile ETag
-    and the array cache key."""
-    revision = "%s-%s" % (fileDoc["_id"], fileDoc.get("size"))
+def scalarMapFileIdentity(fileDoc):
+    """A string that changes whenever the map's file contents change: a
+    re-upload gets a new file id, and Girder's in-place content replacement
+    (Upload.finalizeUpload with a fileId) rewrites `created` and `size`.
+    sha512 is added when the assetstore computed one. Keys the array cache;
+    scalarMapRevision builds on it."""
+    created = fileDoc.get("created")
+    identity = "%s-%s-%s" % (
+        fileDoc["_id"], fileDoc.get("size"),
+        created.strftime("%Y%m%d%H%M%S%f") if created else "",
+    )
     if fileDoc.get("sha512"):
-        revision += "-" + fileDoc["sha512"][:16]
-    return revision
+        identity += "-" + fileDoc["sha512"][:16]
+    return identity
+
+
+def scalarMapRevision(fileDoc, meta):
+    """What the list route returns as `revision` and the tile ETag starts
+    from: the file identity plus a digest of the metadata that places the
+    array on the image (originPx, gridSpacingPx, shape), so a metadata-only
+    correction also changes tile URLs and ETags."""
+    geometry = json.dumps(
+        [meta["originPx"], meta["gridSpacingPx"], meta["shape"]],
+        separators=(",", ":"),
+    )
+    return "%s-%s" % (
+        scalarMapFileIdentity(fileDoc),
+        hashlib.sha1(geometry.encode()).hexdigest()[:12],
+    )
 
 
 def locationKeys(meta):
@@ -325,7 +348,12 @@ def renderScalarMapTile(array, meta, sizeX, sizeY, tileSize, maxLevel,
 
 # ---- loading ---------------------------------------------------------------
 
-_ARCHIVE_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, OSError)
+# zipfile refuses encrypted members with RuntimeError and unknown compression
+# methods with NotImplementedError (a RuntimeError subclass); both are a bad
+# file, like the rest.
+_ARCHIVE_ERRORS = (
+    zipfile.BadZipFile, zlib.error, EOFError, OSError, RuntimeError,
+)
 
 
 def _readNpyHeader(member):
@@ -342,16 +370,36 @@ def _readNpyHeader(member):
     raise ValueError("unsupported .npy version %s" % (version,))
 
 
-def readScalarMapArray(data, locationKey, expectedShape):
-    """Decode one location's array from the .npz bytes as float32.
+def _readExactly(member, size):
+    """`size` bytes of the member into one preallocated buffer, read in
+    bounded chunks (no growing buffer, no final copy)."""
+    buffer = bytearray(size)
+    view = memoryview(buffer)
+    position = 0
+    while position < size:
+        count = member.readinto(
+            view[position:position + FILE_READ_CHUNK_BYTES]
+        )
+        if not count:
+            break
+        position += count
+    return buffer, position
 
-    The bytes are opened strictly as a ZIP (a bare .npy is refused, not
+
+def readScalarMapArray(source, locationKey, expectedShape):
+    """Decode one location's array from an .npz (bytes or a seekable binary
+    file object) as float32.
+
+    The source is opened strictly as a ZIP (a bare .npy is refused, not
     decoded), and the one explicit member `<locationKey>.npy` is both
     checked (2-D float, the metadata's shape, within the cell cap) and
-    decoded, reading only as many bytes as its checked header allows."""
+    decoded, reading only as many bytes as its checked header allows. Only
+    that member is decompressed; the archive is never held in memory."""
+    if isinstance(source, (bytes, bytearray)):
+        source = io.BytesIO(source)
     memberName = locationKey + ".npy"
     try:
-        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        with zipfile.ZipFile(source) as archive:
             if memberName not in archive.namelist():
                 raise ValueError(
                     "The map file has no array for location %s"
@@ -376,10 +424,10 @@ def readScalarMapArray(data, locationKey, expectedShape):
                         % MAX_SCALAR_MAP_CELLS
                     )
                 expectedBytes = shape[0] * shape[1] * dtype.itemsize
-                raw = member.read(expectedBytes)
+                raw, received = _readExactly(member, expectedBytes)
     except _ARCHIVE_ERRORS as exc:
         raise ValueError("The map file is not a readable .npz: %s" % exc)
-    if len(raw) != expectedBytes:
+    if received != expectedBytes:
         raise ValueError("The map array for %s is truncated" % locationKey)
     flat = np.frombuffer(raw, dtype=dtype)
     array = (
@@ -390,24 +438,53 @@ def readScalarMapArray(data, locationKey, expectedShape):
     return array
 
 
-def _readFileBytes(fileDoc):
-    """The whole file, in reads Girder's FileHandle accepts."""
+class _BoundedReads:
+    """A Girder FileHandle with every read split into pieces it accepts:
+    it refuses one read above core.filehandle_max_size (16 MiB by default),
+    and zipfile asks for a member's whole compressed size at once."""
+
+    def __init__(self, handle, maxRead):
+        self._handle = handle
+        self._maxRead = maxRead
+
+    def read(self, size=-1):
+        if size is None or size < 0:
+            size = None
+        parts = []
+        while size is None or size > 0:
+            step = self._maxRead if size is None else min(size, self._maxRead)
+            chunk = self._handle.read(step)
+            if not chunk:
+                break
+            parts.append(chunk)
+            if size is not None:
+                size -= len(chunk)
+        return parts[0] if len(parts) == 1 else b"".join(parts)
+
+    def seek(self, offset, whence=io.SEEK_SET):
+        self._handle.seek(offset, whence)
+        return self._handle.tell()
+
+    def tell(self):
+        return self._handle.tell()
+
+    def seekable(self):
+        return True
+
+
+@contextlib.contextmanager
+def _openMapFile(fileDoc):
+    """The map's file as a seekable binary file object for zipfile."""
     if (fileDoc.get("size") or 0) > MAX_SCALAR_MAP_FILE_BYTES:
         raise ValueError(
             "The map file is larger than %d bytes" % MAX_SCALAR_MAP_FILE_BYTES
         )
-    chunkSize = min(
+    maxRead = min(
         FILE_READ_CHUNK_BYTES,
         Setting().get(SettingKey.FILEHANDLE_MAX_SIZE),
     )
-    buffer = io.BytesIO()
     with File().open(fileDoc) as handle:
-        while True:
-            chunk = handle.read(chunkSize)
-            if not chunk:
-                break
-            buffer.write(chunk)
-    return buffer.getvalue()
+        yield _BoundedReads(handle, maxRead)
 
 
 # ---- the array cache -------------------------------------------------------
@@ -416,16 +493,14 @@ def _readFileBytes(fileDoc):
 _cacheLock = threading.Lock()
 _arrayCache = OrderedDict()
 _arrayCacheBytes = 0
-# key -> [lock, number of threads using it]: one cold load per key, the
-# others wait for it and then read the cache.
+# file identity -> [lock, number of threads using it]: at most one load per
+# FILE at a time. Requests for other locations of the same file (a Z or Time
+# scrub) queue behind it and then re-check the cache, so one map never has
+# two archive reads in flight.
 _loadLocks = {}
 # file id -> invalidation count. A load started before an invalidation of
 # its file must not put its result in the cache afterwards.
 _fileEpochs = {}
-
-
-def _cacheKey(fileDoc, locationKey):
-    return (str(fileDoc["_id"]), scalarMapRevision(fileDoc), locationKey)
 
 
 def _cacheGet(key):
@@ -436,10 +511,10 @@ def _cacheGet(key):
         return array
 
 
-def _cachePut(key, array, epoch):
+def _cachePut(key, array, fileId, epoch):
     global _arrayCacheBytes
     with _cacheLock:
-        if _fileEpochs.get(key[0], 0) != epoch:
+        if _fileEpochs.get(fileId, 0) != epoch:
             return
         previous = _arrayCache.pop(key, None)
         if previous is not None:
@@ -475,29 +550,42 @@ def scalarMapCacheBytes():
         return _arrayCacheBytes
 
 
+def _checkShape(array, meta, locationKey):
+    # The cache is keyed by the file alone; metadata can change under it.
+    if list(array.shape) != list(meta["shape"]):
+        raise ValueError(
+            "The map array for %s has shape %s, not the metadata's %s"
+            % (locationKey, list(array.shape), list(meta["shape"]))
+        )
+    return array
+
+
 def loadScalarMapArray(fileDoc, meta, locationKey):
     """The float32 array of `locationKey` from the map's file, through the
-    process-wide byte-bounded LRU. Concurrent cold requests for the same
-    array share one load."""
-    key = _cacheKey(fileDoc, locationKey)
+    process-wide byte-bounded LRU. At most one load per file runs at a
+    time; concurrent requests for that file wait and re-check the cache."""
+    fileId = str(fileDoc["_id"])
+    identity = scalarMapFileIdentity(fileDoc)
+    key = (fileId, identity, locationKey)
     array = _cacheGet(key)
     if array is not None:
-        return array
+        return _checkShape(array, meta, locationKey)
     with _cacheLock:
-        entry = _loadLocks.setdefault(key, [threading.Lock(), 0])
+        entry = _loadLocks.setdefault(identity, [threading.Lock(), 0])
         entry[1] += 1
-        epoch = _fileEpochs.get(key[0], 0)
+        epoch = _fileEpochs.get(fileId, 0)
     try:
         with entry[0]:
             array = _cacheGet(key)
             if array is None:
-                array = readScalarMapArray(
-                    _readFileBytes(fileDoc), locationKey, meta["shape"]
-                )
-                _cachePut(key, array, epoch)
+                with _openMapFile(fileDoc) as source:
+                    array = readScalarMapArray(
+                        source, locationKey, meta["shape"]
+                    )
+                _cachePut(key, array, fileId, epoch)
     finally:
         with _cacheLock:
             entry[1] -= 1
             if entry[1] == 0:
-                _loadLocks.pop(key, None)
-    return array
+                _loadLocks.pop(identity, None)
+    return _checkShape(array, meta, locationKey)

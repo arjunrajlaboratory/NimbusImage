@@ -100,14 +100,17 @@ class ScalarMap(Resource):
         if items:
             for fileDoc in File().find(
                 {"itemId": {"$in": [item["_id"] for item in items]}},
-                fields=["_id", "itemId", "size", "sha512"],
+                fields=["_id", "itemId", "size", "created", "sha512"],
             ):
                 filesByItem[fileDoc["itemId"]].append(fileDoc)
         return [
             {
                 "itemId": str(item["_id"]),
                 "updated": item.get("updated"),
-                "revision": scalarMapRevision(filesByItem[item["_id"]][0]),
+                "revision": scalarMapRevision(
+                    filesByItem[item["_id"]][0],
+                    item["meta"][SCALAR_MAP_META_KEY],
+                ),
                 "meta": item["meta"][SCALAR_MAP_META_KEY],
             }
             for item in items
@@ -211,7 +214,7 @@ class ScalarMap(Resource):
         # is revoked or the user changes), and an unchanged tile is a
         # body-less 304 without loading or rendering anything.
         etag = 'W/"%s"' % hashlib.sha1(json.dumps([
-            TILE_RENDER_VERSION, scalarMapRevision(files[0]), location,
+            TILE_RENDER_VERSION, scalarMapRevision(files[0], meta), location,
             level, tileX, tileY, sizeX, sizeY, maxLevel, tileSize, colormap,
             vmin, vmax, threshold, thresholdSide,
         ]).encode()).hexdigest()

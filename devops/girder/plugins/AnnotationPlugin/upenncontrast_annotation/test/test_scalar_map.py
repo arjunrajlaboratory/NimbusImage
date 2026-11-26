@@ -1,3 +1,4 @@
+import contextlib
 import io
 import json
 import math
@@ -99,6 +100,24 @@ def _rgba(resp):
 
 def _message(resp):
     return json.loads(b"".join(resp.body))["message"]
+
+
+def _unsupportedCompression():
+    """An .npz whose member claims compression method 99, which zipfile
+    does not implement (NotImplementedError on open)."""
+    data = bytearray(_npz(**{
+        LOCATION: np.zeros((ROWS, COLS), dtype=np.float32)
+    }))
+    central = data.index(b"PK\x01\x02")
+    data[central + 10:central + 12] = (99).to_bytes(2, "little")
+    return bytes(data)
+
+
+def _replaceContentsInPlace(fileDoc, user, data):
+    """Girder's in-place content replacement (PUT file/{id}/contents)."""
+    upload = Upload().createUploadToFile(fileDoc, user, len(data))
+    Upload().handleChunk(upload, io.BytesIO(data))
+    return File().load(fileDoc["_id"], force=True)
 
 
 def _bruteForceSample(array, origin, spacing, px, py):
@@ -288,6 +307,27 @@ class TestScalarMapHelpers:
         with pytest.raises(ValueError, match="truncated"):
             readScalarMapArray(buffer.getvalue(), LOCATION, [ROWS, COLS])
 
+    def testEncryptedMemberIsRefused(self):
+        whole = io.BytesIO()
+        np.lib.format.write_array(whole, np.zeros((ROWS, COLS), np.float32))
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr(LOCATION + ".npy", whole.getvalue())
+        # zipfile can't write encrypted members; set the "encrypted" flag in
+        # the central directory, which is what zipfile checks on open.
+        data = bytearray(buffer.getvalue())
+        central = data.index(b"PK\x01\x02")
+        data[central + 8] |= 0x1
+        with pytest.raises(RuntimeError):
+            zipfile.ZipFile(io.BytesIO(bytes(data))).open(LOCATION + ".npy")
+        with pytest.raises(ValueError, match="not a readable .npz"):
+            readScalarMapArray(bytes(data), LOCATION, [ROWS, COLS])
+
+    def testUnsupportedCompressionIsRefused(self):
+        with pytest.raises(ValueError, match="not a readable .npz"):
+            readScalarMapArray(_unsupportedCompression(), LOCATION,
+                               [ROWS, COLS])
+
     def testFortranOrderMember(self):
         good = np.asfortranarray(
             np.arange(ROWS * COLS, dtype=np.float64).reshape(ROWS, COLS)
@@ -310,17 +350,35 @@ class TestScalarMapCache:
         yield
         scalarMap.clearScalarMapCache()
 
-    def _countingReader(self, monkeypatch, gate=None):
+    def _countingReader(self, monkeypatch, gate=None, arrays=None,
+                        stats=None):
+        """Replace the file open with one that counts opens and the most
+        archive reads in flight at once."""
         calls = []
-        data = _npz(**{LOCATION: np.ones((ROWS, COLS), dtype=np.float32)})
+        data = _npz(**(arrays or {
+            LOCATION: np.ones((ROWS, COLS), dtype=np.float32)
+        }))
+        lock = threading.Lock()
+        stats = stats if stats is not None else {}
+        stats.update(active=0, peak=0)
 
-        def read(fileDoc):
+        @contextlib.contextmanager
+        def openFile(fileDoc):
             calls.append(fileDoc["_id"])
-            if gate is not None:
-                gate.wait(5)
-            return data
+            with lock:
+                stats["active"] += 1
+                stats["peak"] = max(stats["peak"], stats["active"])
+            try:
+                if gate is not None:
+                    gate.wait(5)
+                else:
+                    threading.Event().wait(0.05)
+                yield io.BytesIO(data)
+            finally:
+                with lock:
+                    stats["active"] -= 1
 
-        monkeypatch.setattr(scalarMap, "_readFileBytes", read)
+        monkeypatch.setattr(scalarMap, "_openMapFile", openFile)
         return calls
 
     def testConcurrentColdLoadsShareOneRead(self, monkeypatch):
@@ -363,6 +421,45 @@ class TestScalarMapCache:
         scalarMap.loadScalarMapArray(self.FILE, _meta(), LOCATION)
         assert len(calls) == 2
         assert scalarMap.scalarMapCacheBytes() > 0
+
+    def testDifferentLocationsOfOneFileLoadOneAtATime(self, monkeypatch):
+        keys = ["xy0_z%d_t0" % z for z in range(6)]
+        arrays = {
+            key: np.full((ROWS, COLS), index, dtype=np.float32)
+            for index, key in enumerate(keys)
+        }
+        stats = {}
+        calls = self._countingReader(
+            monkeypatch, arrays=arrays, stats=stats
+        )
+        meta = _meta(locations=[
+            {"XY": 0, "Z": z, "Time": 0, "key": key}
+            for z, key in enumerate(keys)
+        ])
+        barrier = threading.Barrier(len(keys) * 2)
+        results = {}
+
+        def load(key):
+            barrier.wait()
+            results.setdefault(key, []).append(
+                scalarMap.loadScalarMapArray(self.FILE, meta, key)
+            )
+
+        threads = [
+            threading.Thread(target=load, args=(key,))
+            for key in keys * 2
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        # One archive open per location, never two at once for the file.
+        assert stats["peak"] == 1
+        assert len(calls) == len(keys)
+        for index, key in enumerate(keys):
+            assert len(results[key]) == 2
+            for array in results[key]:
+                assert (array == index).all()
 
     def testCacheStaysWithinBudget(self, monkeypatch):
         self._countingReader(monkeypatch)
@@ -421,7 +518,7 @@ class TestScalarMapEndpoints:
         assert isinstance(resp.json[0]["updated"], str)
         goodFile = list(Item().childFiles(good))[0]
         assert resp.json[0]["revision"] == scalarMap.scalarMapRevision(
-            goodFile
+            goodFile, _meta()
         )
         assert set(resp.json[0]) == {"itemId", "updated", "revision", "meta"}
 
@@ -564,6 +661,91 @@ class TestScalarMapEndpoints:
         resp = _tile(server, item, admin)
         assert resp.headers["ETag"] != etagBefore
         assert tuple(_rgba(resp)[20, 12, :3]) == tuple(viridis[255])
+
+    def testMetadataOnlyEditChangesRevisionAndEtag(
+        self, server, admin, fsAssetstore
+    ):
+        folder = _privateDataset(admin)
+        array = np.zeros((ROWS, COLS), dtype=np.float32)
+        item = _uploadMap(admin, folder, {LOCATION: array}, _meta())
+        listParams = {"datasetId": str(folder["_id"])}
+        before = server.request("/scalar_map", user=admin,
+                                params=listParams).json[0]["revision"]
+        etagBefore = _tile(server, item, admin).headers["ETag"]
+        for change in (
+            {"originPx": [4, 0]}, {"gridSpacingPx": 4},
+        ):
+            item = Item().setMetadata(
+                item, {"nimbusScalarMap": _meta(**change)}
+            )
+            after = server.request("/scalar_map", user=admin,
+                                   params=listParams).json[0]["revision"]
+            assert after != before
+            resp = _tile(server, item, admin)
+            _rgba(resp)
+            assert resp.headers["ETag"] != etagBefore
+            before, etagBefore = after, resp.headers["ETag"]
+
+    def testSameSizeReplacementWithoutChecksumIsNotStale(
+        self, server, admin, fsAssetstore
+    ):
+        folder = _privateDataset(admin)
+
+        # Uncompressed .npz files of one shape have identical sizes.
+        def storedNpz(value):
+            buffer = io.BytesIO()
+            np.savez(buffer, **{
+                LOCATION: np.full((ROWS, COLS), value, dtype=np.float32)
+            })
+            return buffer.getvalue()
+
+        item = _uploadMap(admin, folder, {LOCATION: np.zeros(
+            (ROWS, COLS), dtype=np.float32)}, _meta())
+        fileDoc = list(Item().childFiles(item))[0]
+        fileDoc = _replaceContentsInPlace(fileDoc, admin, storedNpz(0.0))
+
+        # Simulate an assetstore that computes no checksum while tiles are
+        # served. The filesystem assetstore needs the checksum back to
+        # delete the old contents when they are replaced.
+        def withoutChecksum(request):
+            checksum = File().load(fileDoc["_id"], force=True)["sha512"]
+            File().update({"_id": fileDoc["_id"]},
+                          {"$unset": {"sha512": ""}})
+            assert "sha512" not in File().load(fileDoc["_id"], force=True)
+            try:
+                return request()
+            finally:
+                File().update({"_id": fileDoc["_id"]},
+                              {"$set": {"sha512": checksum}})
+
+        viridis = colormapLut("viridis")
+        first = withoutChecksum(lambda: _tile(server, item, admin))
+        assert tuple(_rgba(first)[20, 12, :3]) == tuple(viridis[0])
+
+        sizeBefore = File().load(fileDoc["_id"], force=True)["size"]
+        _replaceContentsInPlace(
+            File().load(fileDoc["_id"], force=True), admin, storedNpz(1.0)
+        )
+        assert File().load(fileDoc["_id"], force=True)["size"] == sizeBefore
+
+        second = withoutChecksum(lambda: _tile(server, item, admin))
+        assert second.headers["ETag"] != first.headers["ETag"]
+        assert tuple(_rgba(second)[20, 12, :3]) == tuple(viridis[255])
+
+    def testCraftedArchiveIs400(self, server, admin, fsAssetstore):
+        folder = _privateDataset(admin)
+        data = _unsupportedCompression()
+        upload = Upload().uploadFromFile(
+            io.BytesIO(data), len(data), "crafted.npz", "folder", folder,
+            user=admin,
+        )
+        item = Item().setMetadata(
+            Item().load(upload["itemId"], force=True),
+            {"nimbusScalarMap": _meta()},
+        )
+        resp = _tile(server, item, admin)
+        assertStatus(resp, 400)
+        assert "not a readable .npz" in _message(resp)
 
     def testFileOverGirderSingleReadLimit(self, server, admin, fsAssetstore):
         # Girder's FileHandle refuses one read above 16 MiB by default;
