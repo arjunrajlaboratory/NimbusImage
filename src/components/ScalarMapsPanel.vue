@@ -1,0 +1,412 @@
+<template>
+  <div class="scalar-maps-panel pa-3">
+    <div v-if="scalarMapsStore.error" class="mb-2">
+      <p class="text-body-2 text-error">{{ scalarMapsStore.error }}</p>
+      <v-btn
+        variant="outlined"
+        color="primary"
+        size="small"
+        :loading="scalarMapsStore.loading"
+        :disabled="scalarMapsStore.loading"
+        @click="scalarMapsStore.refreshMaps()"
+        >Retry map lookup</v-btn
+      >
+    </div>
+    <template v-if="maps.length === 0">
+      <p v-if="!scalarMapsStore.error" class="text-body-2 mb-2">
+        {{
+          scalarMapsStore.loading
+            ? "Reading saved maps…"
+            : "No saved maps for this dataset."
+        }}
+      </p>
+      <p
+        v-if="!scalarMapsStore.error && !scalarMapsStore.loading"
+        class="text-caption text-medium-emphasis mb-0"
+      >
+        Run the Hotspot Regions worker with <em>Save map layer</em> on to create
+        one.
+      </p>
+    </template>
+    <v-card
+      v-for="map in maps"
+      :key="map.itemId"
+      variant="outlined"
+      class="mb-3 pa-2 map-card"
+      :data-map-id="map.itemId"
+    >
+      <div class="d-flex align-start">
+        <v-checkbox-btn
+          :model-value="displayOf(map).visible"
+          color="primary"
+          density="compact"
+          :aria-label="`Show ${map.meta.name}`"
+          class="flex-grow-0 mr-1"
+          @update:model-value="update(map, { visible: !!$event })"
+        />
+        <div class="flex-grow-1 map-title">
+          <div class="text-body-2 font-weight-medium">{{ map.meta.name }}</div>
+          <div class="text-caption text-medium-emphasis">
+            {{ scalarMapSummary(map.meta) }}
+          </div>
+        </div>
+        <v-btn
+          v-if="canDelete"
+          variant="text"
+          color="error"
+          size="small"
+          icon="mdi-delete"
+          :aria-label="`Delete ${map.meta.name}`"
+          @click="askDelete(map)"
+        />
+      </div>
+
+      <template v-if="displayOf(map).visible">
+        <p
+          v-if="!hasDataHere(map)"
+          class="text-caption text-warning mt-1 mb-0 no-data-here"
+        >
+          This map has no data at the current position.
+        </p>
+
+        <div class="text-caption mt-2">
+          Opacity {{ Math.round(displayOf(map).opacity * 100) }}%
+        </div>
+        <v-slider
+          :model-value="displayOf(map).opacity"
+          :min="0.05"
+          :max="1"
+          :step="0.05"
+          density="compact"
+          hide-details
+          @update:model-value="update(map, { opacity: $event })"
+        />
+
+        <v-select
+          :model-value="displayOf(map).colormap"
+          :items="SCALAR_MAP_COLORMAPS"
+          item-title="title"
+          item-value="value"
+          label="Colormap"
+          density="compact"
+          variant="outlined"
+          hide-details
+          class="mt-2"
+          @update:model-value="update(map, { colormap: $event })"
+        />
+
+        <div
+          class="color-bar mt-2"
+          :style="{ background: colormapGradientCss(displayOf(map).colormap) }"
+        />
+        <div class="d-flex text-caption color-bar-labels">
+          <span>{{ formatMapValue(displayOf(map).min) }}</span>
+          <v-spacer />
+          <span v-if="map.meta.units" class="text-medium-emphasis">{{
+            map.meta.units
+          }}</span>
+          <v-spacer />
+          <span>{{ formatMapValue(displayOf(map).max) }}</span>
+        </div>
+
+        <div class="d-flex align-center text-caption mt-2">
+          Display range
+          <v-spacer />
+          <v-btn
+            variant="text"
+            size="small"
+            @click="scalarMapsStore.resetRange(map.itemId)"
+            >Reset</v-btn
+          >
+        </div>
+        <v-range-slider
+          :model-value="[displayOf(map).min, displayOf(map).max]"
+          :min="map.meta.valueRange[0]"
+          :max="map.meta.valueRange[1]"
+          :step="sliderStep(map)"
+          density="compact"
+          hide-details
+          @update:model-value="onRange(map, $event)"
+        />
+
+        <v-switch
+          :model-value="displayOf(map).thresholdEnabled"
+          label="Preview a threshold"
+          color="primary"
+          density="compact"
+          hide-details
+          class="mt-1"
+          @update:model-value="update(map, { thresholdEnabled: !!$event })"
+        />
+        <template v-if="displayOf(map).thresholdEnabled">
+          <div class="d-flex align-center flex-wrap ga-2 mb-1">
+            <v-btn-toggle
+              :model-value="displayOf(map).thresholdSide"
+              mandatory
+              density="compact"
+              variant="outlined"
+              divided
+              @update:model-value="update(map, { thresholdSide: $event })"
+            >
+              <v-btn value="above" size="small">Above</v-btn>
+              <v-btn value="below" size="small">Below</v-btn>
+            </v-btn-toggle>
+            <v-btn-toggle
+              v-model="thresholdUnits"
+              mandatory
+              density="compact"
+              variant="outlined"
+              divided
+            >
+              <v-btn value="share" size="small">% of tissue</v-btn>
+              <v-btn value="value" size="small">Value</v-btn>
+            </v-btn-toggle>
+          </div>
+          <v-slider
+            v-if="thresholdUnits === 'share'"
+            :model-value="shareOf(map)"
+            :min="0"
+            :max="100"
+            :step="0.5"
+            density="compact"
+            hide-details
+            @update:model-value="onShare(map, $event)"
+          />
+          <v-slider
+            v-else
+            :model-value="displayOf(map).threshold"
+            :min="map.meta.valueRange[0]"
+            :max="map.meta.valueRange[1]"
+            :step="sliderStep(map)"
+            density="compact"
+            hide-details
+            @update:model-value="update(map, { threshold: $event })"
+          />
+          <div class="text-caption threshold-readout">
+            {{ thresholdText(map) }}
+          </div>
+          <div class="text-caption text-medium-emphasis mt-1">
+            For the Hotspot Regions tool:
+          </div>
+          <div
+            v-for="form in workerForms(map)"
+            :key="form.type"
+            class="text-caption worker-form"
+          >
+            <code>Threshold type: {{ form.type }}</code>
+            <code class="ml-1">Threshold: {{ form.threshold }}</code>
+          </div>
+        </template>
+      </template>
+    </v-card>
+
+    <v-dialog v-model="deleteDialog" max-width="420">
+      <v-card>
+        <v-card-title>Delete saved map?</v-card-title>
+        <v-card-text>
+          <p class="mb-2">
+            “{{ pendingDelete?.meta.name }}” will be deleted for everyone with
+            access to this dataset. Regions already created from it are kept.
+          </p>
+          <p v-if="deleteError" class="text-error mb-0">{{ deleteError }}</p>
+        </v-card-text>
+        <v-card-actions class="button-bar">
+          <v-spacer />
+          <v-btn
+            variant="text"
+            size="small"
+            :disabled="deleting"
+            @click="deleteDialog = false"
+            >Cancel</v-btn
+          >
+          <v-btn
+            variant="flat"
+            color="error"
+            size="small"
+            :loading="deleting"
+            :disabled="deleting"
+            @click="confirmDelete"
+            >Delete</v-btn
+          >
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, watch } from "vue";
+import store from "@/store";
+import scalarMapsStore, { defaultScalarMapDisplay } from "@/store/scalarMaps";
+import { IScalarMap, IScalarMapDisplay } from "@/store/model";
+import {
+  SCALAR_MAP_COLORMAPS,
+  colormapGradientCss,
+  formatMapValue,
+  formatShare,
+  scalarMapLocationKey,
+  scalarMapSummary,
+  thresholdForTissueShare,
+  tissueShareOfThreshold,
+  workerThresholdForms,
+} from "@/utils/scalarMap";
+import { logError } from "@/utils/log";
+import { extractErrorMessage } from "@/utils/errors";
+
+/**
+ * The Maps palette (HOTSPOT_REGIONS_WORKER.md §8.3): the dataset's saved
+ * scalar maps, how ScalarMapOverlay draws each, and a threshold preview that
+ * reads both as a value and as a share of tissue, in the form the Hotspot
+ * Regions worker takes.
+ */
+
+const props = defineProps<{ visible: boolean }>();
+
+const maps = computed(() => scalarMapsStore.currentMaps);
+
+// Sliders for the threshold in percent of tissue or in map units.
+const thresholdUnits = ref<"share" | "value">("share");
+
+const deleteDialog = ref(false);
+const pendingDelete = ref<IScalarMap | null>(null);
+const deleting = ref(false);
+const deleteError = ref<string | null>(null);
+
+// The server enforces WRITE; this only hides the control from sessions that
+// can never have it (logged out, or a read-only share link).
+const canDelete = computed(
+  () => store.isLoggedIn && !store.girderUser?.shareLink,
+);
+
+function displayOf(map: IScalarMap): IScalarMapDisplay {
+  return scalarMapsStore.display[map.itemId] ?? defaultScalarMapDisplay(map);
+}
+
+function update(map: IScalarMap, changes: Partial<IScalarMapDisplay>) {
+  scalarMapsStore.updateDisplay({ itemId: map.itemId, changes });
+}
+
+function hasDataHere(map: IScalarMap): boolean {
+  return scalarMapLocationKey(map.meta, store.xy, store.z, store.time) !== null;
+}
+
+function sliderStep(map: IScalarMap): number {
+  const [min, max] = map.meta.valueRange;
+  return max > min ? (max - min) / 200 : 1;
+}
+
+function onRange(map: IScalarMap, range: number[]) {
+  const [min, max] = range;
+  if (max > min) {
+    update(map, { min, max });
+  }
+}
+
+function shareOf(map: IScalarMap): number {
+  const display = displayOf(map);
+  return tissueShareOfThreshold(
+    map.meta.percentiles,
+    display.threshold,
+    display.thresholdSide,
+  );
+}
+
+function onShare(map: IScalarMap, share: number) {
+  update(map, {
+    threshold: thresholdForTissueShare(
+      map.meta.percentiles,
+      share,
+      displayOf(map).thresholdSide,
+    ),
+  });
+}
+
+function thresholdText(map: IScalarMap): string {
+  const display = displayOf(map);
+  const above = display.thresholdSide === "above";
+  const value = `${above ? "≥" : "≤"} ${formatMapValue(display.threshold)}`;
+  const units = map.meta.units ? ` ${map.meta.units}` : "";
+  return `Value ${value}${units} · ${above ? "top" : "bottom"} ${formatShare(
+    shareOf(map),
+  )}% of tissue`;
+}
+
+function workerForms(map: IScalarMap) {
+  const display = displayOf(map);
+  return workerThresholdForms(
+    map.meta.percentiles,
+    display.threshold,
+    display.thresholdSide,
+  );
+}
+
+function askDelete(map: IScalarMap) {
+  pendingDelete.value = map;
+  deleteError.value = null;
+  deleteDialog.value = true;
+}
+
+async function confirmDelete() {
+  const map = pendingDelete.value;
+  if (!map) {
+    return;
+  }
+  deleting.value = true;
+  deleteError.value = null;
+  try {
+    await scalarMapsStore.deleteMap(map.itemId);
+    deleteDialog.value = false;
+    pendingDelete.value = null;
+  } catch (error) {
+    logError("Failed to delete the saved map:", error);
+    deleteError.value = extractErrorMessage(error);
+  } finally {
+    deleting.value = false;
+  }
+}
+
+// The palette content stays mounted while hidden: list the maps again only
+// when it is shown (a worker run may have saved one since), and for a new
+// dataset while it is open. App.vue looks the list up once per dataset so
+// the app-bar button knows whether to appear.
+watch(
+  () => [props.visible, store.dataset?.id],
+  () => {
+    if (props.visible && store.dataset?.id) {
+      scalarMapsStore.refreshMaps();
+    }
+  },
+  { immediate: true },
+);
+
+defineExpose({
+  thresholdUnits,
+  thresholdText,
+  workerForms,
+  onShare,
+  onRange,
+  askDelete,
+  confirmDelete,
+  canDelete,
+});
+</script>
+
+<style lang="scss" scoped>
+.scalar-maps-panel {
+  width: 100%;
+}
+
+.map-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.color-bar {
+  height: 12px;
+  border-radius: 2px;
+}
+
+.worker-form code {
+  font-size: 0.75rem;
+}
+</style>

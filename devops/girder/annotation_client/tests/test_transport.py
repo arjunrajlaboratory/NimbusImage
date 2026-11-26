@@ -317,6 +317,18 @@ class TestClientOverHttp:
         assert json.loads(request["body"]) == ["a" * 24]
         assert request["headers"]["Content-Type"] == "application/json"
 
+    def test_bulk_update_puts_partial_annotations(self, fakeGirder):
+        fakeGirder.route("PUT", "/api/v1/upenn_annotation/multiple",
+                         (200, b"null"))
+        client = UPennContrastAnnotationClient(fakeGirder.apiUrl, "tok")
+        updates = [{"_id": "a" * 24, "tags": ["cell", "hotspot"]}]
+
+        assert client.updateMultipleAnnotations(updates) is None
+        request = fakeGirder.requests[-1]
+        assert request["method"] == "PUT"
+        assert json.loads(request["body"]) == updates
+        assert request["headers"]["Content-Type"] == "application/json"
+
     def test_http_errors_still_raise_girder_http_error(self, fakeGirder):
         fakeGirder.route("GET", "/api/v1/upenn_annotation/" + "a" * 24,
                          (400, {"message": "bad"}))

@@ -64,6 +64,18 @@
         :disabled="unrolling"
       />
     </template>
+    <template v-if="scalarMapsStore.hasMaps && transcriptImage">
+      <scalar-map-overlay
+        v-for="mapentry in annotationViewerMaps"
+        :key="'scalar-map-overlay-' + mapKey(mapentry.map)"
+        :map="mapentry.map"
+        :annotationLayer="mapentry.annotationLayer"
+        :sizeX="transcriptImage.sizeX"
+        :sizeY="transcriptImage.sizeY"
+        :maxLevel="mapentry.params.layer.maxLevel ?? transcriptImage.levels - 1"
+        :disabled="unrolling"
+      />
+    </template>
     <!-- Mounted ONCE, outside the per-map v-for above. In unroll layer mode
          ImageViewer renders one AnnotationViewer per layer group, so a panel
          living inside that loop appeared N times over and registered N global
@@ -244,6 +256,8 @@ import { createHasher } from "@/utils/signatures";
 import { debounce } from "lodash";
 import transcriptsStore from "@/store/transcripts";
 import TranscriptOverlay from "@/components/TranscriptOverlay.vue";
+import scalarMapsStore from "@/store/scalarMaps";
+import ScalarMapOverlay from "@/components/ScalarMapOverlay.vue";
 import connectionListStore from "@/store/connectionList";
 import { TOUR_ANCHORS } from "@/tours/anchors";
 import progressStore from "@/store/progress";
@@ -747,9 +761,10 @@ const maps = computed({
   set: (value: IMapEntry[]) => store.setMaps(value),
 });
 
-// A stable key per GeoJS map object. The transcript overlay binds its pan
-// listener and layers to its map on mount, so when _setupMap replaces the
-// map at an index (an unroll toggle) the overlay must remount, not be reused.
+// A stable key per GeoJS map object. The transcript and scalar map overlays
+// bind their listeners and layers to their map on mount, so when _setupMap
+// replaces the map at an index (an unroll toggle) an overlay must remount,
+// not be reused.
 const mapKeys = new WeakMap<object, number>();
 let nextMapKey = 0;
 function mapKey(map: IGeoJSMap): number {
@@ -762,8 +777,8 @@ function mapKey(map: IGeoJSMap): number {
   return key;
 }
 
-// The image the transcript density pyramid is sized to: the same one the
-// annotation overview uses.
+// The image the transcript density pyramid and the scalar map layer are
+// sized to: the same one the annotation overview uses.
 const transcriptImage = computed(
   () => layerStackImages.value.find((lsi) => lsi.images[0])?.images[0] ?? null,
 );

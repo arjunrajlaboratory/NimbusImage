@@ -24,6 +24,7 @@ import { v4 as uuidv4 } from "uuid";
 
 import AnnotationsAPI from "./AnnotationsAPI";
 import SpatialAPI from "./SpatialAPI";
+import ScalarMapAPI from "./ScalarMapAPI";
 import ShareLinkAPI from "./ShareLinkAPI";
 import McpOAuthAPI from "./McpOAuthAPI";
 import PropertiesAPI from "./PropertiesAPI";
@@ -802,6 +803,7 @@ export class Main extends VuexModule {
   api = new GirderAPI(this.girderRestProxy);
   annotationsAPI = new AnnotationsAPI(this.girderRestProxy);
   spatialAPI = new SpatialAPI(this.girderRestProxy);
+  scalarMapAPI = new ScalarMapAPI(this.girderRestProxy);
   shareLinkAPI = new ShareLinkAPI(this.girderRestProxy);
   mcpOAuthAPI = new McpOAuthAPI(this.girderRestProxy);
   propertiesAPI = new PropertiesAPI(this.girderRestProxy);

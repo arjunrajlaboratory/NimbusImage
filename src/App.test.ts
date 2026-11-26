@@ -56,6 +56,18 @@ vi.mock("@/store/transcripts", async () => {
   };
 });
 
+vi.mock("@/store/scalarMaps", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      hasMaps: false,
+      error: null,
+      loading: false,
+      ensureMaps: vi.fn(),
+    }),
+  };
+});
+
 vi.mock("axios", () => ({
   default: {
     get: vi
@@ -84,6 +96,7 @@ import store from "@/store";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import transcriptsStore from "@/store/transcripts";
+import scalarMapsStore from "@/store/scalarMaps";
 import axios from "axios";
 import { logError } from "@/utils/log";
 
@@ -162,10 +175,31 @@ describe("App", () => {
     (filterStore as any).activeAnalysisGateCount = 0;
     (transcriptsStore as any).error = null;
     (transcriptsStore as any).loading = false;
+    (scalarMapsStore as any).hasMaps = false;
+    (scalarMapsStore as any).error = null;
+    (scalarMapsStore as any).loading = false;
     (axios.get as any) = vi
       .fn()
       .mockResolvedValue({ data: [{ name: "Tool1", type: "create" }] });
     mockRouter.push = vi.fn();
+  });
+
+  it("offers Map Layers only with saved maps, and keeps it reachable after a failed lookup", async () => {
+    const wrapper = mountWithAppBar();
+    expect(scalarMapsStore.ensureMaps).toHaveBeenCalled();
+    expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(false);
+    (scalarMapsStore as any).error = "Could not read the dataset's saved maps.";
+    await nextTick();
+    await wrapper.get('[aria-label="Map Layers"]').trigger("click");
+    expect((wrapper.vm as any).scalarMapsPanel).toBe(true);
+    (scalarMapsStore as any).error = null;
+    (scalarMapsStore as any).hasMaps = true;
+    await nextTick();
+    expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(true);
+    (scalarMapsStore as any).hasMaps = false;
+    await nextTick();
+    expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(false);
+    wrapper.unmount();
   });
 
   // -- Computed: routeName --

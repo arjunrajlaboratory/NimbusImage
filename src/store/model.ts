@@ -3138,6 +3138,61 @@ export interface IDimensionStrategy {
   composite?: boolean;
 }
 
+// ---- Scalar map layer (HOTSPOT_REGIONS_WORKER.md §5.8, §8) ----
+
+/** One location group a saved map has an array for. */
+export interface IScalarMapLocation {
+  XY: number;
+  Z: number;
+  Time: number;
+  // The tile route's `location` parameter.
+  key: string;
+}
+
+/** The `nimbusScalarMap` item metadata the hotspot worker writes (§5.8). */
+export interface IScalarMapMeta {
+  version: number;
+  toolId: string;
+  name: string;
+  property: string;
+  statistic: string;
+  cutoff: number | null;
+  cellTags: string[];
+  radius: number;
+  radiusUnit: string;
+  gridSpacingPx: number;
+  originPx: [number, number];
+  shape: [number, number];
+  locations: IScalarMapLocation[];
+  valueRange: [number, number];
+  // 0th..100th percentiles of the masked values, pooled over locations.
+  percentiles: number[];
+  units: string;
+}
+
+/** GET scalar_map?datasetId= */
+export interface IScalarMap {
+  itemId: string;
+  updated: string;
+  meta: IScalarMapMeta;
+}
+
+export type TScalarMapColormap = "viridis" | "magma" | "inferno" | "gray";
+
+export type TScalarMapThresholdSide = "above" | "below";
+
+/** How one map is drawn; per user session, not persisted. */
+export interface IScalarMapDisplay {
+  visible: boolean;
+  opacity: number;
+  colormap: TScalarMapColormap;
+  min: number;
+  max: number;
+  thresholdEnabled: boolean;
+  threshold: number;
+  thresholdSide: TScalarMapThresholdSide;
+}
+
 // Self-accept HMR to prevent vuex-module-decorators from re-registering
 // the dynamic module (which causes duplicate getters and state overwrites).
 if (import.meta.hot) {

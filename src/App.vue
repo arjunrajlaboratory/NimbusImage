@@ -313,6 +313,23 @@
               </button>
             </template>
           </v-tooltip>
+          <v-tooltip v-if="scalarMapsAvailable" text="Map Layers">
+            <template v-slot:activator="{ props: activatorProps }">
+              <button
+                v-bind="activatorProps"
+                type="button"
+                class="palette-ibtn"
+                :class="{ active: scalarMapsPanel }"
+                aria-label="Map Layers"
+                data-command-id="panel.toggle.scalarMapsPanel"
+                @click.stop="togglePalette('scalarMapsPanel')"
+              >
+                <v-icon size="18">{{
+                  PANEL_BY_ID.scalarMapsPanel.icon
+                }}</v-icon>
+              </button>
+            </template>
+          </v-tooltip>
           <v-tooltip
             text="Snapshots for bookmarking and downloading cropped regions in your dataset"
           >
@@ -588,6 +605,14 @@
       <transcripts-panel :visible="transcriptsPanel" />
     </floating-palette>
 
+    <floating-palette
+      v-model="scalarMapsPanel"
+      :title="PANEL_BY_ID.scalarMapsPanel.title"
+      :width="RIGHT_PALETTE_WIDTHS.scalarMaps"
+    >
+      <scalar-maps-panel :visible="scalarMapsPanel" />
+    </floating-palette>
+
     <template v-if="leftPalettesMounted">
       <floating-palette
         ref="navigatorPaletteRef"
@@ -674,6 +699,8 @@ import FiltersPanel from "@/components/FiltersPanel.vue";
 import AnalysisPanel from "@/components/AnalysisPanel.vue";
 import TranscriptsPanel from "@/components/TranscriptsPanel.vue";
 import transcriptsStore from "@/store/transcripts";
+import ScalarMapsPanel from "@/components/ScalarMapsPanel.vue";
+import scalarMapsStore from "@/store/scalarMaps";
 import AnalyzeDialog from "@/components/AnalyzeDialog.vue";
 import MaterializeGenesDialog from "@/components/AnnotationBrowser/MaterializeGenesDialog.vue";
 import { genesDialogOpen } from "@/utils/genesDialog";
@@ -740,6 +767,7 @@ void AnnotationBrowser;
 void FiltersPanel;
 void AnalysisPanel;
 void TranscriptsPanel;
+void ScalarMapsPanel;
 void AnalyzeDialog;
 void PipelineDialog;
 void ColorByPropertyDialog;
@@ -767,6 +795,7 @@ const settingsPanel = ref(false);
 const filtersPanel = ref(false);
 const analysisPanel = ref(false);
 const transcriptsPanel = ref(false);
+const scalarMapsPanel = ref(false);
 const analyzePanel = ref(false);
 const aiPanelOpen = ref(false);
 
@@ -821,6 +850,10 @@ const rightEdgeClearance = computed(() =>
     {
       open: transcriptsPanel.value,
       width: RIGHT_PALETTE_WIDTHS.transcripts,
+    },
+    {
+      open: scalarMapsPanel.value,
+      width: RIGHT_PALETTE_WIDTHS.scalarMaps,
     },
     { open: settingsPanel.value, width: RIGHT_PALETTE_WIDTHS.settings },
     { open: snapshotPanel.value, width: RIGHT_PALETTE_WIDTHS.snapshots },
@@ -973,6 +1006,7 @@ const paletteOpen: Record<PanelId, Ref<boolean>> = {
   filtersPanel,
   analysisPanel,
   transcriptsPanel,
+  scalarMapsPanel,
   snapshotPanel,
   settingsPanel,
   navigatorPanel,
@@ -988,6 +1022,26 @@ watch(
   (datasetId) => {
     if (datasetId) {
       transcriptsStore.ensureSchema();
+    }
+  },
+  { immediate: true },
+);
+
+// Same for saved scalar maps (one cheap list request per dataset). The
+// button stays reachable while listing failed or is in flight, so a network
+// blip never hides the feature; with no maps it is not offered.
+const scalarMapsAvailable = computed(
+  () =>
+    scalarMapsStore.hasMaps ||
+    !!scalarMapsStore.error ||
+    scalarMapsStore.loading,
+);
+
+watch(
+  () => store.dataset?.id,
+  (datasetId) => {
+    if (datasetId) {
+      scalarMapsStore.ensureMaps();
     }
   },
   { immediate: true },
@@ -1387,11 +1441,17 @@ useCommandProvider(
     isOpen: (id) => paletteOpen[id].value,
     toggle: togglePalette,
     // Same rule as the Transcripts app-bar button's v-if.
-    isAvailable: (id) =>
-      id !== "transcriptsPanel" ||
-      transcriptsStore.hasTranscripts ||
-      !!transcriptsStore.error ||
-      transcriptsStore.loading,
+    isAvailable: (id) => {
+      if (id === "transcriptsPanel") {
+        return (
+          transcriptsStore.hasTranscripts ||
+          !!transcriptsStore.error ||
+          transcriptsStore.loading
+        );
+      }
+      // Same rule as the Map Layers app-bar button's v-if.
+      return id !== "scalarMapsPanel" || scalarMapsAvailable.value;
+    },
   }),
 );
 

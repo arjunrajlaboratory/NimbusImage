@@ -9,7 +9,7 @@
 //
 // Placement rules:
 //   * Right zone is a mutually-exclusive column. A "primary" (Object Browser /
-//     Analysis / Transcripts / Snapshots / Settings) owns it — opening one closes the others.
+//     Analysis / Transcripts / Map Layers / Snapshots / Settings) owns it — opening one closes the others.
 //     The "companion" (Filters) may share the column, but only alongside one of
 //     its `hosts`; any other primary evicts it.
 //   * Left zone (Navigator / Layers / Tools) is an independent vertical stack:
@@ -21,6 +21,7 @@ export type PanelId =
   | "filtersPanel"
   | "analysisPanel"
   | "transcriptsPanel"
+  | "scalarMapsPanel"
   | "snapshotPanel"
   | "settingsPanel"
   | "navigatorPanel"
@@ -124,6 +125,17 @@ export const PANELS: readonly IPanelDefinition[] = [
     role: "primary",
     defaultOpen: false,
     aliases: ["genes", "spatial"],
+  },
+  // Only offered for a dataset with saved scalar maps (App.vue gates the
+  // button and the command), or when listing them failed.
+  {
+    id: "scalarMapsPanel",
+    title: "Map Layers",
+    icon: "mdi-gradient",
+    zone: "right",
+    role: "primary",
+    defaultOpen: false,
+    aliases: ["heat map", "hotspot", "scalar map", "density map", "maps"],
   },
   {
     id: "snapshotPanel",

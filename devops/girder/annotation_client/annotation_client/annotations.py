@@ -173,6 +173,19 @@ class UPennContrastAnnotationClient:
             PATHS["multiple_annotations"], json=annotations
         )
 
+    def updateMultipleAnnotations(self, annotationUpdates):
+        """
+        Update multiple annotations in one request.
+        Each entry must carry the annotation's id as 'id' or '_id' plus the
+        fields to change (e.g. {"_id": ..., "tags": [...]}); fields not
+        listed are left as they are.
+
+        :param list annotationUpdates: The list of partial annotations
+        """
+        return self.client.put(
+            PATHS["multiple_annotations"], json=annotationUpdates
+        )
+
     def deleteMultipleAnnotations(self, annotationIds):
         """
         Delete multiple annotations by their ids

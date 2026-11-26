@@ -29,6 +29,10 @@ import {
   tilesInView,
   viewToTranscriptMicrons,
 } from "@/utils/transcriptTiles";
+import {
+  createImageTileOverlayLayer,
+  deleteLayerIfHeld,
+} from "@/utils/imageTileOverlayLayer";
 
 /**
  * The transcript overlay (SPATIAL_PLUGIN.md, Phase 3): molecules of the genes
@@ -54,10 +58,6 @@ const props = defineProps<{
 
 const DENSITY_TILE_SIZE = 512;
 const PAN_DEBOUNCE_MS = 200;
-// A GeoJS tile layer wants a URL from the start; this is a 1x1 transparent
-// PNG, replaced by the density template before the layer is shown.
-const BLANK_TILE_URL =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVQIHWNgYAAAAAMAAU9ICq8AAAAASUVORK5CYII=";
 
 let pointLayer: IGeoJSFeatureLayer | null = null;
 let pointFeature: IGeoJSPointFeature | null = null;
@@ -114,45 +114,15 @@ function ensurePointLayer(): IGeoJSPointFeature {
 }
 
 function createDensityLayer(): IGeoJSOsmLayer {
-  const params = geojs.util.pixelCoordinateParams(
-    props.map.node()[0],
-    props.sizeX,
-    props.sizeY,
-    DENSITY_TILE_SIZE,
-    DENSITY_TILE_SIZE,
-  );
-  const maxLevel = props.maxLevel;
-  params.layer.maxLevel = maxLevel;
-  params.layer.tilesAtZoom = (level: number) => {
-    const scale = Math.pow(2, maxLevel - level);
-    return {
-      x: Math.ceil(props.sizeX / DENSITY_TILE_SIZE / scale),
-      y: Math.ceil(props.sizeY / DENSITY_TILE_SIZE / scale),
-    };
-  };
-  params.layer.tilesMaxBounds = (level: number) => {
-    const scale = Math.pow(2, maxLevel - level);
-    return {
-      x: Math.floor(props.sizeX / scale),
-      y: Math.floor(props.sizeY / scale),
-    };
-  };
-  // Tiles arrive through <img> requests: normal sessions use Girder's auth
-  // cookie, while shared views put their isolated bearer on the tile URL.
-  params.layer.crossDomain = "use-credentials";
-  params.layer.autoshareRenderer = false;
-  params.layer.nearestPixel = maxLevel;
-  // Semi-transparent heat map: keep only the current level, or every
-  // coarser level's tiles stay drawn beneath it (GeoJS's keepLower default).
-  params.layer.keepLower = false;
-  params.layer.url = BLANK_TILE_URL;
-  params.layer.visible = false;
-  const layer = props.map.createLayer("osm", params.layer);
-  // Beneath the cell outlines, which stay legible over the heat map.
-  layer.zIndex(props.annotationLayer.zIndex() as number);
-  layer.node().css({ "mix-blend-mode": "unset" });
-  layer.opacity(transcriptsStore.opacity);
-  return layer;
+  return createImageTileOverlayLayer({
+    map: props.map,
+    annotationLayer: props.annotationLayer,
+    sizeX: props.sizeX,
+    sizeY: props.sizeY,
+    maxLevel: props.maxLevel,
+    tileSize: DENSITY_TILE_SIZE,
+    opacity: transcriptsStore.opacity,
+  });
 }
 
 function ensureDensityLayer(symbol: string) {
@@ -164,13 +134,8 @@ function ensureDensityLayer(symbol: string) {
   return entry;
 }
 
-// Delete a layer only while the map still holds it: when ImageViewer
-// replaces the map (an unroll toggle), the old map has already exited its
-// layers, and GeoJS's deleteLayer would exit them a second time.
 function deleteOwnLayer(layer: IGeoJSFeatureLayer | IGeoJSOsmLayer) {
-  if (props.map.layers().includes(layer)) {
-    props.map.deleteLayer(layer);
-  }
+  deleteLayerIfHeld(props.map, layer);
 }
 
 function dropDensityLayers() {
