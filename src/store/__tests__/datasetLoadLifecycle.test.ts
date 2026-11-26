@@ -431,6 +431,7 @@ describe("logout", () => {
       datasetView: makeView("v", "ds"),
       currentLargeImage: { _id: "img", name: "img" },
       allLargeImages: [{ _id: "img", name: "img" }],
+      allLargeImagesDatasetId: "ds",
       selectedTool: { configuration: { id: "tool" }, state: {} },
       recentDatasetViews: [makeView("v", "ds")],
       folderLocation: { _id: "private", _modelType: "folder", name: "x" },
@@ -444,6 +445,7 @@ describe("logout", () => {
     expect(main.datasetView).toBeNull();
     expect(main.currentLargeImage).toBeNull();
     expect(main.allLargeImages).toEqual([]);
+    expect(main.allLargeImagesDatasetId).toBeNull();
     expect(main.selectedTool).toBeNull();
     expect(main.recentDatasetViews).toEqual([]);
     expect(main.folderLocation).toEqual({ type: "users" });
@@ -565,7 +567,11 @@ describe("large images", () => {
     stubAction("getCurrentLargeImage", (id) => image(`${id}-img`));
   });
   afterEach(() => {
-    Object.assign(state(), { currentLargeImage: null, allLargeImages: [] });
+    Object.assign(state(), {
+      currentLargeImage: null,
+      allLargeImages: [],
+      allLargeImagesDatasetId: null,
+    });
   });
 
   it("a previous dataset's images do not land after the next dataset's", async () => {

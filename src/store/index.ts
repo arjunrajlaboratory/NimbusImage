@@ -840,6 +840,10 @@ export class Main extends VuexModule {
 
   currentLargeImage: IGirderLargeImage | null = null;
   allLargeImages: IGirderLargeImage[] = [];
+  // The dataset allLargeImages was listed for. The list is not reset on a
+  // dataset switch, so until the new dataset's own listing lands it still
+  // holds the previous dataset's images.
+  allLargeImagesDatasetId: string | null = null;
 
   datasetView: IDatasetView | null = null;
 
@@ -1749,6 +1753,7 @@ export class Main extends VuexModule {
     this.pendingCameraDeepLink = null;
     this.currentLargeImage = null;
     this.allLargeImages = [];
+    this.allLargeImagesDatasetId = null;
     this.selectedTool = null;
     this.hasUserLoggedOut = true;
   }
@@ -1838,8 +1843,15 @@ export class Main extends VuexModule {
   }
 
   @Mutation
-  setAllLargeImages(images: IGirderLargeImage[]) {
+  setAllLargeImages({
+    images,
+    datasetId,
+  }: {
+    images: IGirderLargeImage[];
+    datasetId: string;
+  }) {
     this.allLargeImages = images;
+    this.allLargeImagesDatasetId = datasetId;
   }
 
   @Action
@@ -1856,52 +1868,57 @@ export class Main extends VuexModule {
     const datasetId = this.dataset.id;
     const isCurrent = () => this.dataset?.id === datasetId;
 
-    const oldAllLargeImages = this.allLargeImages;
+    // Only a list loaded for this dataset can say which images are new
+    const oldAllLargeImages =
+      this.allLargeImagesDatasetId === datasetId ? this.allLargeImages : null;
 
     const newAllLargeImages =
       await this.girderResources.getAllLargeImages(datasetId);
     if (!isCurrent()) {
       return null;
     }
+    // Set even when empty, so deleting the last image clears the list
+    this.setAllLargeImages({ images: newAllLargeImages, datasetId });
+    if (newAllLargeImages.length === 0) {
+      logError("Store", "No large images found");
+      return null;
+    }
 
-    if (newAllLargeImages) {
-      // Find all large_image items that are in newAllLargeImages but not in oldAllLargeImages
-      // and take the first one
+    if (switchToNewLargeImage) {
+      if (!oldAllLargeImages) {
+        // Nothing to compare against: this dataset's images were never
+        // listed (a switch is still loading them), so none is known to be
+        // new. The dataset load in flight selects the current image.
+        return null;
+      }
+      // Switch to the first large image that was not there before, if any
       const newLargeImage = newAllLargeImages.find(
         (img) => !oldAllLargeImages.some((oldImg) => oldImg._id === img._id),
       );
-      this.setAllLargeImages(newAllLargeImages);
-      if (newAllLargeImages.length > 0 && switchToNewLargeImage) {
-        // If we are switching to a new large image, we need to update the current large image
-        if (newLargeImage) {
-          this.updateCurrentLargeImage(newLargeImage);
-          return newLargeImage;
-        } else {
-          return null;
-        }
-      } else {
-        // The held image may be another dataset's (it is not reset on a
-        // switch), so it only stands if it is one of this dataset's images.
-        const heldImageId = this.currentLargeImage?._id;
-        if (
-          newAllLargeImages.length > 0 &&
-          !newAllLargeImages.some((img) => img._id === heldImageId)
-        ) {
-          const currentLargeImage =
-            await this.girderResources.getCurrentLargeImage(datasetId);
-          if (!isCurrent()) {
-            return null;
-          }
-          if (currentLargeImage) {
-            this.setCurrentLargeImage(currentLargeImage);
-            return currentLargeImage;
-          }
-        }
+      if (newLargeImage) {
+        this.updateCurrentLargeImage(newLargeImage);
       }
+      return newLargeImage ?? null;
     }
 
-    logError("Store", "No large images found");
-    return null;
+    // The held image may be another dataset's (it is not reset on a switch),
+    // so it only stands if it is one of this dataset's images. When it does,
+    // there is nothing to change and nothing to log.
+    const heldImageId = this.currentLargeImage?._id;
+    if (newAllLargeImages.some((img) => img._id === heldImageId)) {
+      return null;
+    }
+    const currentLargeImage =
+      await this.girderResources.getCurrentLargeImage(datasetId);
+    if (!isCurrent()) {
+      return null;
+    }
+    if (!currentLargeImage) {
+      logError("Store", "Large images exist but none could be selected");
+      return null;
+    }
+    this.setCurrentLargeImage(currentLargeImage);
+    return currentLargeImage;
   }
 
   @Action

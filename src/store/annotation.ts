@@ -2482,12 +2482,16 @@ export class Annotations extends VuexModule {
           await this.fetchAnnotations();
           // If this was a worker that makes a new large_image, this line will load it
           // I'm pretty sure this function won't reload the large image if it's already loaded
+          // loadLargeImages acts on the dataset open now, which is not the
+          // job's dataset if the user switched while it ran; the caches
+          // must be scheduled for the dataset the new image belongs to.
+          const currentDatasetId = main.dataset?.id;
           const newLargeImage = await main.loadLargeImages(true); // true means switch to the new large image
-          if (newLargeImage) {
+          if (newLargeImage && currentDatasetId) {
             // If the computation resulted in at least one new large image, we need to compute the tile frames, max merge cache, and histogram cache
-            main.scheduleTileFramesComputation(datasetId);
-            main.scheduleMaxMergeCache(datasetId);
-            main.scheduleHistogramCache(datasetId);
+            main.scheduleTileFramesComputation(currentDatasetId);
+            main.scheduleMaxMergeCache(currentDatasetId);
+            main.scheduleHistogramCache(currentDatasetId);
           }
           // TODO: We may also want to fetch connections and properties here, depending on flags set in the worker image
         } catch (refreshError) {
