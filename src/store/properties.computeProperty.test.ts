@@ -429,7 +429,7 @@ describe("property batch compute lifecycle", () => {
     expect(onComplete).toHaveBeenCalledWith({
       succeeded: 1,
       failed: 1,
-      cancelled: 0,
+      canceled: 0,
     });
     expect(status()).toMatchObject({ running: false, previousRun: false });
   });
@@ -453,7 +453,7 @@ describe("property batch compute lifecycle", () => {
     expect(onComplete).toHaveBeenCalledWith({
       succeeded: 0,
       failed: 0,
-      cancelled: 2,
+      canceled: 2,
     });
   });
 

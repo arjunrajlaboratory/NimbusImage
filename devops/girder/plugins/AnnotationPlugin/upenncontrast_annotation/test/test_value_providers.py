@@ -283,7 +283,7 @@ class TestValueProviders:
         })
         assertStatus(resp, 400)
 
-    def testHistogramHonoursVirtualFilter(self, admin, server, provider):
+    def testHistogramHonorsVirtualFilter(self, admin, server, provider):
         folder, anns = self._setup(admin, provider)
         body = {
             "datasetId": str(folder["_id"]),

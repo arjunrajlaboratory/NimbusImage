@@ -294,7 +294,7 @@ describe("share-link bootstrap identity", () => {
     expect(main.authRestored).toBe(true);
   });
 
-  it("does not commit a share bootstrap after its route is cancelled", async () => {
+  it("does not commit a share bootstrap after its route is canceled", async () => {
     const client = main.girderRest;
     const identity = main.girderUser;
     const controller = new AbortController();
@@ -320,7 +320,7 @@ describe("share-link bootstrap identity", () => {
     await Promise.resolve();
     controller.abort();
     finish({ datasetViewId: "shared-view" });
-    expect(await pending).toBe("Share-link request was cancelled.");
+    expect(await pending).toBe("Share-link request was canceled.");
     expect(main.girderRest).toBe(client);
     expect(main.girderUser).toBe(identity);
   });
@@ -491,8 +491,8 @@ describe("addMultiSourceMetadata error propagation", () => {
       ]);
     });
 
-    it("reports a cancelled job as a failure", async () => {
-      finishedJob(jobStates.cancelled);
+    it("reports a canceled job as a failure", async () => {
+      finishedJob(jobStates.canceled);
       expect(await messageOf(configure())).toBe(
         "Failed to transcode the large image: the transcoding job failed. " +
           "See the transcoding log for details.",

@@ -5,7 +5,7 @@ import { shallowMount } from "@vue/test-utils";
 
 // Records every throttle/debounce wrapper the component creates, so the
 // teardown test can find them without a hand-maintained list. Delegates to the
-// real lodash so timing behaviour (and every test that advances fake timers
+// real lodash so timing behavior (and every test that advances fake timers
 // through a throttle) is unchanged.
 const createdThrottles = vi.hoisted(() => [] as any[]);
 
@@ -1637,9 +1637,9 @@ describe("AnnotationViewer", () => {
           .map((call: any[]) => call[0])
           .find((f: any) => f?.options?.().isConnection);
         expect(line.options().style.strokeColor).toBe("#00e5ff");
-        // Asserting colour alone is not enough: options("style", …) REPLACES
+        // Asserting color alone is not enough: options("style", …) REPLACES
         // the style, so dropping `stroke` yields a correctly-positioned,
-        // correctly-coloured, completely invisible line.
+        // correctly-colored, completely invisible line.
         expect(line.options().style.stroke).toBe(true);
       });
 
@@ -4542,7 +4542,7 @@ describe("AnnotationViewer", () => {
         });
       });
 
-      // Cost, with no visible behaviour: the transform runs once per annotation
+      // Cost, with no visible behavior: the transform runs once per annotation
       // per draw, so the layout must be hoisted out of that loop. Asserted as
       // "does not scale with annotation count" rather than an absolute count —
       // the layout is a computed, so how many times mount happens to evaluate it
@@ -5536,7 +5536,7 @@ describe("AnnotationViewer", () => {
       // The other half of the pair: whatever hover paints, un-hover must undo,
       // and it must not clobber the base styling baked in at draw time.
       it("restores a time-jump segment's base styling when hover moves off", async () => {
-        // Times 0 → 3 skip a frame: dashed, 0.7 opacity (and the TRACK colour).
+        // Times 0 → 3 skip a frame: dashed, 0.7 opacity (and the TRACK color).
         setupOneSegmentTimelapseTrack(undefined, [0, 3]);
         const { segment } = await drawTrackAndGetSegment();
         const before = { ...segment.options().style };
@@ -5721,14 +5721,14 @@ describe("AnnotationViewer", () => {
         expect((wrapper.vm as any).timelapseLayer.draw).toHaveBeenCalled();
       });
 
-      // --- Track colouring ---
+      // --- Track coloring ---
       //
-      // Track colour is baked into each line feature at draw time; unlike
-      // hover, there is no restyle-in-place path for it. So a colouring
+      // Track color is baked into each line feature at draw time; unlike
+      // hover, there is no restyle-in-place path for it. So a coloring
       // control that is not in the timelapse watch list changes nothing until
       // some unrelated redraw happens, and every check below fails silently:
       // tsc, lint and the draw-path tests all stay green.
-      describe("track colouring", () => {
+      describe("track coloring", () => {
         function setupOneTrack() {
           mockedTimelapseStore.showMode = true;
           const layer = makeLayer({ id: "l1", channel: 0, visible: true });
@@ -5805,7 +5805,7 @@ describe("AnnotationViewer", () => {
           },
         );
 
-        // Track filters are a timelapse draw input like the colouring
+        // Track filters are a timelapse draw input like the coloring
         // controls: the layer bakes its content in at draw time, so a filter
         // change that is not in the watch list changes nothing until an
         // unrelated redraw.
@@ -5891,7 +5891,7 @@ describe("AnnotationViewer", () => {
           );
         });
 
-        it("paints every segment uniformly when per-track colouring is off", async () => {
+        it("paints every segment uniformly when per-track coloring is off", async () => {
           setupOneTrack();
           mockedTimelapseStore.trackColoring = "uniform";
           wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
@@ -5904,11 +5904,11 @@ describe("AnnotationViewer", () => {
 
         /**
          * A connection skipping a timepoint used to be forced to `#ff6b6b`,
-         * which broke BOTH colouring controls: "uniform" left those segments red
+         * which broke BOTH coloring controls: "uniform" left those segments red
          * among the white ones, and per-track showed a hue swatch against a red
          * line for any track whose drawn segments are all jumps. The jump is
          * still marked by two cues no other segment has — `lineDash` and reduced
-         * opacity — which is why the colour was the redundant one to drop.
+         * opacity — which is why the color was the redundant one to drop.
          */
         it.each([
           ["uniform" as const, (): string => TRACK_UNIFORM_COLOR],
@@ -5916,7 +5916,7 @@ describe("AnnotationViewer", () => {
             "track" as const,
             (): string => trackColor(trackKey(["z1", "a2"]), 0),
           ],
-        ])("keeps a time-jump segment on the %s track colour", (mode, want) => {
+        ])("keeps a time-jump segment on the %s track color", (mode, want) => {
           setupOneTrack();
           mockedTimelapseStore.trackColoring = mode;
           // Times 0 -> 4 skip frames, so this segment is a time jump.
@@ -5933,14 +5933,14 @@ describe("AnnotationViewer", () => {
             // Still unmistakably a jump...
             expect(style.lineDash).toEqual([5, 5]);
             expect(style.strokeOpacity).toBe(0.7);
-            // ...but on the track's colour, not a hardcoded red.
+            // ...but on the track's color, not a hardcoded red.
             expect(style.strokeColor).toBe(want());
           }
         });
 
         // The swatch in the Connections tab is computed from `trackKey`, so
-        // the viewer must colour from the same key or the two drift apart.
-        it("colours a track by trackKey, matching the connection list swatch", () => {
+        // the viewer must color from the same key or the two drift apart.
+        it("colors a track by trackKey, matching the connection list swatch", () => {
           setupOneTrack();
           wrapper = mountComponent({ lowestLayer: 0, layerCount: 1 });
           (wrapper.vm as any).drawTimelapseConnectionsAndCentroids();
@@ -5948,7 +5948,7 @@ describe("AnnotationViewer", () => {
           expect(segmentColors(wrapper.vm)).toEqual([
             trackColor(trackKey(["z1", "a2"]), 0),
           ]);
-          // Explicitly NOT the first-inserted member's colour.
+          // Explicitly NOT the first-inserted member's color.
           expect(segmentColors(wrapper.vm)).not.toEqual([trackColor("z1", 0)]);
         });
 
@@ -6466,7 +6466,7 @@ describe("AnnotationViewer", () => {
         expect(geojs.annotation.pointAnnotation).toHaveBeenCalled();
       });
 
-      it("does not consume a cancelled capture, only clears the preview", () => {
+      it("does not consume a canceled capture, only clears the preview", () => {
         wrapper = mountComponent();
         const preview = mockGeoJSAnnotation("line");
         (wrapper.vm as any).selectionAnnotation = preview;
@@ -8064,7 +8064,7 @@ describe("AnnotationViewer", () => {
       // test twice failed to catch that, each time because it looked at a
       // hand-maintained list:
       //   1. it named the five throttles that existed when it was written, so
-      //      two later ones shipped uncancelled with the suite green;
+      //      two later ones shipped uncanceled with the suite green;
       //   2. scanning `wrapper.vm` instead moved the dependency to
       //      defineExpose — an unexposed throttle is invisible there, and the
       //      already-exposed ones keep any count floor satisfied.

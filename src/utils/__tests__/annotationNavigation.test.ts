@@ -263,7 +263,7 @@ describe("goToConnection", () => {
 // x = 260 rendered at x = 1284 (tile 1 of a 1024-wide grid) and the camera went
 // to x = 260 — a full tile away, onto the equivalent spot of tile 0.
 describe("navigation on the unrolled grid", () => {
-  it("centres on the tile-offset centroid, not the raw one", () => {
+  it("centers on the tile-offset centroid, not the raw one", () => {
     unrollTime(4, 4);
     addAnnotation("obj", 260, 100, 1); // Time 1 => cell 1 => +1024 in x
 
@@ -430,7 +430,7 @@ describe("annotation overview navigation", () => {
 });
 
 describe("goToTrack", () => {
-  it("centres on the members' bounding box and passes its extent", () => {
+  it("centers on the members' bounding box and passes its extent", () => {
     addAnnotation("a", 10, 20, 0);
     addAnnotation("b", 50, 20, 1);
     addAnnotation("c", 30, 60, 2);
@@ -441,7 +441,7 @@ describe("goToTrack", () => {
     const [, center, width, height, fraction] = h.frameCameraInfoToExtent.mock
       .calls[0] as any[];
     // Bounding box, not the mean of the centroids: with these three points the
-    // centroid mean is (30, 33.3) while the box centre is (30, 40).
+    // centroid mean is (30, 33.3) while the box center is (30, 40).
     expect(center).toEqual({ x: 30, y: 40 });
     expect(width).toBe(40);
     expect(height).toBe(40);
@@ -457,7 +457,7 @@ describe("goToTrack", () => {
   });
 
   /**
-   * Time is the timelapse window's centre and the user scrubs it deliberately,
+   * Time is the timelapse window's center and the user scrubs it deliberately,
    * so framing a track must not move it when the current frame already falls
    * inside the track's range — the whole window is drawn, so the track is
    * already on screen.
@@ -518,7 +518,7 @@ describe("goToTrack", () => {
     const [, center, width, height] = h.frameCameraInfoToExtent.mock
       .calls[0] as any[];
     // Box over b and c only. Including "a" at (0,0) would give a 110x120 box
-    // centred at (55, 60) — most of it empty image on a slice a isn't on.
+    // centered at (55, 60) — most of it empty image on a slice a isn't on.
     expect(width).toBe(10);
     expect(height).toBe(20);
     expect(center).toEqual({ x: 105, y: 110 });
@@ -660,7 +660,7 @@ describe("goToTrack", () => {
     });
 
     // Without the offset the same track frames a 40-unit box on the first tile,
-    // which is the pre-fix behaviour.
+    // which is the pre-fix behavior.
     it("does not collapse the box to the raw centroids", () => {
       unrollTime(4, 4);
       addAnnotation("a", 10, 20, 0);

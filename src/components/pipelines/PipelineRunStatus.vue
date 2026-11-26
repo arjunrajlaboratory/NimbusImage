@@ -100,7 +100,7 @@ const doneCount = computed(() => {
   if (!pipeline.value) return 0;
   return controller
     .statusesFor(pipeline.value)
-    .filter((s) => ["success", "error", "cancelled"].includes(s.status)).length;
+    .filter((s) => ["success", "error", "canceled"].includes(s.status)).length;
 });
 
 const headline = computed(() => {
@@ -110,7 +110,7 @@ const headline = computed(() => {
     // Lead with the unit label so the counts read correctly at any value
     // ("Steps: 1 succeeded" rather than "1 steps succeeded").
     const unit = controller.lastRunWasBatch.value ? "Datasets" : "Steps";
-    return `${name} — ${unit}: ${r.succeeded} succeeded, ${r.failed} failed, ${r.cancelled} cancelled`;
+    return `${name} — ${unit}: ${r.succeeded} succeeded, ${r.failed} failed, ${r.canceled} canceled`;
   }
   return name;
 });
@@ -118,7 +118,7 @@ const headline = computed(() => {
 const detail = computed(() => {
   if (batch.value) {
     const b = batch.value;
-    return `Dataset ${b.completed + b.failed + b.cancelled} / ${b.total} · ${b.currentDatasetName}`;
+    return `Dataset ${b.completed + b.failed + b.canceled} / ${b.total} · ${b.currentDatasetName}`;
   }
   if (controller.isRunning.value) {
     const i = runningStepIndex.value;
@@ -136,7 +136,7 @@ const percent = computed(() => {
     const b = batch.value;
     return b.total === 0
       ? 0
-      : ((b.completed + b.failed + b.cancelled) / b.total) * 100;
+      : ((b.completed + b.failed + b.canceled) / b.total) * 100;
   }
   return enabledCount.value === 0
     ? 0
@@ -147,7 +147,7 @@ const resultIcon = computed(() => {
   const r = controller.result.value;
   if (!r) return "mdi-information-outline";
   if (r.failed > 0) return "mdi-close-circle";
-  if (r.cancelled > 0) return "mdi-cancel";
+  if (r.canceled > 0) return "mdi-cancel";
   return "mdi-check-circle";
 });
 
@@ -155,7 +155,7 @@ const resultColor = computed(() => {
   const r = controller.result.value;
   if (!r) return undefined;
   if (r.failed > 0) return "error";
-  if (r.cancelled > 0) return "warning";
+  if (r.canceled > 0) return "warning";
   return "success";
 });
 

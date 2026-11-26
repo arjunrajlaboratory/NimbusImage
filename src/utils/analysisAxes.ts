@@ -56,7 +56,7 @@ export function decodeAxis(encoded: string | null): TAnalysisAxis | null {
   if (prefix === PROPERTY_PREFIX && rest.length > 0) {
     return { type: "property", path: rest };
   }
-  // Validated rather than cast: an unrecognised key would fall through the
+  // Validated rather than cast: an unrecognized key would fall through the
   // category identity builder and silently produce an axis with no values.
   if (prefix === CATEGORICAL_PREFIX && isCategoricalAxisKey(rest[0])) {
     return { type: "categorical", key: rest[0] };

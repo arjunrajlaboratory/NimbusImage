@@ -306,13 +306,13 @@ describe("runPipeline", () => {
     const result = await runPromise;
 
     expect(h.main.api.cancelJob).toHaveBeenCalledWith("j-cancel");
-    // Second step counted as cancelled, not submitted.
+    // Second step counted as canceled, not submitted.
     expect(h.annotations.submitAnnotationWorkerJob).toHaveBeenCalledTimes(1);
-    expect(result.cancelled).toBeGreaterThanOrEqual(1);
+    expect(result.canceled).toBeGreaterThanOrEqual(1);
     // The runner reports the cancellation itself: no caller-side flag needed.
     expect(completes).toEqual([
-      [0, "cancelled"],
-      [1, "cancelled"],
+      [0, "canceled"],
+      [1, "canceled"],
     ]);
   });
 
@@ -325,7 +325,7 @@ describe("runPipeline", () => {
     expect(result).toEqual({
       succeeded: 0,
       failed: 0,
-      cancelled: 0,
+      canceled: 0,
       failedStepIndex: null,
     });
     expect(h.annotations.submitAnnotationWorkerJob).not.toHaveBeenCalled();
@@ -649,7 +649,7 @@ describe("runPipelineBatch", () => {
     });
 
     expect(datasetsRun).toEqual(["d1", "d2"]);
-    expect(summary).toEqual({ succeeded: 2, failed: 0, cancelled: 0 });
+    expect(summary).toEqual({ succeeded: 2, failed: 0, canceled: 0 });
     // One end-of-batch refresh, not one per dataset.
     expect(h.annotations.fetchAnnotations).toHaveBeenCalledTimes(1);
   });
@@ -704,7 +704,7 @@ describe("runPipelineBatch", () => {
       configurationId: "cfg1",
     });
 
-    expect(summary).toEqual({ succeeded: 1, failed: 1, cancelled: 0 });
+    expect(summary).toEqual({ succeeded: 1, failed: 1, canceled: 0 });
   });
 
   it("returns empty when the collection has no datasets", async () => {
@@ -713,7 +713,7 @@ describe("runPipelineBatch", () => {
       pipeline: pipeline([annotationStep("a")]),
       configurationId: "cfg1",
     });
-    expect(summary).toEqual({ succeeded: 0, failed: 0, cancelled: 0 });
+    expect(summary).toEqual({ succeeded: 0, failed: 0, canceled: 0 });
     expect(h.annotations.submitAnnotationWorkerJob).not.toHaveBeenCalled();
   });
 
@@ -731,7 +731,7 @@ describe("runPipelineBatch", () => {
       onRejected,
     });
 
-    expect(summary).toEqual({ succeeded: 0, failed: 51, cancelled: 0 });
+    expect(summary).toEqual({ succeeded: 0, failed: 51, canceled: 0 });
     expect(onRejected).toHaveBeenCalledWith(51);
     expect(h.main.api.batchResources).not.toHaveBeenCalled();
     expect(h.annotations.submitAnnotationWorkerJob).not.toHaveBeenCalled();
@@ -985,7 +985,7 @@ describe("linked steps", () => {
     expect(submittedTool.values.workerInterfaceValues).toEqual({ radius: 2 });
   });
 
-  it("does not submit a step cancelled while its worker interface loads", async () => {
+  it("does not submit a step canceled while its worker interface loads", async () => {
     h.main.tools = [workerTool("t1")];
     h.properties.getWorkerInterface.mockReturnValue(undefined);
     let finishFetch!: () => void;
@@ -1011,10 +1011,10 @@ describe("linked steps", () => {
     const result = await run;
 
     expect(h.annotations.submitAnnotationWorkerJob).not.toHaveBeenCalled();
-    expect(result.cancelled).toBe(1);
+    expect(result.canceled).toBe(1);
   });
 
-  it("cancels a job whose run was cancelled while it was being submitted", async () => {
+  it("cancels a job whose run was canceled while it was being submitted", async () => {
     let finishSubmit!: (value: any) => void;
     h.annotations.submitAnnotationWorkerJob.mockImplementation(
       () =>
@@ -1699,7 +1699,7 @@ describe("configuration switch during a run", () => {
     expect(result).toEqual({
       succeeded: 1,
       failed: 1,
-      cancelled: 0,
+      canceled: 0,
       failedStepIndex: 1,
     });
     expect(h.properties.submitPropertyJob).not.toHaveBeenCalled();
@@ -1909,7 +1909,7 @@ describe("configuration switch during a run", () => {
     });
 
     expect(datasetsRun).toEqual(["d1"]);
-    expect(summary).toEqual({ succeeded: 1, failed: 2, cancelled: 0 });
+    expect(summary).toEqual({ succeeded: 1, failed: 2, canceled: 0 });
     // The batch skips the remaining datasets itself rather than starting
     // runs that fail on their first step.
     const runsStarted = h.progress.create.mock.calls.filter(
@@ -1934,7 +1934,7 @@ describe("configuration switch during a run", () => {
       configurationId: "config-a",
     });
 
-    expect(summary).toEqual({ succeeded: 0, failed: 1, cancelled: 0 });
+    expect(summary).toEqual({ succeeded: 0, failed: 1, canceled: 0 });
     // The other configuration's list says nothing about this source.
     expect(h.properties.fetchProperties).not.toHaveBeenCalled();
     // Not recorded as missing: back on its configuration, a run reloads.

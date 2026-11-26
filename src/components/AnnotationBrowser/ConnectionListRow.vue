@@ -91,7 +91,7 @@ const isLoggedIn = computed(() => store.isLoggedIn);
 }
 
 /* The checkbox is absolutely sized by Vuetify, so the cell needs its own width
-   or the neighbouring endpoint label overlaps it once .tags-cell takes the
+   or the neighboring endpoint label overlaps it once .tags-cell takes the
    slack. */
 .select-cell {
   width: 40px;

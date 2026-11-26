@@ -59,7 +59,7 @@ Verified in the live app at `#/datasetView/6a1978ad247013c97128321f/view`
   and `elementFromPoint` at the panel's center returns the legend itself.
 - **Apply → persist → refetch end to end** (via the store action the dialog
   calls): continuous on `cell Blob metrics / Area` returned 708,983 colored /
-  0 uncoloured, persisted the new-shape legend (ramp 150.01–1959.97, extent
+  0 uncolored, persisted the new-shape legend (ramp 150.01–1959.97, extent
   19.50–12792.47, clipped both ends), and the refetched stubs carried
   per-annotation colors (217 distinct in a 5,000 sample).
 - **Categorical** on `Clustering / graphclust`: 36 categories, **36 distinct

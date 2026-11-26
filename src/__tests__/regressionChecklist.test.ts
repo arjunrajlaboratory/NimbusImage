@@ -9,7 +9,7 @@ import { resolve, join } from "node:path";
  * as you would expect: a review round renamed two tests and left the checklist
  * citing the old names, while a superseded row was left in place ABOVE its
  * replacement rather than removed, so the list carried two contradictory rules for
- * the same behaviour and a future change could not satisfy both.
+ * the same behavior and a future change could not satisfy both.
  *
  * This makes the property mechanical. It does not check that the tests are good,
  * only that the names resolve — which is the part that silently decays.
@@ -273,8 +273,8 @@ describe("regression checklists", () => {
       ).toEqual([]);
     });
 
-    it("has no unchecked-off duplicate invariants for the same behaviour", () => {
-      // Two rows prescribing different rules for one behaviour is unsatisfiable.
+    it("has no unchecked-off duplicate invariants for the same behavior", () => {
+      // Two rows prescribing different rules for one behavior is unsatisfiable.
       // Caught in review once already, for the track-framing Time rule, where the
       // replacement was added ABOVE the row it superseded instead of replacing it.
       const bolds = [...body.matchAll(/^- \[ \] \*\*(.+?)\*\*/gm)].map(

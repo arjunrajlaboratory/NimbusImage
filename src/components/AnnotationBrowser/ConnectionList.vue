@@ -332,9 +332,9 @@
                   : "mdi-chevron-right"
               }}
             </v-icon>
-            <!-- The colour the track is drawn in, so a line picked out in the
+            <!-- The color the track is drawn in, so a line picked out in the
                  viewer can be matched to its row without counting. Hidden under
-                 uniform colouring, where it would claim a distinction the
+                 uniform coloring, where it would claim a distinction the
                  canvas isn't making. -->
             <span
               v-if="showTrackSwatches"
@@ -674,7 +674,7 @@ function shortId(id: string) {
 // the current scope exposes only a tail of the track.
 // Gated on the MODE as well as the option. `trackColor` is only ever called from
 // the timelapse draw path, so with the mode off nothing on the canvas carries a
-// track hue — measured on a real dataset, 248 swatches in 248 distinct colours
+// track hue — measured on a real dataset, 248 swatches in 248 distinct colors
 // against zero drawn connection features, since a timelapse link's endpoints sit
 // on different timepoints and normal mode never co-displays them. Worse, the
 // only control that hides them is in the Timelapse palette, which IS the mode,
@@ -811,17 +811,17 @@ const trackLabels = computed((): Map<string, TTrackLabelResolution> => {
 // expose one intact track as two disconnected fragments, which share a value
 // legitimately and must not read as a split.
 const duplicateTrackLabelValues = computed(() => {
-  const labelledTracks: {
+  const labeledTracks: {
     resolution: TTrackLabelResolution;
     datasetTrackKey: string;
   }[] = [];
   for (const track of tracks.value) {
     const resolution = trackLabels.value.get(track.id);
     if (resolution) {
-      labelledTracks.push({ resolution, datasetTrackKey: track.colorKey });
+      labeledTracks.push({ resolution, datasetTrackKey: track.colorKey });
     }
   }
-  return findDuplicateTrackLabelValues(labelledTracks);
+  return findDuplicateTrackLabelValues(labeledTracks);
 });
 
 /**
@@ -962,7 +962,7 @@ watch(
     // fetch ever issued.
     () => annotationStore.stubOnlyMode,
     // A recompute/import replaces the values server-side; refetch rather than
-    // keep labelling from the superseded run.
+    // keep labeling from the superseded run.
     () => propertyStore.propertyValuesRevision,
   ],
   ensureTrackLabelValues,
@@ -981,7 +981,7 @@ function trackTitle(track: ITrackRow): string {
 }
 
 // With a property label shown, the default id moves into the tooltip so the
-// track can still be told apart from a same-valued neighbour. The full value
+// track can still be told apart from a same-valued neighbor. The full value
 // leads because the title ellipsizes when a string value outgrows its cap.
 function trackTitleTooltip(track: ITrackRow): string | undefined {
   const resolution = trackLabels.value.get(track.id);

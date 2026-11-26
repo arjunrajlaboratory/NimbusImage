@@ -79,7 +79,7 @@ function notifyDrainIfIdle() {
   }, DRAIN_DEBOUNCE_MS);
 }
 
-// Avoid "navigation cancelled" errors by doing calls to router.replace() one
+// Avoid "navigation canceled" errors by doing calls to router.replace() one
 // at a time. Every URL write goes through this one lock (each
 // awaitPreviousCallsDecorator wrap has its own chain), and `edit` reads
 // `route` when the write runs, so a queued write never undoes an earlier one.

@@ -136,7 +136,7 @@ export class Projects extends VuexModule {
       if (
         project &&
         projectStamps.get(projectId) === stamp &&
-        // Views re-initialise when the project object is replaced; an
+        // Views re-initialize when the project object is replaced; an
         // unchanged re-read keeps the cached object.
         JSON.stringify(project) !==
           JSON.stringify(this.getProjectById(projectId))

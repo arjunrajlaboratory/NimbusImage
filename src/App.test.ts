@@ -499,7 +499,7 @@ describe("App", () => {
     const badge = wrapper.find(".palette-ibtn-badge");
     expect(badge.exists()).toBe(true);
     expect(badge.text()).toBe("3");
-    // The badge belongs to the Filters button, not a neighbouring palette one,
+    // The badge belongs to the Filters button, not a neighboring palette one,
     // and the count is mirrored into the label so it is not hidden from
     // assistive tech (aria-label overrides the button's rendered content).
     expect(badge.element.closest("button")?.getAttribute("aria-label")).toBe(

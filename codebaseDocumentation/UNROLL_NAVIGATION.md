@@ -91,7 +91,7 @@ Anything added here later needs the same treatment.
 ### Navigation aims at drawn positions
 
 - [ ] **Recentring uses the cell-offset centroid, not the raw one.** The whole
-      defect. — *"centres on the tile-offset centroid, not the raw one"*
+      defect. — *"centers on the tile-offset centroid, not the raw one"*
 - [ ] **Row wrapping is right, not just column wrapping.** A cell past the last
       column offsets in *both* axes; an x-only fix passes a 1×N grid and fails a
       2×2 one. — *"wraps onto the next grid row past the last column"*

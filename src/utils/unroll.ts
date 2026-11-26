@@ -8,7 +8,7 @@ import {
 import { unrollIndexFromImages } from "@/utils/annotation";
 
 // Helpers for the unrolled image grid: what each cell is, what it should be
-// labelled, which frame it navigates back to (issue #151), and where a point
+// labeled, which frame it navigates back to (issue #151), and where a point
 // drawn on one of its frames actually lands (issue #1280).
 //
 // When a dimension is unrolled, `parseTiles` collapses that dimension's key to
@@ -135,7 +135,7 @@ export function getUnrollCells({
         // A dimension with a single value carries no information, so it is left
         // out of the label ("XY 3", not "XY 3 · Time 1" on one timepoint). It
         // stays in the location so navigating still pins it.
-        labelled: values.length > 1,
+        labeled: values.length > 1,
         dimensionLabels:
           showDimensionLabels?.[axis.key] ?? true
             ? dimensionLabels?.[axis.labels]
@@ -150,7 +150,7 @@ export function getUnrollCells({
     for (const axis of unrolledAxes) {
       const rank = axis.ranks.get(axis.value(cellImage)) ?? 0;
       location[axis.key] = rank;
-      if (axis.labelled) {
+      if (axis.labeled) {
         // The dimension label array is indexed the same way the store is, so
         // by rank rather than by the cell's position in the grid.
         const dimensionLabel = axis.dimensionLabels?.[rank];
@@ -170,7 +170,7 @@ export function getUnrollCells({
 // Everything below answers one question: given a point in a frame's own
 // coordinates, where does it end up on the unrolled grid? The rendering path
 // (`AnnotationViewer`) and the navigation path (`annotationNavigation`) BOTH
-// need that answer, and they used to disagree — navigation centred the camera on
+// need that answer, and they used to disagree — navigation centered the camera on
 // the raw centroid while the viewer drew the annotation a tile-width away, so
 // clicking an Object Browser row for anything outside the first tile panned to
 // the wrong place. One implementation, used by both, is what keeps them honest.

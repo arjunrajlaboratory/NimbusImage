@@ -2588,7 +2588,7 @@ export class Annotations extends VuexModule {
       total: number;
       completed: number;
       failed: number;
-      cancelled: number;
+      canceled: number;
       currentDatasetName: string;
     }) => void;
     onJobProgress: (datasetId: string, progressInfo: IProgressInfo) => void;
@@ -2600,19 +2600,19 @@ export class Annotations extends VuexModule {
     onComplete: (results: {
       succeeded: number;
       failed: number;
-      cancelled: number;
+      canceled: number;
     }) => void;
   }): Promise<{
     cancel: () => void;
     jobs: IAnnotationComputeJob[];
   }> {
     const submittedJobs: IAnnotationComputeJob[] = [];
-    let isCancelled = false;
+    let isCanceled = false;
     const sessionEnded = sessionEndedSignal();
 
     // Create the cancel function and notify the caller immediately
     const cancel = () => {
-      isCancelled = true;
+      isCanceled = true;
       // Cancel all running jobs
       for (const job of submittedJobs) {
         main.api.cancelJob(job.jobId);
@@ -2630,7 +2630,7 @@ export class Annotations extends VuexModule {
     const total = datasetIds.length;
 
     if (total === 0) {
-      onComplete({ succeeded: 0, failed: 0, cancelled: 0 });
+      onComplete({ succeeded: 0, failed: 0, canceled: 0 });
       return { cancel, jobs: [] };
     }
 
@@ -2655,17 +2655,17 @@ export class Annotations extends VuexModule {
 
     let completed = 0;
     let failed = 0;
-    let cancelled = 0;
+    let canceled = 0;
 
     // Process each dataset
     for (const datasetId of datasetIds) {
-      if (isCancelled || sessionEnded()) {
-        cancelled++;
+      if (isCanceled || sessionEnded()) {
+        canceled++;
         onBatchProgress({
           total,
           completed,
           failed,
-          cancelled,
+          canceled,
           currentDatasetName: datasetNames[datasetId],
         });
         continue;
@@ -2676,7 +2676,7 @@ export class Annotations extends VuexModule {
         total,
         completed,
         failed,
-        cancelled,
+        canceled,
         currentDatasetName: datasetName,
       });
 
@@ -2711,8 +2711,8 @@ export class Annotations extends VuexModule {
           // (avoids race condition where job finishes before we look it up)
           const success = await result.completionPromise;
 
-          if (isCancelled || sessionEnded()) {
-            cancelled++;
+          if (isCanceled || sessionEnded()) {
+            canceled++;
           } else if (success) {
             completed++;
           } else {
@@ -2733,14 +2733,14 @@ export class Annotations extends VuexModule {
       // Update batch progress
       progress.update({
         id: batchProgressId,
-        progress: completed + failed + cancelled,
+        progress: completed + failed + canceled,
         total,
       });
       onBatchProgress({
         total,
         completed,
         failed,
-        cancelled,
+        canceled,
         currentDatasetName: datasetName,
       });
     }
@@ -2767,7 +2767,7 @@ export class Annotations extends VuexModule {
       }
     }
 
-    onComplete({ succeeded: completed, failed, cancelled });
+    onComplete({ succeeded: completed, failed, canceled });
 
     return { cancel, jobs: submittedJobs };
   }

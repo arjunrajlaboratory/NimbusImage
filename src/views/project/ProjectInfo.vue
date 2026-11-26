@@ -1145,7 +1145,7 @@ watch(project, () => {
 // across navigation, so an operation that finished while the user was
 // elsewhere (its card unmounted, dropping its refresh) would otherwise stay
 // invisible. An unchanged re-read keeps the cached object, so this costs no
-// re-initialisation.
+// re-initialization.
 watch(
   () => project.value?.id,
   (projectId) => {

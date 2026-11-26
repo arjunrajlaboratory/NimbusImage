@@ -6,7 +6,7 @@ only depend on the standard library, so they are imported directly from
 the ``server`` directory (added to ``sys.path`` below).
 
 The expected values were verified against Node.js (V8) so they match the
-real frontend behaviour exactly.
+real frontend behavior exactly.
 """
 
 import os
@@ -374,7 +374,7 @@ class TestRaggedLeadingRowIsRefused:
         assert "no part 3" in str(excinfo.value)
 
     def testDoesNotInventANullTokenValue(self):
-        """The old behaviour, stated as an assertion so it cannot return."""
+        """The old behavior, stated as an assertion so it cannot return."""
         try:
             variables = collect_filename_metadata(self.RAGGED)
         except ValueError:

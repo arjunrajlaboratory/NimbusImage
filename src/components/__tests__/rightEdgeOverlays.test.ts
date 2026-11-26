@@ -15,7 +15,7 @@ import { resolve } from "node:path";
  *
  * The failure mode is "someone adds a right-anchored palette and doesn't think
  * about the clearance list" — a coupling between two places in one file that no
- * behavioural test can see, because the new palette doesn't exist yet when the
+ * behavioral test can see, because the new palette doesn't exist yet when the
  * test is written. Scanning the source is the only thing that catches it.
  *
  * `FloatingPalette` anchors right (`right: 16`) whenever `left` is unset, so

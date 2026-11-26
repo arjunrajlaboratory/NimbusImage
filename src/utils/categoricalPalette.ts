@@ -1,5 +1,5 @@
 // Distinct colors for categories (cell types, clusters) in plots. The first
-// eighteen are Tableau 20 reordered so neighbours contrast, without its two
+// eighteen are Tableau 20 reordered so neighbors contrast, without its two
 // grays (#7f7f7f, #c7c7c7): the scatter plot draws "no value" in gray
 // (#777777), which a gray category would be indistinguishable from. Past
 // that, hues step by the golden angle so any count stays distinguishable.

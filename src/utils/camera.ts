@@ -57,7 +57,7 @@ export function cameraRefreshNeeded(
  * annotations are in view and should be hydrated/rendered.
  *
  * Recenters that go through the GeoJS map recompute gcsBounds from the real map
- * via `synchroniseCameraFromMap`. This helper is for programmatic recenters that
+ * via `synchronizeCameraFromMap`. This helper is for programmatic recenters that
  * bypass the map (e.g. clicking "Go to annotation location" in the annotation
  * list): without translating gcsBounds, the new location would be hydrated
  * against the stale pre-recenter viewport, leaving the destination empty until

@@ -4,6 +4,6 @@ export const jobStates = {
   running: 2,
   success: 3,
   error: 4,
-  cancelled: 5,
-  cancelling: 824,
+  canceled: 5,
+  canceling: 824,
 };

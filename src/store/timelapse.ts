@@ -28,7 +28,7 @@ export class Timelapse extends VuexModule {
   tags: string[] = [];
   showLabels: boolean = true;
   trackColoring: TTimelapseTrackColoring = "track";
-  // Rotates every track hue. Bumped by "Shuffle colors" when two neighbouring
+  // Rotates every track hue. Bumped by "Shuffle colors" when two neighboring
   // tracks happen to land on similar hues.
   colorSeed: number = 0;
 
@@ -63,7 +63,7 @@ export class Timelapse extends VuexModule {
   }
 
   /**
-   * Re-roll the track hue assignment. Steps rather than randomises so a second
+   * Re-roll the track hue assignment. Steps rather than randomizes so a second
    * shuffle can't land back on the palette the user just rejected.
    */
   @Mutation

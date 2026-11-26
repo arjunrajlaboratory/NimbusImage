@@ -42,7 +42,7 @@ AnnotationWorkerMenu.compute()
 The cancel function is provided to the caller via an `onCancel` callback that fires immediately when the batch action starts (before the dataset loop). This ensures the "Cancel All" button is wired up right away, avoiding a timing issue where `await`ing the full batch would delay setting the cancel function until after the batch finishes. The same pattern is used in `computePropertyBatch`.
 
 When the user clicks "Cancel All" during batch processing:
-1. The `isCancelled` flag is set to `true`.
+1. The `isCanceled` flag is set to `true`.
 2. All already-submitted jobs are canceled via `api.cancelJob()`.
 3. Remaining datasets in the loop are skipped (counted as canceled).
 
@@ -84,7 +84,7 @@ const success = await completionPromise;  // always safe
 
 ## Progress display
 
-- **Overall batch progress**: A `v-progress-linear` bar showing `completed + failed + cancelled / total` datasets.
+- **Overall batch progress**: A `v-progress-linear` bar showing `completed + failed + canceled / total` datasets.
 - **Per-dataset progress**: The existing single-job progress bar updates for each active job. Each per-dataset progress bar is cleared when its job finishes.
 - **Status text**: Shows completed/failed/canceled counts and the name of the currently processing dataset.
 - The batch progress bar stays visible for 3 seconds after completion so users can see the final result.

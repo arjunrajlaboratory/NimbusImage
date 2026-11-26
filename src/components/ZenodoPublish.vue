@@ -456,7 +456,7 @@ function trackJob(jobId: string) {
       const status = jobData.status;
       if (
         status !== undefined &&
-        [jobStates.success, jobStates.error, jobStates.cancelled].includes(
+        [jobStates.success, jobStates.error, jobStates.canceled].includes(
           status,
         )
       ) {

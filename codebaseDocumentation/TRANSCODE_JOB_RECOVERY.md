@@ -88,7 +88,7 @@ Each invariant names the test that holds it (`src/store/index.test.ts`).
   *"surfaces the quota message from the finished job's log"*.
 - Canceled is a failure; a job with no log still finishes; a log given as
   one string (the declared `IJob.log` type) is used too —
-  *"reports a cancelled job as a failure"*,
+  *"reports a canceled job as a failure"*,
   *"finishes a job that has no log"*,
   *"uses a log given as a single string"*.
 - Only what the stream did not carry is supplied —

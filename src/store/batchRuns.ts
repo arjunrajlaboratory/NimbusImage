@@ -32,14 +32,14 @@ export interface IBatchProgress {
   total: number;
   completed: number;
   failed: number;
-  cancelled: number;
+  canceled: number;
   currentDatasetName: string;
 }
 
 export interface IBatchResults {
   succeeded: number;
   failed: number;
-  cancelled: number;
+  canceled: number;
 }
 
 export interface IBatchRun {
@@ -126,7 +126,7 @@ export class BatchRuns extends VuexModule {
           total,
           completed: 0,
           failed: 0,
-          cancelled: 0,
+          canceled: 0,
           currentDatasetName: "Starting...",
         },
         cancel: null,

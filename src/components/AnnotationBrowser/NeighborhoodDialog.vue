@@ -279,7 +279,7 @@ function poll(jobId: string, request: number) {
         }
         if (
           job.status === jobStates.error ||
-          job.status === jobStates.cancelled
+          job.status === jobStates.canceled
         ) {
           if (!polling.isCurrent(request)) return;
           error.value = "The neighborhood job failed; see the job log.";

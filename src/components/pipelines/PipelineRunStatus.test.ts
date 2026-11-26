@@ -97,7 +97,7 @@ describe("PipelineRunStatus", () => {
     controller.result.value = {
       succeeded: 1,
       failed: 0,
-      cancelled: 0,
+      canceled: 0,
       failedStepIndex: null,
     };
     const wrapper = mountStatus();

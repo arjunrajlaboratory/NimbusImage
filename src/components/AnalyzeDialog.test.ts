@@ -88,14 +88,14 @@ describe("AnalyzeDialog batch compute", () => {
       ({ onBatchProgress, onComplete }: any) => {
         call++;
         if (call === 1) {
-          onComplete({ succeeded: 1, failed: 0, cancelled: 0 });
+          onComplete({ succeeded: 1, failed: 0, canceled: 0 });
           return Promise.resolve(true);
         }
         onBatchProgress({
           total: 3,
           completed: 1,
           failed: 0,
-          cancelled: 0,
+          canceled: 0,
           currentDatasetName: "second",
         });
         // The second batch is still running when the first's timer fires
@@ -133,7 +133,7 @@ describe("AnalyzeDialog batch compute", () => {
       total: 3,
       completed: 2,
       failed: 0,
-      cancelled: 0,
+      canceled: 0,
       currentDatasetName: "dataset-3",
     });
     expect(vm.batchProgress?.currentDatasetName).toBe("dataset-3");
@@ -182,11 +182,11 @@ describe("AnalyzeDialog batch compute", () => {
       await vi.waitFor(() =>
         expect(mocks.computePropertyBatch).toHaveBeenCalledTimes(1),
       );
-      finishBatch({ succeeded: 3, failed: 0, cancelled: 0 });
+      finishBatch({ succeeded: 3, failed: 0, canceled: 0 });
       await vi.waitFor(() =>
         expect(mocks.computePropertyBatch).toHaveBeenCalledTimes(2),
       );
-      finishBatch({ succeeded: 3, failed: 0, cancelled: 0 });
+      finishBatch({ succeeded: 3, failed: 0, canceled: 0 });
       await batch;
 
       expect(
@@ -207,7 +207,7 @@ describe("AnalyzeDialog batch compute", () => {
         expect(mocks.computePropertyBatch).toHaveBeenCalledTimes(1),
       );
       (store as any).selectedConfigurationId = "config-2";
-      finishBatch({ succeeded: 3, failed: 0, cancelled: 0 });
+      finishBatch({ succeeded: 3, failed: 0, canceled: 0 });
       // A second batch would never settle, so wait a macrotask, not on it
       await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -223,7 +223,7 @@ describe("AnalyzeDialog batch compute", () => {
       );
       vm.cancelBatch();
       expect(cancelJobs).toHaveBeenCalledTimes(1);
-      finishBatch({ succeeded: 1, failed: 0, cancelled: 2 });
+      finishBatch({ succeeded: 1, failed: 0, canceled: 2 });
       // A second batch would never settle, so wait a macrotask, not on it
       await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -231,7 +231,7 @@ describe("AnalyzeDialog batch compute", () => {
     });
 
     // A cancel during the batch's closing refresh finds no job left to
-    // cancel, so the results count none cancelled.
+    // cancel, so the results count none canceled.
     it("stops after a Cancel All that had nothing left to cancel", async () => {
       const vm = mountDialog().vm as any;
 
@@ -240,7 +240,7 @@ describe("AnalyzeDialog batch compute", () => {
         expect(mocks.computePropertyBatch).toHaveBeenCalledTimes(1),
       );
       vm.cancelBatch();
-      finishBatch({ succeeded: 3, failed: 0, cancelled: 0 });
+      finishBatch({ succeeded: 3, failed: 0, canceled: 0 });
       // A second batch would never settle, so wait a macrotask, not on it
       await new Promise((resolve) => setTimeout(resolve, 0));
 
