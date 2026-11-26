@@ -1249,6 +1249,7 @@ describe("sync indicator: balanced saves", () => {
 describe("delete actions report whether they deleted", () => {
   let originalIdentity: typeof main.girderUser;
   let setSaving: ReturnType<typeof vi.spyOn>;
+  let createNotification: ReturnType<typeof vi.spyOn>;
   const boom = new Error("boom");
   const cleanupFailures: [string, () => void][] = [
     [
@@ -1272,11 +1273,30 @@ describe("delete actions report whether they deleted", () => {
       undefined as any,
     );
     setSaving = vi.spyOn(sync, "setSaving").mockImplementation(() => {});
+    createNotification = vi
+      .spyOn(progress, "createNotification")
+      .mockReturnValue("id" as any);
   });
   afterEach(() => {
     vi.restoreAllMocks();
     (rootStore.state as any).main.girderUser = originalIdentity;
   });
+
+  // A failed delete keeps the user on the page, behind an open confirm
+  // dialog: its views must be untouched (the page still lists them) and the
+  // reason must be shown where the user can see it.
+  function expectFailedDeleteReported(what: string) {
+    expect(main.api.deleteDatasetView).not.toHaveBeenCalled();
+    expect(setSaving).toHaveBeenLastCalledWith(boom);
+    expect(createNotification).toHaveBeenCalledTimes(1);
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        title: `Could not delete the ${what}`,
+        message: "boom",
+      }),
+    );
+  }
 
   it("deleteDataset resolves to true after deleting, and removes its views", async () => {
     await expect(main.deleteDataset({ id: "ds1" } as any)).resolves.toBe(true);
@@ -1285,12 +1305,13 @@ describe("delete actions report whether they deleted", () => {
     });
     expect(main.api.deleteDatasetView).toHaveBeenCalledWith("view1");
     expect(setSaving).toHaveBeenLastCalledWith(false);
+    expect(createNotification).not.toHaveBeenCalled();
   });
 
   it("deleteDataset resolves to false when the delete request fails", async () => {
     vi.spyOn(main.api, "deleteDataset").mockRejectedValue(boom);
     await expect(main.deleteDataset({ id: "ds1" } as any)).resolves.toBe(false);
-    expect(setSaving).toHaveBeenLastCalledWith(boom);
+    expectFailedDeleteReported("dataset");
   });
 
   it.each(cleanupFailures)(
@@ -1313,6 +1334,7 @@ describe("delete actions report whether they deleted", () => {
     });
     expect(main.api.deleteDatasetView).toHaveBeenCalledWith("view1");
     expect(setSaving).toHaveBeenLastCalledWith(false);
+    expect(createNotification).not.toHaveBeenCalled();
   });
 
   it("deleteConfiguration resolves to false when the delete request fails", async () => {
@@ -1320,7 +1342,7 @@ describe("delete actions report whether they deleted", () => {
     await expect(
       main.deleteConfiguration({ id: "config1" } as any),
     ).resolves.toBe(false);
-    expect(setSaving).toHaveBeenLastCalledWith(boom);
+    expectFailedDeleteReported("collection");
   });
 
   it.each(cleanupFailures)(

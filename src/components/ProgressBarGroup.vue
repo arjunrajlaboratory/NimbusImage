@@ -196,6 +196,9 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
   // a refused action can leave its confirm dialog open, and the warning that
   // explains why must not sit dimmed underneath it.
   z-index: 10000;
+  // Being above dialogs, the stack must not take clicks meant for them: only
+  // a notification (its dismiss button) is interactive, progress bars are not.
+  pointer-events: none;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -266,6 +269,7 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
 }
 
 .notification {
+  pointer-events: auto;
   @extend %floating-card;
   display: flex;
   align-items: flex-start;

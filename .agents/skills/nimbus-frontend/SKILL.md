@@ -206,7 +206,7 @@ An action has two honest choices for a guest. Mixing them tells the user an acti
 Three traps this produced on one PR:
 
 - **A refusal resolves; it does not reject.** A caller that runs its success path on any resolution (`.then(() => router.back())`, close a dialog, emit) reports a success that did not happen. When a caller acts on the outcome, make the action resolve to a boolean or `null` and check it. `if (promise)` on a dispatch is always true.
-- **"Deleted" must mean the thing itself is gone.** `deleteDataset` and `deleteConfiguration` also clean up dataset views. Joining both in one `Promise.all` reports failure after the dataset was deleted; one `Promise.allSettled` reports success after the delete failed. Decide the result from the delete request alone.
+- **"Deleted" must mean the thing itself is gone.** `deleteDataset` and `deleteConfiguration` also clean up dataset views. Joining both in one `Promise.all` reports failure after the dataset was deleted; one `Promise.allSettled` reports success after the delete failed. Decide the result from the delete request alone, and start the cleanup only after it succeeds (`deleteWithItsDatasetViews`).
 - **Notifications render from `ProgressBarGroup`, mounted once in `App.vue`** above dialogs. Mounted inside a page component, a notification raised anywhere else is created and never shown.
 
 ### Actions That Throw Need `@Action({ rawError: true })`

@@ -793,6 +793,60 @@ function createNotLoggedInNotification() {
   });
 }
 
+// Delete a dataset or a collection together with the dataset views that point
+// at it. Resolves to whether the dataset or collection itself was deleted:
+// the caller navigates away on that answer, so it must not depend on the view
+// cleanup.
+// - The views are listed first, deleted only after the delete succeeded. A
+//   refused or failed delete must leave them alone, or the page the user stays
+//   on would list views that are gone.
+// - A failed delete is shown as a notification: the caller keeps its confirm
+//   dialog open, and the sync indicator is behind that dialog's scrim.
+// - View cleanup is best effort. A failure is flagged on the sync indicator.
+async function deleteWithItsDatasetViews({
+  api,
+  what,
+  viewFilter,
+  deleteIt,
+  onDeleted,
+}: {
+  api: GirderAPI;
+  what: "dataset" | "collection";
+  viewFilter: { datasetId: string } | { configurationId: string };
+  deleteIt: () => Promise<unknown>;
+  onDeleted: () => Promise<void>;
+}): Promise<boolean> {
+  sync.setSaving(true);
+  let views: IDatasetView[] = [];
+  let cleanupError: Error | null = null;
+  try {
+    views = await api.findDatasetViews(viewFilter);
+  } catch (error) {
+    cleanupError = error as Error;
+  }
+  try {
+    await deleteIt();
+  } catch (error) {
+    sync.setSaving(error as Error);
+    progress.createNotification({
+      type: NotificationType.ERROR,
+      title: `Could not delete the ${what}`,
+      message: (error as Error)?.message || "The server refused the request.",
+      timeout: 10,
+    });
+    return false;
+  }
+  await onDeleted();
+  const failedCleanup = (
+    await Promise.allSettled(views.map(({ id }) => api.deleteDatasetView(id)))
+  ).find((result) => result.status === "rejected");
+  if (failedCleanup) {
+    cleanupError = (failedCleanup as PromiseRejectedResult).reason;
+  }
+  sync.setSaving(cleanupError ?? false);
+  return true;
+}
+
 @Module({ dynamic: true, store, name: "main" })
 export class Main extends VuexModule {
   girderRest = createGirderRestClient({
@@ -3110,9 +3164,8 @@ export class Main extends VuexModule {
   }
 
   // Resolves to whether the collection itself was deleted, so a caller can
-  // tell a refusal or a failed delete from a delete before it navigates away.
-  // A failure to clean up its views is flagged on the sync indicator but does
-  // not change the answer: the collection is gone either way.
+  // tell a refusal or a failed delete from a delete before it navigates away
+  // (see deleteWithItsDatasetViews).
   @Action
   async deleteConfiguration(
     configuration: IDatasetConfiguration,
@@ -3121,37 +3174,16 @@ export class Main extends VuexModule {
       createNotLoggedInNotification();
       return false;
     }
-    sync.setSaving(true);
-    const [deletion, cleanup] = await Promise.allSettled([
-      this.api.deleteConfiguration(configuration),
-      this.deleteDatasetViewsMatching({ configurationId: configuration.id }),
-    ]);
-    if (deletion.status === "rejected") {
-      sync.setSaving(deletion.reason as Error);
-      return false;
-    }
-    await this.context.dispatch("ressourceDeleted", configuration.id);
-    this.deleteConfigurationImpl(configuration);
-    sync.setSaving(cleanup.status === "rejected" ? cleanup.reason : false);
-    return true;
-  }
-
-  // Best-effort removal of the views that pointed at a deleted dataset or
-  // collection. Rejects when listing them or deleting any of them fails, so
-  // the caller can flag it, but never decides whether the delete happened.
-  @Action({ rawError: true })
-  async deleteDatasetViewsMatching(
-    filter: { datasetId: string } | { configurationId: string },
-  ) {
-    const views = await this.api.findDatasetViews(filter);
-    const failed = (
-      await Promise.allSettled(
-        views.map(({ id }: IDatasetView) => this.api.deleteDatasetView(id)),
-      )
-    ).find((result) => result.status === "rejected");
-    if (failed) {
-      throw (failed as PromiseRejectedResult).reason;
-    }
+    return deleteWithItsDatasetViews({
+      api: this.api,
+      what: "collection",
+      viewFilter: { configurationId: configuration.id },
+      deleteIt: () => this.api.deleteConfiguration(configuration),
+      onDeleted: async () => {
+        await this.context.dispatch("ressourceDeleted", configuration.id);
+        this.deleteConfigurationImpl(configuration);
+      },
+    });
   }
 
   @Mutation
@@ -3173,18 +3205,13 @@ export class Main extends VuexModule {
       createNotLoggedInNotification();
       return false;
     }
-    sync.setSaving(true);
-    const [deletion, cleanup] = await Promise.allSettled([
-      this.api.deleteDataset(dataset),
-      this.deleteDatasetViewsMatching({ datasetId: dataset.id }),
-    ]);
-    if (deletion.status === "rejected") {
-      sync.setSaving(deletion.reason as Error);
-      return false;
-    }
-    this.deleteDatasetImpl(dataset);
-    sync.setSaving(cleanup.status === "rejected" ? cleanup.reason : false);
-    return true;
+    return deleteWithItsDatasetViews({
+      api: this.api,
+      what: "dataset",
+      viewFilter: { datasetId: dataset.id },
+      deleteIt: () => this.api.deleteDataset(dataset),
+      onDeleted: async () => this.deleteDatasetImpl(dataset),
+    });
   }
 
   @Action
