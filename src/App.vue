@@ -1027,9 +1027,9 @@ watch(
   { immediate: true },
 );
 
-// Same for saved scalar maps (one cheap list request per dataset). The
-// button stays reachable while listing failed or is in flight, so a network
-// blip never hides the feature; with no maps it is not offered.
+// Same for saved scalar maps. The button stays reachable while listing
+// failed or is in flight, so a network blip never hides the feature; with no
+// maps it is not offered.
 const scalarMapsAvailable = computed(
   () =>
     scalarMapsStore.hasMaps ||
@@ -1037,11 +1037,22 @@ const scalarMapsAvailable = computed(
     scalarMapsStore.loading,
 );
 
+// Listed again every time a dataset is opened in the viewer (a new dataset,
+// a reload of it, or coming back to it), not once per dataset id: a worker
+// may have saved a map since, and with none listed the button that would
+// reveal it is hidden. One cheap GET, shared with the palette's own listing.
+// (Reads `route` directly: `routeName` is declared further down.)
 watch(
-  () => store.dataset?.id,
-  (datasetId) => {
-    if (datasetId) {
-      scalarMapsStore.ensureMaps();
+  [
+    () => store.dataset,
+    () =>
+      route.name === "datasetview" ||
+      route.name === "shared" ||
+      route.name === "embed",
+  ],
+  ([dataset, inViewer]) => {
+    if (dataset && inViewer) {
+      scalarMapsStore.refreshMaps();
     }
   },
   { immediate: true },

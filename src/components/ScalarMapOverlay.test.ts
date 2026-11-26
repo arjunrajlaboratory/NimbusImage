@@ -18,7 +18,8 @@ vi.mock("@/store", async () => {
       tileTemplateUrl: (o: any) =>
         `tiles/${o.itemId}?location=${o.location}&colormap=${o.colormap}` +
         `&min=${o.min}&max=${o.max}&threshold=${o.threshold}` +
-        `&side=${o.thresholdSide}&token=${o.authToken}&size=${o.tileSize}`,
+        `&side=${o.thresholdSide}&token=${o.authToken}&size=${o.tileSize}` +
+        `&v=${o.version}`,
     },
   });
   return { default: mocks.store };
@@ -41,10 +42,11 @@ vi.mock("geojs", () => ({
 
 import ScalarMapOverlay from "./ScalarMapOverlay.vue";
 
-function scalarMap(itemId: string, locations = ["xy0_z0_t0"]) {
+function scalarMap(itemId: string, locations = ["xy0_z0_t0"], revision = "r1") {
   return {
     itemId,
     updated: "u1",
+    revision,
     meta: {
       name: itemId,
       locations: locations.map((key) => {
@@ -147,7 +149,7 @@ describe("ScalarMapOverlay", () => {
     expect(layer.zIndex).toHaveBeenCalledWith(5);
     expect(layer.opacity).toHaveBeenCalledWith(0.7);
     expect(layer.url).toHaveBeenCalledWith(
-      "tiles/a?location=xy0_z0_t0&colormap=viridis&min=0&max=10&threshold=null&side=above&token=share-token&size=256",
+      "tiles/a?location=xy0_z0_t0&colormap=viridis&min=0&max=10&threshold=null&side=above&token=share-token&size=256&v=r1",
     );
     expect(layer._visible).toBe(true);
   });
@@ -192,7 +194,7 @@ describe("ScalarMapOverlay", () => {
     vi.advanceTimersByTime(200);
     expect(layer.url).toHaveBeenCalledTimes(1);
     expect(layer.url).toHaveBeenCalledWith(
-      "tiles/a?location=xy0_z0_t0&colormap=magma&min=2&max=8&threshold=6&side=below&token=share-token&size=256",
+      "tiles/a?location=xy0_z0_t0&colormap=magma&min=2&max=8&threshold=6&side=below&token=share-token&size=256&v=r1",
     );
     expect(map.createLayer).toHaveBeenCalledTimes(1);
   });
@@ -221,6 +223,22 @@ describe("ScalarMapOverlay", () => {
     const { map } = mount();
     vi.advanceTimersByTime(200);
     expect(map.createLayer).not.toHaveBeenCalled();
+  });
+
+  it("re-syncs at once when the file's revision or the share-view token changes", async () => {
+    const { map, osmLayers } = mount();
+    const layer = osmLayers[0];
+    layer.url.mockClear();
+    mocks.maps.currentMaps = [scalarMap("a", ["xy0_z0_t0"], "r2")];
+    await nextTick();
+    expect(layer.url).toHaveBeenLastCalledWith(expect.stringContaining("v=r2"));
+    mocks.store.shareLinkTileToken = "new-token";
+    await nextTick();
+    expect(layer.url).toHaveBeenLastCalledWith(
+      expect.stringContaining("token=new-token"),
+    );
+    expect(map.createLayer).toHaveBeenCalledTimes(1);
+    mocks.store.shareLinkTileToken = "share-token";
   });
 
   it("only restyles on an opacity change", async () => {

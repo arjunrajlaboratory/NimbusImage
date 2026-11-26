@@ -20,3 +20,10 @@ MAX_IDS_PER_QUERY = 50000
 # a string nothing type-checks, so emitters and subscribers import it from
 # here rather than spelling it out.
 ANNOTATIONS_REMOVED_EVENT = "model.upenn_annotation.removeIds"
+
+# The image tile pyramid that overlay tile routes render on (the annotation
+# overview raster and saved scalar maps): accepted output tile edges, the
+# largest image edge in pixels, and the deepest pyramid level.
+OVERLAY_TILE_SIZES = (256, 512, 1024)
+MAX_OVERLAY_IMAGE_EDGE = 131072
+MAX_OVERLAY_PYRAMID_LEVEL = 30

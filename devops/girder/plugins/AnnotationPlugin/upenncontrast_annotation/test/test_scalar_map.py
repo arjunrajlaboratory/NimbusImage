@@ -1,6 +1,8 @@
 import io
 import json
 import math
+import threading
+import zipfile
 
 import numpy as np
 import pytest
@@ -16,6 +18,7 @@ from girder.models.upload import Upload
 
 from ..server.helpers import scalarMap
 from ..server.helpers.scalarMap import (
+    MAX_SCALAR_MAP_CACHE_BYTES,
     THRESHOLD_DIM_ALPHA,
     colorizeScalarValues,
     colormapLut,
@@ -139,14 +142,21 @@ class TestScalarMapHelpers:
                 {"XY": 0, "Z": 0, "Time": 0, "key": LOCATION},
             ]),
             _meta(valueRange=[1, 0]), _meta(valueRange=[0, None]),
-            _meta(percentiles=[2, 1]), "not a dict",
+            _meta(percentiles=[1] + [0] * 100),
+            _meta(percentiles=[0] * 100),
+            _meta(percentiles=[0] * 102),
+            _meta(percentiles=[0] * 100 + [float("nan")]),
+            _meta(percentiles=[0] * 100 + [float("inf")]),
+            _meta(originPx=[0, float("inf")]),
+            "not a dict",
         ]
         for meta in bad:
             with pytest.raises(ValueError):
                 validateScalarMapMeta(meta)
         noPercentiles = _meta()
         del noPercentiles["percentiles"]
-        validateScalarMapMeta(noPercentiles)
+        with pytest.raises(ValueError, match="percentiles"):
+            validateScalarMapMeta(noPercentiles)
 
     @pytest.mark.parametrize("level", [0, 1, 2])
     def testSamplingMatchesBruteForce(self, level):
@@ -235,6 +245,129 @@ class TestScalarMapHelpers:
             readScalarMapArray(_npz(**{LOCATION: good}), LOCATION,
                                [ROWS, COLS])
 
+    def testBareNpyIsRefusedWithoutDecoding(self, monkeypatch):
+        buffer = io.BytesIO()
+        np.save(buffer, np.zeros((ROWS, COLS), dtype=np.float32))
+
+        def refuse(*args, **kwargs):
+            raise AssertionError("a bare .npy must not be decoded")
+
+        monkeypatch.setattr(np, "load", refuse)
+        monkeypatch.setattr(np.lib.format, "read_array", refuse)
+        with pytest.raises(ValueError, match="not a readable .npz"):
+            readScalarMapArray(buffer.getvalue(), LOCATION, [ROWS, COLS])
+
+    def testChecksAndDecodesTheSameExplicitMember(self):
+        good = np.arange(ROWS * COLS, dtype=np.float32).reshape(ROWS, COLS)
+        decoy = io.BytesIO()
+        np.save(decoy, np.zeros((ROWS + 1, COLS), dtype=np.int64))
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr(LOCATION, decoy.getvalue())
+            with archive.open(LOCATION + ".npy", "w") as member:
+                np.lib.format.write_array(member, good)
+        # numpy's NpzFile would resolve the suffixless member for this key.
+        array = readScalarMapArray(buffer.getvalue(), LOCATION, [ROWS, COLS])
+        np.testing.assert_array_equal(array, good)
+
+        # A member whose data is shorter than its header says is refused.
+        whole = io.BytesIO()
+        np.lib.format.write_array(whole, good)
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr(LOCATION + ".npy", whole.getvalue()[:-8])
+        with pytest.raises(ValueError, match="truncated"):
+            readScalarMapArray(buffer.getvalue(), LOCATION, [ROWS, COLS])
+
+    def testFortranOrderMember(self):
+        good = np.asfortranarray(
+            np.arange(ROWS * COLS, dtype=np.float64).reshape(ROWS, COLS)
+        )
+        array = readScalarMapArray(_npz(**{LOCATION: good}), LOCATION,
+                                   [ROWS, COLS])
+        np.testing.assert_array_equal(array, good)
+        assert array.flags["C_CONTIGUOUS"]
+
+
+class TestScalarMapCache:
+    """Single-flight cold loads and invalidation, with a counting reader in
+    place of Girder's file read."""
+
+    FILE = {"_id": "f" * 24, "size": 10}
+
+    @pytest.fixture(autouse=True)
+    def _emptyCache(self):
+        scalarMap.clearScalarMapCache()
+        yield
+        scalarMap.clearScalarMapCache()
+
+    def _countingReader(self, monkeypatch, gate=None):
+        calls = []
+        data = _npz(**{LOCATION: np.ones((ROWS, COLS), dtype=np.float32)})
+
+        def read(fileDoc):
+            calls.append(fileDoc["_id"])
+            if gate is not None:
+                gate.wait(5)
+            return data
+
+        monkeypatch.setattr(scalarMap, "_readFileBytes", read)
+        return calls
+
+    def testConcurrentColdLoadsShareOneRead(self, monkeypatch):
+        gate = threading.Event()
+        calls = self._countingReader(monkeypatch, gate)
+        barrier = threading.Barrier(8)
+        results = []
+
+        def load():
+            barrier.wait()
+            results.append(
+                scalarMap.loadScalarMapArray(self.FILE, _meta(), LOCATION)
+            )
+
+        threads = [threading.Thread(target=load) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        # Let every thread reach the per-key lock before the read finishes.
+        threading.Timer(0.2, gate.set).start()
+        for thread in threads:
+            thread.join(10)
+        assert len(calls) == 1
+        assert len(results) == 8
+        assert all(result is results[0] for result in results)
+
+    def testLoadInFlightDuringInvalidateIsNotCached(self, monkeypatch):
+        gate = threading.Event()
+        calls = self._countingReader(monkeypatch, gate)
+        thread = threading.Thread(
+            target=scalarMap.loadScalarMapArray,
+            args=(self.FILE, _meta(), LOCATION),
+        )
+        thread.start()
+        while not calls:
+            threading.Event().wait(0.01)
+        scalarMap.invalidateScalarMapFiles([self.FILE["_id"]])
+        gate.set()
+        thread.join(10)
+        assert scalarMap.scalarMapCacheBytes() == 0
+        scalarMap.loadScalarMapArray(self.FILE, _meta(), LOCATION)
+        assert len(calls) == 2
+        assert scalarMap.scalarMapCacheBytes() > 0
+
+    def testCacheStaysWithinBudget(self, monkeypatch):
+        self._countingReader(monkeypatch)
+        arrayBytes = ROWS * COLS * 4
+        monkeypatch.setattr(
+            scalarMap, "MAX_SCALAR_MAP_CACHE_BYTES", arrayBytes * 2
+        )
+        for index in range(4):
+            scalarMap.loadScalarMapArray(
+                {"_id": "%024x" % index, "size": 10}, _meta(), LOCATION
+            )
+        assert scalarMap.scalarMapCacheBytes() == arrayBytes * 2
+        assert MAX_SCALAR_MAP_CACHE_BYTES > arrayBytes * 2
+
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
@@ -257,6 +390,17 @@ class TestScalarMapEndpoints:
         # A map in a child folder is not directly in the dataset.
         child = Folder().createFolder(folder, "child", creator=admin)
         _uploadMap(admin, child, {LOCATION: array}, _meta())
+        # Map metadata on an item with no file, and on one with two files,
+        # cannot render: skipped.
+        empty = Item().createItem("empty", admin, folder)
+        Item().setMetadata(empty, {"nimbusScalarMap": _meta()})
+        twoFiles = _uploadMap(admin, folder, {LOCATION: array}, _meta(),
+                              name="two.npz")
+        data = _npz(**{LOCATION: array})
+        Upload().uploadFromFile(
+            io.BytesIO(data), len(data), "extra.npz", "item", twoFiles,
+            user=admin,
+        )
 
         resp = server.request("/scalar_map", user=admin,
                               params={"datasetId": str(folder["_id"])})
@@ -266,6 +410,11 @@ class TestScalarMapEndpoints:
         ]
         assert resp.json[0]["meta"] == _meta()
         assert isinstance(resp.json[0]["updated"], str)
+        goodFile = list(Item().childFiles(good))[0]
+        assert resp.json[0]["revision"] == scalarMap.scalarMapRevision(
+            goodFile
+        )
+        assert set(resp.json[0]) == {"itemId", "updated", "revision", "meta"}
 
         resp = server.request("/scalar_map", user=user,
                               params={"datasetId": str(folder["_id"])})
@@ -389,6 +538,10 @@ class TestScalarMapEndpoints:
             tuple(viridis[0])
         assert scalarMap.scalarMapCacheBytes() == zeros.nbytes
 
+        before = server.request("/scalar_map", user=admin, params={
+            "datasetId": str(folder["_id"])}).json[0]["revision"]
+        etagBefore = _tile(server, item, admin).headers["ETag"]
+
         for fileDoc in list(Item().childFiles(item)):
             File().remove(fileDoc)
         data = _npz(**{LOCATION: np.ones((ROWS, COLS), dtype=np.float32)})
@@ -396,8 +549,78 @@ class TestScalarMapEndpoints:
             io.BytesIO(data), len(data), "hotspot_map_tool1.npz", "item",
             item, user=admin,
         )
-        assert tuple(_rgba(_tile(server, item, admin))[20, 12, :3]) == \
-            tuple(viridis[255])
+        after = server.request("/scalar_map", user=admin, params={
+            "datasetId": str(folder["_id"])}).json[0]["revision"]
+        assert after != before
+        resp = _tile(server, item, admin)
+        assert resp.headers["ETag"] != etagBefore
+        assert tuple(_rgba(resp)[20, 12, :3]) == tuple(viridis[255])
+
+    def testFileOverGirderSingleReadLimit(self, server, admin, fsAssetstore):
+        # Girder's FileHandle refuses one read above 16 MiB by default;
+        # random float32 doesn't compress, so the .npz is ~19 MB.
+        shape = (2200, 2200)
+        array = np.random.default_rng(0).uniform(
+            0, 1, shape).astype(np.float32)
+        folder = _privateDataset(admin)
+        item = _uploadMap(admin, folder, {LOCATION: array},
+                          _meta(shape=list(shape)))
+        assert list(Item().childFiles(item))[0]["size"] > 16 * 1024 * 1024
+        rgba = _rgba(_tile(server, item, admin, sizeX=2200, sizeY=2200,
+                           maxLevel=4))
+        assert (rgba[..., 3] == 255).any()
+
+    def testTilesRevalidateWithEtag(self, server, admin, user, fsAssetstore):
+        folder = _privateDataset(admin)
+        array = np.zeros((ROWS, COLS), dtype=np.float32)
+        item = _uploadMap(admin, folder, {LOCATION: array}, _meta())
+        resp = _tile(server, item, admin)
+        _rgba(resp)
+        assert resp.headers["Cache-Control"] == \
+            "private, max-age=0, must-revalidate"
+        etag = resp.headers["ETag"]
+        query = {"location": LOCATION, "sizeX": SIZE_X, "sizeY": SIZE_Y,
+                 "maxLevel": 0}
+        cached = server.request(
+            "/scalar_map/%s/tiles/0/0/0" % item["_id"], user=admin,
+            params=query, additionalHeaders=[("If-None-Match", etag)],
+            isJson=False,
+        )
+        assertStatus(cached, 304)
+        assert b"".join(cached.body) == b""
+        # A different display parameter is a different tile.
+        assert _tile(server, item, admin, colormap="gray").headers[
+            "ETag"] != etag
+        # Revalidation still checks READ: no 304 for someone without it.
+        denied = server.request(
+            "/scalar_map/%s/tiles/0/0/0" % item["_id"], user=user,
+            params=query, additionalHeaders=[("If-None-Match", etag)],
+            isJson=False,
+        )
+        assertStatus(denied, 403)
+
+    @pytest.mark.parametrize("name", [
+        "location", "sizeX", "sizeY", "maxLevel", "tileSize", "colormap",
+        "min", "max", "threshold", "thresholdSide",
+    ])
+    def testRepeatedParamIs400(self, server, admin, fsAssetstore, name):
+        folder = _privateDataset(admin)
+        array = np.zeros((ROWS, COLS), dtype=np.float32)
+        item = _uploadMap(admin, folder, {LOCATION: array}, _meta())
+        values = {
+            "location": LOCATION, "sizeX": SIZE_X, "sizeY": SIZE_Y,
+            "maxLevel": 0, "tileSize": 256, "colormap": "viridis",
+            "min": 0, "max": 1, "threshold": 0.5, "thresholdSide": "above",
+        }
+        # A list of pairs is the only way pytest-girder sends a repeated
+        # query parameter.
+        query = list(values.items()) + [(name, values[name])]
+        resp = server.request(
+            "/scalar_map/%s/tiles/0/0/0" % item["_id"], user=admin,
+            params=query, isJson=False,
+        )
+        assertStatus(resp, 400)
+        assert "must not be specified multiple times" in _message(resp)
 
     def testDeleteNeedsWriteAndRefusesNonMaps(
         self, server, admin, user, fsAssetstore

@@ -22,8 +22,8 @@ export interface IScalarMapTileUrlOptions {
   thresholdSide: TScalarMapThresholdSide;
   // Shared views send their isolated bearer on the tile URL.
   authToken?: string | null;
-  // The item's `updated` time: tiles may be cached, so a rewritten map must
-  // change the URL.
+  // The list entry's `revision` (changes with the backing file): tiles may
+  // be cached, so a rewritten map must change the URL.
   version?: string;
 }
 

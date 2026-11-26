@@ -75,7 +75,7 @@ function desiredUrl(map: IScalarMap): string | null {
     threshold: display.thresholdEnabled ? display.threshold : null,
     thresholdSide: display.thresholdSide,
     authToken: store.shareLinkTileToken,
-    version: map.updated,
+    version: map.revision,
   });
 }
 
@@ -145,16 +145,18 @@ function sync() {
 const scheduleSync = debounce(sync, URL_DEBOUNCE_MS);
 
 // Which layers exist and whether they show: immediate. Includes the
-// location, since a location without data hides the layer.
+// location, since a location without data hides the layer, and everything
+// else that is not a slider: the file's revision and the share-view token.
 const structureSignature = computed(() =>
   JSON.stringify([
     props.disabled,
     store.xy,
     store.z,
     store.time,
+    store.shareLinkTileToken,
     scalarMapsStore.currentMaps.map((map) => [
       map.itemId,
-      map.updated,
+      map.revision,
       scalarMapsStore.display[map.itemId]?.visible ?? false,
     ]),
   ]),

@@ -6,8 +6,11 @@ enableAutoUnmount(afterEach);
 
 const mocks = vi.hoisted(() => ({
   refreshMaps: vi.fn(),
+  ensureColormapStops: vi.fn(),
   deleteMap: vi.fn(),
   updateDisplay: vi.fn(),
+  setThresholdPercent: vi.fn(),
+  setThresholdValue: vi.fn(),
 }));
 
 vi.mock("@/store", async () => ({
@@ -28,11 +31,16 @@ vi.mock("@/store/scalarMaps", async () => {
     default: reactive({
       currentMaps: [] as any[],
       display: {} as Record<string, any>,
+      colormapStops: null as Record<string, string[]> | null,
       error: null as string | null,
       loading: false,
       refreshMaps: mocks.refreshMaps,
+      ensureColormapStops: mocks.ensureColormapStops,
       deleteMap: mocks.deleteMap,
       updateDisplay: mocks.updateDisplay,
+      setThresholdPercent: mocks.setThresholdPercent,
+      setThresholdValue: mocks.setThresholdValue,
+      setThresholdSide: vi.fn(),
       resetRange: vi.fn(),
     }),
   };
@@ -49,23 +57,33 @@ import store from "@/store";
 
 // Uniform 0..200: percentile i is 2i.
 const PERCENTILES = Array.from({ length: 101 }, (_, i) => 2 * i);
+// 60% of the tissue at the minimum.
+const TIED = Array.from({ length: 101 }, (_, i) => (i <= 60 ? 0 : i - 60));
 
-const MAP = {
-  itemId: "a",
-  updated: "u",
-  meta: {
-    name: "Area mean, 50 µm",
-    property: "Area",
-    statistic: "Mean",
-    cutoff: null,
-    radius: 50,
-    radiusUnit: "µm",
-    locations: [{ XY: 0, Z: 0, Time: 0, key: "xy0_z0_t0" }],
-    valueRange: [0, 200],
-    percentiles: PERCENTILES,
-    units: "µm²",
-  },
-};
+function scalarMap(
+  percentiles = PERCENTILES,
+  valueRange: [number, number] = [0, 200],
+) {
+  return {
+    itemId: "a",
+    updated: "u",
+    revision: "r",
+    meta: {
+      name: "Area mean, 50 µm",
+      property: "Area",
+      statistic: "Mean",
+      cutoff: null,
+      radius: 50,
+      radiusUnit: "µm",
+      locations: [{ XY: 0, Z: 0, Time: 0, key: "xy0_z0_t0" }],
+      valueRange,
+      percentiles,
+      units: "µm²",
+    },
+  };
+}
+
+const MAP = scalarMap();
 
 function display(overrides: Record<string, any> = {}) {
   return {
@@ -76,6 +94,7 @@ function display(overrides: Record<string, any> = {}) {
     max: 200,
     thresholdEnabled: true,
     threshold: 160,
+    thresholdPercent: 20,
     thresholdSide: "above",
     ...overrides,
   };
@@ -88,13 +107,17 @@ function mount(visible = true) {
 describe("ScalarMapsPanel", () => {
   beforeEach(() => {
     mocks.refreshMaps.mockClear();
+    mocks.ensureColormapStops.mockClear();
     mocks.deleteMap.mockReset().mockResolvedValue(undefined);
     mocks.updateDisplay.mockClear();
+    mocks.setThresholdPercent.mockClear();
+    mocks.setThresholdValue.mockClear();
     (store as any).dataset = { id: "ds1" };
     (store as any).isLoggedIn = true;
     (store as any).girderUser = { _id: "u1" };
     (scalarMapsStore as any).currentMaps = [MAP];
     (scalarMapsStore as any).display = { a: display() };
+    (scalarMapsStore as any).colormapStops = null;
     (scalarMapsStore as any).error = null;
   });
 
@@ -102,44 +125,115 @@ describe("ScalarMapsPanel", () => {
     const wrapper = mount(false);
     await nextTick();
     expect(mocks.refreshMaps).not.toHaveBeenCalled();
+    expect(mocks.ensureColormapStops).not.toHaveBeenCalled();
     await wrapper.setProps({ visible: true });
     expect(mocks.refreshMaps).toHaveBeenCalledTimes(1);
+    expect(mocks.ensureColormapStops).toHaveBeenCalledTimes(1);
     (store as any).dataset = { id: "ds2" };
     await nextTick();
     expect(mocks.refreshMaps).toHaveBeenCalledTimes(2);
   });
 
+  it("draws the legend from the server's colormap table", () => {
+    const vm = mount().vm as any;
+    expect(vm.legendGradient("viridis")).toBeNull();
+    (scalarMapsStore as any).colormapStops = {
+      viridis: ["#440154", "#fde725"],
+    };
+    expect(vm.legendGradient("viridis")).toBe(
+      "linear-gradient(to right, #440154, #fde725)",
+    );
+  });
+
   it("reads the threshold as a value and as a share of tissue", () => {
     const vm = mount().vm as any;
     expect(vm.thresholdText(MAP)).toBe("Value ≥ 160 µm² · top 20% of tissue");
-    expect(vm.workerForms(MAP)).toEqual([
-      { type: "Top percent of tissue", threshold: "20" },
-      { type: "Value at least", threshold: "160" },
-    ]);
     (scalarMapsStore as any).display = {
-      a: display({ threshold: 20, thresholdSide: "below" }),
+      a: display({
+        threshold: 20,
+        thresholdPercent: null,
+        thresholdSide: "below",
+      }),
     };
     expect(vm.thresholdText(MAP)).toBe("Value ≤ 20 µm² · bottom 10% of tissue");
   });
 
-  it("sets the threshold from a share of tissue on the chosen side", () => {
+  it("says when ties select more tissue than was asked for", () => {
+    const tied = scalarMap(TIED, [0, 40]);
+    (scalarMapsStore as any).currentMaps = [tied];
+    (scalarMapsStore as any).display = {
+      a: display({
+        threshold: 0,
+        thresholdPercent: 50,
+        thresholdSide: "below",
+      }),
+    };
+    const vm = mount().vm as any;
+    expect(vm.thresholdText(tied)).toBe(
+      "Value ≤ 0 µm² · bottom 50% requested, 60% selected (ties)",
+    );
+  });
+
+  it("gives the worker the exact cutoff, and marks an inexact percent", () => {
+    const vm = mount().vm as any;
+    (scalarMapsStore as any).display = {
+      a: display({ threshold: 123.456789, thresholdPercent: null }),
+    };
+    expect(vm.workerForms(MAP)).toEqual([
+      expect.objectContaining({ approximate: true }),
+      {
+        type: "Value at least",
+        threshold: "123.456789",
+        approximate: false,
+      },
+    ]);
+  });
+
+  it("keeps the chosen share as state when set by percent", () => {
     const vm = mount().vm as any;
     vm.onShare(MAP, 30);
-    expect(mocks.updateDisplay).toHaveBeenLastCalledWith({
+    expect(mocks.setThresholdPercent).toHaveBeenLastCalledWith({
       itemId: "a",
-      changes: { threshold: 140 },
+      percent: 30,
     });
   });
 
-  it("ignores an empty display range", () => {
+  it("drives value sliders with integer positions, even on a tiny range", () => {
+    const tiny = scalarMap(
+      Array.from({ length: 101 }, (_, i) => i * 1e-9),
+      [0, 1e-7],
+    );
+    (scalarMapsStore as any).currentMaps = [tiny];
+    (scalarMapsStore as any).display = {
+      a: display({ min: 0, max: 1e-7, threshold: 5e-8 }),
+    };
     const vm = mount().vm as any;
-    vm.onRange(MAP, [50, 50]);
-    expect(mocks.updateDisplay).not.toHaveBeenCalled();
-    vm.onRange(MAP, [20, 80]);
-    expect(mocks.updateDisplay).toHaveBeenCalledWith({
+    expect(vm.rangePositions(tiny)).toEqual([0, 1000]);
+    expect(vm.thresholdPosition(tiny)).toBe(500);
+    vm.onThresholdPosition(tiny, 250);
+    expect(mocks.setThresholdValue).toHaveBeenLastCalledWith({
       itemId: "a",
-      changes: { min: 20, max: 80 },
+      value: 2.5e-8,
     });
+    vm.onRange(tiny, [100, 900]);
+    const { changes } = mocks.updateDisplay.mock.lastCall![0];
+    expect(changes.min).toBeCloseTo(1e-8, 20);
+    expect(changes.max).toBeCloseTo(9e-8, 20);
+    // An empty range is ignored.
+    mocks.updateDisplay.mockClear();
+    vm.onRange(tiny, [400, 400]);
+    expect(mocks.updateDisplay).not.toHaveBeenCalled();
+  });
+
+  it("gives a constant map a usable slider range", () => {
+    const flat = scalarMap(new Array(101).fill(4), [4, 4]);
+    (scalarMapsStore as any).currentMaps = [flat];
+    (scalarMapsStore as any).display = {
+      a: display({ min: 3.5, max: 4.5, threshold: 4 }),
+    };
+    const vm = mount().vm as any;
+    expect(vm.rangePositions(flat)).toEqual([0, 1000]);
+    expect(vm.thresholdPosition(flat)).toBe(500);
   });
 
   it("deletes after confirmation and shows the server's reason on failure", async () => {

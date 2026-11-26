@@ -1,5 +1,23 @@
 <template>
   <div class="scalar-maps-panel pa-3">
+    <div class="d-flex align-center mb-1">
+      <span class="text-caption text-medium-emphasis">Saved maps</span>
+      <v-spacer />
+      <v-tooltip text="List saved maps again">
+        <template v-slot:activator="{ props: activatorProps }">
+          <v-btn
+            v-bind="activatorProps"
+            variant="text"
+            icon="mdi-refresh"
+            size="small"
+            aria-label="Refresh saved maps"
+            :loading="scalarMapsStore.loading"
+            :disabled="scalarMapsStore.loading"
+            @click="scalarMapsStore.refreshMaps(true)"
+          />
+        </template>
+      </v-tooltip>
+    </div>
     <div v-if="scalarMapsStore.error" class="mb-2">
       <p class="text-body-2 text-error">{{ scalarMapsStore.error }}</p>
       <v-btn
@@ -8,7 +26,7 @@
         size="small"
         :loading="scalarMapsStore.loading"
         :disabled="scalarMapsStore.loading"
-        @click="scalarMapsStore.refreshMaps()"
+        @click="scalarMapsStore.refreshMaps(true)"
         >Retry map lookup</v-btn
       >
     </div>
@@ -96,8 +114,9 @@
         />
 
         <div
+          v-if="legendGradient(displayOf(map).colormap)"
           class="color-bar mt-2"
-          :style="{ background: colormapGradientCss(displayOf(map).colormap) }"
+          :style="{ background: legendGradient(displayOf(map).colormap)! }"
         />
         <div class="d-flex text-caption color-bar-labels">
           <span>{{ formatMapValue(displayOf(map).min) }}</span>
@@ -119,11 +138,12 @@
             >Reset</v-btn
           >
         </div>
+        <!-- Integer positions, never a float step: see SLIDER_POSITIONS. -->
         <v-range-slider
-          :model-value="[displayOf(map).min, displayOf(map).max]"
-          :min="map.meta.valueRange[0]"
-          :max="map.meta.valueRange[1]"
-          :step="sliderStep(map)"
+          :model-value="rangePositions(map)"
+          :min="0"
+          :max="SLIDER_POSITIONS"
+          :step="1"
           density="compact"
           hide-details
           @update:model-value="onRange(map, $event)"
@@ -146,7 +166,12 @@
               density="compact"
               variant="outlined"
               divided
-              @update:model-value="update(map, { thresholdSide: $event })"
+              @update:model-value="
+                scalarMapsStore.setThresholdSide({
+                  itemId: map.itemId,
+                  side: $event,
+                })
+              "
             >
               <v-btn value="above" size="small">Above</v-btn>
               <v-btn value="below" size="small">Below</v-btn>
@@ -164,7 +189,7 @@
           </div>
           <v-slider
             v-if="thresholdUnits === 'share'"
-            :model-value="shareOf(map)"
+            :model-value="shareOf(map).requested ?? shareOf(map).selected"
             :min="0"
             :max="100"
             :step="0.5"
@@ -174,13 +199,13 @@
           />
           <v-slider
             v-else
-            :model-value="displayOf(map).threshold"
-            :min="map.meta.valueRange[0]"
-            :max="map.meta.valueRange[1]"
-            :step="sliderStep(map)"
+            :model-value="thresholdPosition(map)"
+            :min="0"
+            :max="SLIDER_POSITIONS"
+            :step="1"
             density="compact"
             hide-details
-            @update:model-value="update(map, { threshold: $event })"
+            @update:model-value="onThresholdPosition(map, $event)"
           />
           <div class="text-caption threshold-readout">
             {{ thresholdText(map) }}
@@ -195,6 +220,11 @@
           >
             <code>Threshold type: {{ form.type }}</code>
             <code class="ml-1">Threshold: {{ form.threshold }}</code>
+            <span
+              v-if="form.approximate"
+              class="ml-1 text-medium-emphasis approximate"
+              >(≈ approximate)</span
+            >
           </div>
         </template>
       </template>
@@ -238,26 +268,33 @@
 import { computed, ref, watch } from "vue";
 import store from "@/store";
 import scalarMapsStore, { defaultScalarMapDisplay } from "@/store/scalarMaps";
-import { IScalarMap, IScalarMapDisplay } from "@/store/model";
+import {
+  IScalarMap,
+  IScalarMapDisplay,
+  TScalarMapColormap,
+} from "@/store/model";
 import {
   SCALAR_MAP_COLORMAPS,
-  colormapGradientCss,
+  SLIDER_POSITIONS,
+  displayValueRange,
   formatMapValue,
   formatShare,
   scalarMapLocationKey,
   scalarMapSummary,
-  thresholdForTissueShare,
-  tissueShareOfThreshold,
+  sliderPositionToValue,
+  thresholdShare,
+  valueToSliderPosition,
   workerThresholdForms,
 } from "@/utils/scalarMap";
+import { cssLinearGradient } from "@/utils/colors";
 import { logError } from "@/utils/log";
 import { extractErrorMessage } from "@/utils/errors";
 
 /**
- * The Maps palette (HOTSPOT_REGIONS_WORKER.md §8.3): the dataset's saved
- * scalar maps, how ScalarMapOverlay draws each, and a threshold preview that
- * reads both as a value and as a share of tissue, in the form the Hotspot
- * Regions worker takes.
+ * The Map Layers palette (HOTSPOT_REGIONS_WORKER.md §8.3): the dataset's
+ * saved scalar maps, how ScalarMapOverlay draws each, and a threshold
+ * preview that reads both as a value and as a share of tissue, in the forms
+ * the Hotspot Regions worker takes.
  */
 
 const props = defineProps<{ visible: boolean }>();
@@ -282,7 +319,10 @@ function displayOf(map: IScalarMap): IScalarMapDisplay {
   return scalarMapsStore.display[map.itemId] ?? defaultScalarMapDisplay(map);
 }
 
-function update(map: IScalarMap, changes: Partial<IScalarMapDisplay>) {
+function update(
+  map: IScalarMap,
+  changes: Parameters<typeof scalarMapsStore.updateDisplay>[0]["changes"],
+) {
   scalarMapsStore.updateDisplay({ itemId: map.itemId, changes });
 }
 
@@ -290,45 +330,77 @@ function hasDataHere(map: IScalarMap): boolean {
   return scalarMapLocationKey(map.meta, store.xy, store.z, store.time) !== null;
 }
 
-function sliderStep(map: IScalarMap): number {
-  const [min, max] = map.meta.valueRange;
-  return max > min ? (max - min) / 200 : 1;
+/** The server's anchor table as a CSS gradient; null until it is loaded. */
+function legendGradient(colormap: TScalarMapColormap): string | null {
+  const stops = scalarMapsStore.colormapStops?.[colormap];
+  return stops && stops.length > 0
+    ? cssLinearGradient(stops, "to right")
+    : null;
 }
 
-function onRange(map: IScalarMap, range: number[]) {
-  const [min, max] = range;
-  if (max > min) {
-    update(map, { min, max });
+// The sliders' value bounds: the map's range, widened if it is constant.
+function bounds(map: IScalarMap): [number, number] {
+  return displayValueRange(map.meta.valueRange);
+}
+
+function rangePositions(map: IScalarMap): number[] {
+  const display = displayOf(map);
+  return [
+    valueToSliderPosition(display.min, bounds(map)),
+    valueToSliderPosition(display.max, bounds(map)),
+  ];
+}
+
+function onRange(map: IScalarMap, positions: number[]) {
+  const [low, high] = positions;
+  if (high > low) {
+    update(map, {
+      min: sliderPositionToValue(low, bounds(map)),
+      max: sliderPositionToValue(high, bounds(map)),
+    });
   }
 }
 
-function shareOf(map: IScalarMap): number {
+function thresholdPosition(map: IScalarMap): number {
+  return valueToSliderPosition(displayOf(map).threshold, bounds(map));
+}
+
+function onThresholdPosition(map: IScalarMap, position: number) {
+  scalarMapsStore.setThresholdValue({
+    itemId: map.itemId,
+    value: sliderPositionToValue(position, bounds(map)),
+  });
+}
+
+function shareOf(map: IScalarMap) {
   const display = displayOf(map);
-  return tissueShareOfThreshold(
+  return thresholdShare(
     map.meta.percentiles,
     display.threshold,
     display.thresholdSide,
+    display.thresholdPercent,
   );
 }
 
-function onShare(map: IScalarMap, share: number) {
-  update(map, {
-    threshold: thresholdForTissueShare(
-      map.meta.percentiles,
-      share,
-      displayOf(map).thresholdSide,
-    ),
-  });
+function onShare(map: IScalarMap, percent: number) {
+  scalarMapsStore.setThresholdPercent({ itemId: map.itemId, percent });
 }
 
 function thresholdText(map: IScalarMap): string {
   const display = displayOf(map);
   const above = display.thresholdSide === "above";
-  const value = `${above ? "≥" : "≤"} ${formatMapValue(display.threshold)}`;
   const units = map.meta.units ? ` ${map.meta.units}` : "";
-  return `Value ${value}${units} · ${above ? "top" : "bottom"} ${formatShare(
-    shareOf(map),
-  )}% of tissue`;
+  const value = `Value ${above ? "≥" : "≤"} ${formatMapValue(
+    display.threshold,
+  )}${units}`;
+  const share = shareOf(map);
+  const sideWord = above ? "top" : "bottom";
+  if (share.tied && share.requested !== null) {
+    return `${value} · ${sideWord} ${formatShare(
+      share.requested,
+    )}% requested, ${formatShare(share.selected)}% selected (ties)`;
+  }
+  return `${value} · ${sideWord} ${formatShare(share.selected)}% of tissue`;
 }
 
 function workerForms(map: IScalarMap) {
@@ -337,6 +409,7 @@ function workerForms(map: IScalarMap) {
     map.meta.percentiles,
     display.threshold,
     display.thresholdSide,
+    display.thresholdPercent,
   );
 }
 
@@ -367,13 +440,14 @@ async function confirmDelete() {
 
 // The palette content stays mounted while hidden: list the maps again only
 // when it is shown (a worker run may have saved one since), and for a new
-// dataset while it is open. App.vue looks the list up once per dataset so
-// the app-bar button knows whether to appear.
+// dataset while it is open. Opening a dataset (App.vue) lists them too; the
+// store shares one request between the two.
 watch(
   () => [props.visible, store.dataset?.id],
   () => {
     if (props.visible && store.dataset?.id) {
       scalarMapsStore.refreshMaps();
+      scalarMapsStore.ensureColormapStops();
     }
   },
   { immediate: true },
@@ -385,6 +459,10 @@ defineExpose({
   workerForms,
   onShare,
   onRange,
+  onThresholdPosition,
+  rangePositions,
+  thresholdPosition,
+  legendGradient,
   askDelete,
   confirmDelete,
   canDelete,

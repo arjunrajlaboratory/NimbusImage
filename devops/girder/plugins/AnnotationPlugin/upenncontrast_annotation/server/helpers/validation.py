@@ -218,6 +218,17 @@ def requireInt(value, field):
         raise RestException("%s must be an integer" % field, code=400)
 
 
+def requireIntWithin(value, field, minimum, maximum):
+    """requireInt, then a clean 400 unless minimum <= value <= maximum."""
+    number = requireInt(value, field)
+    if not minimum <= number <= maximum:
+        raise RestException(
+            "%s must be between %d and %d" % (field, minimum, maximum),
+            code=400,
+        )
+    return number
+
+
 def requireFloat(value, field):
     """Parse a finite float query parameter or raise a clean 400.
 

@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => {
     statuses: {} as Record<string, number>,
     get: vi.fn(),
     createNotification: vi.fn(),
+    refreshMaps: vi.fn(),
   };
 });
 
@@ -44,6 +45,10 @@ vi.mock("@/store/index", () => ({
 
 vi.mock("@/store/progress", () => ({
   default: { createNotification: mocks.createNotification },
+}));
+
+vi.mock("@/store/scalarMaps", () => ({
+  default: { refreshMaps: (...args: any[]) => mocks.refreshMaps(...args) },
 }));
 
 vi.mock("@/utils/log", () => ({ logError: vi.fn(), logWarning: vi.fn() }));
@@ -305,6 +310,41 @@ describe("jobs store: settling tracked jobs when the stream fails", () => {
       status: ERROR,
     });
     expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
+  describe("saved scalar maps after a job", () => {
+    afterEach(() => {
+      (main as any).dataset = undefined;
+    });
+
+    it("lists the open dataset's maps again when a job on it succeeds", async () => {
+      (main as any).dataset = { id: "ds" };
+      mocks.refreshMaps.mockClear();
+      const job = await track("map-job");
+      mocks.statuses["map-job"] = SUCCESS;
+      await failConnection(4);
+      await expect(job.completion).resolves.toBe(true);
+      await microtasks();
+      await vi.dynamicImportSettled();
+      expect(mocks.refreshMaps).toHaveBeenCalledWith(true);
+    });
+
+    it("does not list for a failed job or another dataset's job", async () => {
+      mocks.refreshMaps.mockClear();
+      (main as any).dataset = { id: "ds" };
+      const failed = await track("failed-map-job");
+      mocks.statuses["failed-map-job"] = ERROR;
+      await failConnection(4);
+      await expect(failed.completion).resolves.toBe(false);
+      (main as any).dataset = { id: "other" };
+      const elsewhere = await track("other-map-job");
+      mocks.statuses["other-map-job"] = SUCCESS;
+      await failConnection(4);
+      await expect(elsewhere.completion).resolves.toBe(true);
+      await microtasks();
+      await vi.dynamicImportSettled();
+      expect(mocks.refreshMaps).not.toHaveBeenCalled();
+    });
   });
 
   it("keeps tracking a job whose status read fails on the network", async () => {

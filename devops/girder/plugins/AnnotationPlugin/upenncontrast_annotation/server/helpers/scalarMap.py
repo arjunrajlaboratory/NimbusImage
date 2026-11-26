@@ -16,14 +16,16 @@ Everything here is pure numpy and raises ValueError; the API layer
 import functools
 import io
 import math
-import re
 import threading
 import zipfile
 import zlib
 from collections import OrderedDict
 
+import fastjsonschema
 import numpy as np
 from girder.models.file import File
+from girder.models.setting import Setting
+from girder.settings import SettingKey
 from PIL import Image
 
 from .colormaps import CONTINUOUS_COLORMAPS
@@ -31,7 +33,7 @@ from .colormaps import CONTINUOUS_COLORMAPS
 SCALAR_MAP_META_KEY = "nimbusScalarMap"
 SCALAR_MAP_VERSION = 1
 SCALAR_MAP_COLORMAPS = ("viridis", "magma", "inferno", "gray")
-LOCATION_KEY_PATTERN = re.compile(r"^xy\d+_z\d+_t\d+$")
+PERCENTILE_COUNT = 101
 # Cells (rows * cols) per location array. The worker writes at most ~4096^2;
 # 32M cells (8192 x 4096) is 128 MiB as float32 and leaves headroom without
 # letting one map item pin the cache.
@@ -39,6 +41,10 @@ MAX_SCALAR_MAP_CELLS = 32 * 1024 * 1024
 # The compressed .npz is read whole into memory before the requested array is
 # decompressed, so its size is bounded too.
 MAX_SCALAR_MAP_FILE_BYTES = 512 * 1024 * 1024
+# Girder's FileHandle refuses a single read above core.filehandle_max_size
+# (16 MiB by default), so the file is read in chunks no larger than this
+# and no larger than that setting.
+FILE_READ_CHUNK_BYTES = 8 * 1024 * 1024
 # Process-wide budget for decoded arrays across every map and location.
 MAX_SCALAR_MAP_CACHE_BYTES = 512 * 1024 * 1024
 # Alpha of pixels on the unselected side of a threshold: visible enough to
@@ -46,84 +52,89 @@ MAX_SCALAR_MAP_CACHE_BYTES = 512 * 1024 * 1024
 THRESHOLD_DIM_ALPHA = 64
 COLORMAP_LUT_SIZE = 256
 
+_NUMBER_PAIR = {
+    "type": "array", "items": {"type": "number"},
+    "minItems": 2, "maxItems": 2,
+}
+# Structure only. What a schema cannot say (finite numbers, ordering, the
+# cell cap, unique location keys) is checked in validateScalarMapMeta.
+# Descriptive fields (name, property, statistic, ...) are not constrained.
+SCALAR_MAP_META_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "version": {"type": "integer", "enum": [SCALAR_MAP_VERSION]},
+        "gridSpacingPx": {
+            "type": "number", "minimum": 0, "exclusiveMinimum": True,
+        },
+        "originPx": _NUMBER_PAIR,
+        "shape": {
+            "type": "array", "items": {"type": "integer", "minimum": 1},
+            "minItems": 2, "maxItems": 2,
+        },
+        "locations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "XY": {"type": "integer", "minimum": 0},
+                    "Z": {"type": "integer", "minimum": 0},
+                    "Time": {"type": "integer", "minimum": 0},
+                    "key": {
+                        "type": "string", "pattern": r"^xy\d+_z\d+_t\d+$",
+                    },
+                },
+                "required": ["XY", "Z", "Time", "key"],
+            },
+        },
+        "valueRange": _NUMBER_PAIR,
+        "percentiles": {
+            "type": "array", "items": {"type": "number"},
+            "minItems": PERCENTILE_COUNT, "maxItems": PERCENTILE_COUNT,
+        },
+    },
+    "required": [
+        "version", "gridSpacingPx", "originPx", "shape", "locations",
+        "valueRange", "percentiles",
+    ],
+}
+_validateMetaSchema = fastjsonschema.compile(SCALAR_MAP_META_SCHEMA)
 
-def _isFiniteNumber(value):
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+
+def _allFinite(values):
+    return all(math.isfinite(value) for value in values)
 
 
-def _isNonNegativeInt(value):
-    return isinstance(value, int) and not isinstance(value, bool) \
-        and value >= 0
-
-
-def _isFiniteNumberPair(value):
-    return (
-        isinstance(value, list) and len(value) == 2
-        and all(_isFiniteNumber(v) for v in value)
-    )
+def _nonDecreasing(values):
+    return all(a <= b for a, b in zip(values, values[1:]))
 
 
 def validateScalarMapMeta(meta):
-    """Raise ValueError unless `meta` is a usable version-1 map description.
-
-    Only the fields the server and the layer depend on are checked: version,
-    geometry (gridSpacingPx, originPx, shape), locations and valueRange,
-    plus percentiles when present. Descriptive fields (name, property,
-    statistic, ...) are passed through untouched."""
-    if not isinstance(meta, dict):
-        raise ValueError("scalar map metadata must be an object")
-    version = meta.get("version")
-    if isinstance(version, bool) or version != SCALAR_MAP_VERSION:
-        raise ValueError("unsupported scalar map version")
-    spacing = meta.get("gridSpacingPx")
-    if not _isFiniteNumber(spacing) or spacing <= 0:
-        raise ValueError("gridSpacingPx must be a positive number")
-    if not _isFiniteNumberPair(meta.get("originPx")):
-        raise ValueError("originPx must be two numbers")
-    shape = meta.get("shape")
-    if not (
-        isinstance(shape, list) and len(shape) == 2
-        and all(_isNonNegativeInt(v) and v > 0 for v in shape)
+    """Raise ValueError unless `meta` is a usable version-1 map description:
+    the schema above, plus finite numbers, min <= max, non-decreasing
+    percentiles, unique location keys and the cell cap."""
+    try:
+        _validateMetaSchema(meta)
+    except fastjsonschema.JsonSchemaValueException as exc:
+        raise ValueError(str(exc))
+    if not _allFinite(
+        [meta["gridSpacingPx"]] + meta["originPx"] + meta["valueRange"]
+        + meta["percentiles"]
     ):
-        raise ValueError("shape must be two positive integers")
-    if shape[0] * shape[1] > MAX_SCALAR_MAP_CELLS:
+        raise ValueError("scalar map numbers must be finite")
+    if not _nonDecreasing(meta["valueRange"]):
+        raise ValueError("valueRange must be [min, max] with min <= max")
+    if not _nonDecreasing(meta["percentiles"]):
+        raise ValueError("percentiles must be non-decreasing")
+    keys = [location["key"] for location in meta["locations"]]
+    if len(set(keys)) != len(keys):
+        raise ValueError("location keys must be unique")
+    rows, cols = meta["shape"]
+    if rows * cols > MAX_SCALAR_MAP_CELLS:
         raise ValueError(
             "scalar map is larger than %d cells" % MAX_SCALAR_MAP_CELLS
         )
-    locations = meta.get("locations")
-    if not isinstance(locations, list) or not locations:
-        raise ValueError("locations must be a non-empty list")
-    keys = set()
-    for location in locations:
-        if not (
-            isinstance(location, dict)
-            and isinstance(location.get("key"), str)
-            and LOCATION_KEY_PATTERN.match(location["key"])
-            and all(
-                _isNonNegativeInt(location.get(axis))
-                for axis in ("XY", "Z", "Time")
-            )
-        ):
-            raise ValueError(
-                "each location must be {XY, Z, Time, key: 'xyX_zZ_tT'}"
-            )
-        keys.add(location["key"])
-    if len(keys) != len(locations):
-        raise ValueError("location keys must be unique")
-    valueRange = meta.get("valueRange")
-    if not _isFiniteNumberPair(valueRange) or valueRange[0] > valueRange[1]:
-        raise ValueError("valueRange must be [min, max] with min <= max")
-    percentiles = meta.get("percentiles")
-    if percentiles is not None and not (
-        isinstance(percentiles, list)
-        and all(_isFiniteNumber(v) for v in percentiles)
-        and all(a <= b for a, b in zip(percentiles, percentiles[1:]))
-    ):
-        raise ValueError("percentiles must be a non-decreasing number list")
 
 
 def isScalarMapMeta(meta):
@@ -144,6 +155,17 @@ def scalarMapMeta(item):
     except ValueError as exc:
         raise ValueError("The item is not a valid scalar map: %s" % exc)
     return meta
+
+
+def scalarMapRevision(fileDoc):
+    """A string that changes whenever the map's file changes: a re-upload
+    gets a new file id, contents replaced in place change size (and
+    checksum, when Girder has one). Used by the list route, the tile ETag
+    and the array cache key."""
+    revision = "%s-%s" % (fileDoc["_id"], fileDoc.get("size"))
+    if fileDoc.get("sha512"):
+        revision += "-" + fileDoc["sha512"][:16]
+    return revision
 
 
 def locationKeys(meta):
@@ -301,74 +323,109 @@ def renderScalarMapTile(array, meta, sizeX, sizeY, tileSize, maxLevel,
     return output.getvalue()
 
 
-# ---- loading and the array cache --------------------------------------------
+# ---- loading ---------------------------------------------------------------
 
-def _readMemberHeader(npz, name):
-    """(shape, dtype) of an .npz member from its .npy header, without
-    decompressing the array."""
-    with npz.zip.open(name + ".npy") as member:
+_ARCHIVE_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, OSError)
+
+
+def _readNpyHeader(member):
+    """(shape, fortranOrder, dtype) from an open .npy stream, leaving it at
+    the start of the data."""
+    try:
         version = np.lib.format.read_magic(member)
         if version == (1, 0):
-            shape, _, dtype = np.lib.format.read_array_header_1_0(member)
-        elif version in ((2, 0), (3, 0)):
-            shape, _, dtype = np.lib.format.read_array_header_2_0(member)
-        else:
-            raise ValueError("unsupported .npy version %s" % (version,))
-    return shape, dtype
+            return np.lib.format.read_array_header_1_0(member)
+        if version in ((2, 0), (3, 0)):
+            return np.lib.format.read_array_header_2_0(member)
+    except ValueError as exc:
+        raise ValueError("The map array has an unreadable header: %s" % exc)
+    raise ValueError("unsupported .npy version %s" % (version,))
 
 
 def readScalarMapArray(data, locationKey, expectedShape):
-    """Decode one location's array from the .npz bytes as float32, checking
-    its header (2-D float, the metadata's shape, within the cell cap) before
-    decompressing it."""
+    """Decode one location's array from the .npz bytes as float32.
+
+    The bytes are opened strictly as a ZIP (a bare .npy is refused, not
+    decoded), and the one explicit member `<locationKey>.npy` is both
+    checked (2-D float, the metadata's shape, within the cell cap) and
+    decoded, reading only as many bytes as its checked header allows."""
+    memberName = locationKey + ".npy"
     try:
-        npz = np.load(io.BytesIO(data), allow_pickle=False)
-    except (ValueError, OSError, EOFError, zipfile.BadZipFile) as exc:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            if memberName not in archive.namelist():
+                raise ValueError(
+                    "The map file has no array for location %s"
+                    % locationKey
+                )
+            with archive.open(memberName) as member:
+                shape, fortranOrder, dtype = _readNpyHeader(member)
+                if dtype.kind != "f" or len(shape) != 2:
+                    raise ValueError(
+                        "The map array for %s is not a 2-D float array"
+                        % locationKey
+                    )
+                if list(shape) != list(expectedShape):
+                    raise ValueError(
+                        "The map array for %s has shape %s, not the "
+                        "metadata's %s"
+                        % (locationKey, list(shape), list(expectedShape))
+                    )
+                if shape[0] * shape[1] > MAX_SCALAR_MAP_CELLS:
+                    raise ValueError(
+                        "scalar map is larger than %d cells"
+                        % MAX_SCALAR_MAP_CELLS
+                    )
+                expectedBytes = shape[0] * shape[1] * dtype.itemsize
+                raw = member.read(expectedBytes)
+    except _ARCHIVE_ERRORS as exc:
         raise ValueError("The map file is not a readable .npz: %s" % exc)
-    if not isinstance(npz, np.lib.npyio.NpzFile):
-        raise ValueError("The map file is not a readable .npz")
-    with npz:
-        if locationKey not in npz.files:
-            raise ValueError(
-                "The map file has no array for location %s" % locationKey
-            )
-        try:
-            shape, dtype = _readMemberHeader(npz, locationKey)
-        except (OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
-            raise ValueError("The map file is not a readable .npz: %s" % exc)
-        if dtype.kind != "f" or len(shape) != 2:
-            raise ValueError(
-                "The map array for %s is not a 2-D float array" % locationKey
-            )
-        if list(shape) != list(expectedShape):
-            raise ValueError(
-                "The map array for %s has shape %s, not the metadata's %s"
-                % (locationKey, list(shape), list(expectedShape))
-            )
-        if shape[0] * shape[1] > MAX_SCALAR_MAP_CELLS:
-            raise ValueError(
-                "scalar map is larger than %d cells" % MAX_SCALAR_MAP_CELLS
-            )
-        try:
-            array = np.ascontiguousarray(npz[locationKey], dtype=np.float32)
-        except (OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
-            raise ValueError("The map file is not a readable .npz: %s" % exc)
+    if len(raw) != expectedBytes:
+        raise ValueError("The map array for %s is truncated" % locationKey)
+    flat = np.frombuffer(raw, dtype=dtype)
+    array = (
+        flat.reshape(shape[::-1]).T if fortranOrder else flat.reshape(shape)
+    )
+    array = np.array(array, dtype=np.float32, order="C")
     array.setflags(write=False)
     return array
 
 
+def _readFileBytes(fileDoc):
+    """The whole file, in reads Girder's FileHandle accepts."""
+    if (fileDoc.get("size") or 0) > MAX_SCALAR_MAP_FILE_BYTES:
+        raise ValueError(
+            "The map file is larger than %d bytes" % MAX_SCALAR_MAP_FILE_BYTES
+        )
+    chunkSize = min(
+        FILE_READ_CHUNK_BYTES,
+        Setting().get(SettingKey.FILEHANDLE_MAX_SIZE),
+    )
+    buffer = io.BytesIO()
+    with File().open(fileDoc) as handle:
+        while True:
+            chunk = handle.read(chunkSize)
+            if not chunk:
+                break
+            buffer.write(chunk)
+    return buffer.getvalue()
+
+
+# ---- the array cache -------------------------------------------------------
+
+# _cacheLock guards every structure below and is never held during I/O.
 _cacheLock = threading.Lock()
 _arrayCache = OrderedDict()
 _arrayCacheBytes = 0
+# key -> [lock, number of threads using it]: one cold load per key, the
+# others wait for it and then read the cache.
+_loadLocks = {}
+# file id -> invalidation count. A load started before an invalidation of
+# its file must not put its result in the cache afterwards.
+_fileEpochs = {}
 
 
 def _cacheKey(fileDoc, locationKey):
-    # The file id changes when a map is re-uploaded; size and checksum catch
-    # contents replaced under the same file id.
-    return (
-        str(fileDoc["_id"]), fileDoc.get("size"), fileDoc.get("sha512"),
-        locationKey,
-    )
+    return (str(fileDoc["_id"]), scalarMapRevision(fileDoc), locationKey)
 
 
 def _cacheGet(key):
@@ -379,9 +436,11 @@ def _cacheGet(key):
         return array
 
 
-def _cachePut(key, array):
+def _cachePut(key, array, epoch):
     global _arrayCacheBytes
     with _cacheLock:
+        if _fileEpochs.get(key[0], 0) != epoch:
+            return
         previous = _arrayCache.pop(key, None)
         if previous is not None:
             _arrayCacheBytes -= previous.nbytes
@@ -393,10 +452,13 @@ def _cachePut(key, array):
 
 
 def invalidateScalarMapFiles(fileIds):
-    """Drop cached arrays of the given files (on delete)."""
+    """Drop cached arrays of the given files (on delete), and keep loads
+    already in flight for them from caching their result."""
     global _arrayCacheBytes
     fileIds = {str(fileId) for fileId in fileIds}
     with _cacheLock:
+        for fileId in fileIds:
+            _fileEpochs[fileId] = _fileEpochs.get(fileId, 0) + 1
         for key in [k for k in _arrayCache if k[0] in fileIds]:
             _arrayCacheBytes -= _arrayCache.pop(key).nbytes
 
@@ -415,17 +477,27 @@ def scalarMapCacheBytes():
 
 def loadScalarMapArray(fileDoc, meta, locationKey):
     """The float32 array of `locationKey` from the map's file, through the
-    process-wide byte-bounded LRU."""
+    process-wide byte-bounded LRU. Concurrent cold requests for the same
+    array share one load."""
     key = _cacheKey(fileDoc, locationKey)
     array = _cacheGet(key)
     if array is not None:
         return array
-    if (fileDoc.get("size") or 0) > MAX_SCALAR_MAP_FILE_BYTES:
-        raise ValueError(
-            "The map file is larger than %d bytes" % MAX_SCALAR_MAP_FILE_BYTES
-        )
-    with File().open(fileDoc) as handle:
-        data = handle.read()
-    array = readScalarMapArray(data, locationKey, meta["shape"])
-    _cachePut(key, array)
+    with _cacheLock:
+        entry = _loadLocks.setdefault(key, [threading.Lock(), 0])
+        entry[1] += 1
+        epoch = _fileEpochs.get(key[0], 0)
+    try:
+        with entry[0]:
+            array = _cacheGet(key)
+            if array is None:
+                array = readScalarMapArray(
+                    _readFileBytes(fileDoc), locationKey, meta["shape"]
+                )
+                _cachePut(key, array, epoch)
+    finally:
+        with _cacheLock:
+            entry[1] -= 1
+            if entry[1] == 0:
+                _loadLocks.pop(key, None)
     return array

@@ -3174,6 +3174,8 @@ export interface IScalarMapMeta {
 export interface IScalarMap {
   itemId: string;
   updated: string;
+  // Changes whenever the backing file changes; versions the tile URLs.
+  revision: string;
   meta: IScalarMapMeta;
 }
 
@@ -3189,7 +3191,11 @@ export interface IScalarMapDisplay {
   min: number;
   max: number;
   thresholdEnabled: boolean;
+  // The cutoff sent to the tile route; always the source of the preview.
   threshold: number;
+  // The share of tissue (0..100) the user picked in percent mode; `threshold`
+  // is derived from it. null once the threshold is set by value.
+  thresholdPercent: number | null;
   thresholdSide: TScalarMapThresholdSide;
 }
 

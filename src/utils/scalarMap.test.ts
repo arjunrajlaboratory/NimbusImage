@@ -1,22 +1,28 @@
 import { describe, it, expect } from "vitest";
 import {
-  SCALAR_MAP_COLORMAPS,
-  SCALAR_MAP_COLORMAP_STOPS,
-  colormapGradientCss,
+  SLIDER_POSITIONS,
+  displayValueRange,
+  formatExactValue,
   formatMapValue,
   formatShare,
-  percentileOfValue,
+  isValidScalarMap,
+  percentileBounds,
   scalarMapLocationKey,
   scalarMapSummary,
+  selectedTissueShare,
+  sliderPositionToValue,
   thresholdForTissueShare,
-  tissueShareOfThreshold,
+  thresholdShare,
   valueAtPercentile,
+  valueToSliderPosition,
   workerThresholdForms,
 } from "./scalarMap";
 import { IScalarMapMeta } from "@/store/model";
 
 // 0th..100th percentiles of a uniform 0..200 distribution: p[i] = 2i.
 const LINEAR = Array.from({ length: 101 }, (_, i) => 2 * i);
+// 60% of the tissue sits exactly at the minimum 0, then 1..40.
+const TIED = Array.from({ length: 101 }, (_, i) => (i <= 60 ? 0 : i - 60));
 
 function meta(overrides: Partial<IScalarMapMeta> = {}): IScalarMapMeta {
   return {
@@ -55,43 +61,159 @@ describe("scalarMap percent <-> value", () => {
     expect(valueAtPercentile(LINEAR, 80.5)).toBeCloseTo(161);
     expect(valueAtPercentile(LINEAR, -5)).toBe(0);
     expect(valueAtPercentile(LINEAR, 150)).toBe(200);
-    expect(percentileOfValue(LINEAR, -1)).toBe(0);
-    expect(percentileOfValue(LINEAR, 500)).toBe(100);
+    expect(percentileBounds(LINEAR, -1)).toEqual([0, 0]);
+    expect(percentileBounds(LINEAR, 500)).toEqual([100, 100]);
   });
 
-  it("round-trips value -> percent -> value", () => {
-    for (const value of [0, 3, 41, 160, 199.5, 200]) {
-      const share = tissueShareOfThreshold(LINEAR, value, "above");
-      expect(thresholdForTissueShare(LINEAR, share, "above")).toBeCloseTo(
-        value,
-      );
-      const below = tissueShareOfThreshold(LINEAR, value, "below");
-      expect(thresholdForTissueShare(LINEAR, below, "below")).toBeCloseTo(
-        value,
-      );
+  it("round-trips value -> share -> value without ties", () => {
+    for (const value of [0.5, 3, 41, 160, 199.5]) {
+      for (const side of ["above", "below"] as const) {
+        const share = selectedTissueShare(LINEAR, value, side);
+        expect(thresholdForTissueShare(LINEAR, share, side)).toBeCloseTo(value);
+      }
     }
-    expect(tissueShareOfThreshold(LINEAR, 160, "above")).toBe(20);
-    expect(tissueShareOfThreshold(LINEAR, 40, "below")).toBe(20);
+    expect(selectedTissueShare(LINEAR, 160, "above")).toBe(20);
+    expect(selectedTissueShare(LINEAR, 40, "below")).toBe(20);
   });
 
-  it("puts a value shared by many percentiles in the middle of its run", () => {
-    // Half the tissue is exactly 0 (e.g. a density map with empty areas).
-    const plateau = Array.from({ length: 101 }, (_, i) =>
-      i <= 50 ? 0 : i - 50,
+  it("counts tied values with the selected side, as the inclusive cutoff does", () => {
+    expect(percentileBounds(TIED, 0)).toEqual([0, 60]);
+    // Bottom 50% asks for the value 0, and `<= 0` selects 60% of tissue.
+    const threshold = thresholdForTissueShare(TIED, 50, "below");
+    expect(threshold).toBe(0);
+    expect(thresholdShare(TIED, threshold, "below", 50)).toEqual({
+      requested: 50,
+      selected: 60,
+      tied: true,
+    });
+    // `>= 0` selects everything.
+    expect(selectedTissueShare(TIED, 0, "above")).toBe(100);
+    // Off the tie, the request is what is selected.
+    expect(
+      thresholdShare(
+        TIED,
+        thresholdForTissueShare(TIED, 20, "above"),
+        "above",
+        20,
+      ),
+    ).toEqual({
+      requested: 20,
+      selected: 20,
+      tied: false,
+    });
+    // Set by value: nothing was requested, nothing is tied.
+    expect(thresholdShare(TIED, 0, "below", null).tied).toBe(false);
+  });
+});
+
+describe("scalarMap worker threshold forms", () => {
+  it("gives a whole percentile exactly and the value at full precision", () => {
+    expect(workerThresholdForms(LINEAR, 160, "above", 20)).toEqual([
+      { type: "Top percent of tissue", threshold: "20", approximate: false },
+      { type: "Value at least", threshold: "160", approximate: false },
+    ]);
+    // float32-ish cutoff: every digit needed to reproduce the preview.
+    const percentiles = LINEAR.map((value) => value * 0.123456789);
+    const cutoff = percentiles[80];
+    expect(workerThresholdForms(percentiles, cutoff, "above", 20)).toEqual([
+      { type: "Top percent of tissue", threshold: "20", approximate: false },
+      { type: "Value at least", threshold: "19.7530862", approximate: false },
+    ]);
+  });
+
+  it("marks a fractional or derived percent as approximate", () => {
+    const fractional = workerThresholdForms(
+      LINEAR,
+      thresholdForTissueShare(LINEAR, 20.5, "above"),
+      "above",
+      20.5,
     );
-    expect(percentileOfValue(plateau, 0)).toBe(25);
-    expect(percentileOfValue(plateau, 10)).toBe(60);
+    expect(fractional[0]).toEqual({
+      type: "Top percent of tissue",
+      threshold: "21",
+      approximate: true,
+    });
+    // Set by value, between percentiles.
+    expect(workerThresholdForms(LINEAR, 9, "below", null)[0]).toEqual({
+      type: "Bottom percent of tissue",
+      threshold: "4.5",
+      approximate: true,
+    });
+    // Set by value, landing on a whole percentile.
+    expect(workerThresholdForms(LINEAR, 40, "below", null)[0]).toEqual({
+      type: "Bottom percent of tissue",
+      threshold: "20",
+      approximate: false,
+    });
+  });
+});
+
+describe("scalarMap ranges and sliders", () => {
+  it("widens a constant map's range by the server's rule", () => {
+    expect(displayValueRange([3, 3])).toEqual([2.5, 3.5]);
+    expect(displayValueRange([1, 4])).toEqual([1, 4]);
   });
 
-  it("states the threshold in both forms the worker takes", () => {
-    expect(workerThresholdForms(LINEAR, 160, "above")).toEqual([
-      { type: "Top percent of tissue", threshold: "20" },
-      { type: "Value at least", threshold: "160" },
-    ]);
-    expect(workerThresholdForms(LINEAR, 9, "below")).toEqual([
-      { type: "Bottom percent of tissue", threshold: "4.5" },
-      { type: "Value at most", threshold: "9" },
-    ]);
+  it.each([
+    [1e-7, 2e-7],
+    [0, 1],
+    [-5e5, 5e5],
+  ])(
+    "maps integer positions over [%d, %d] without losing values",
+    (low, high) => {
+      const range: [number, number] = [low, high];
+      expect(sliderPositionToValue(0, range)).toBe(low);
+      expect(sliderPositionToValue(SLIDER_POSITIONS, range)).toBe(high);
+      const middle = sliderPositionToValue(500, range);
+      expect(Math.abs(middle - (low + high) / 2)).toBeLessThanOrEqual(
+        (high - low) * 1e-12,
+      );
+      expect(valueToSliderPosition(middle, range)).toBe(500);
+      for (const position of [0, 1, 250, 999, 1000]) {
+        const value = sliderPositionToValue(position, range);
+        expect(Number.isInteger(valueToSliderPosition(value, range))).toBe(
+          true,
+        );
+        expect(valueToSliderPosition(value, range)).toBe(position);
+      }
+      // Out-of-range values clamp to the ends.
+      expect(valueToSliderPosition(low - (high - low), range)).toBe(0);
+      expect(valueToSliderPosition(high + (high - low), range)).toBe(
+        SLIDER_POSITIONS,
+      );
+    },
+  );
+});
+
+describe("scalarMap validation", () => {
+  const good = { itemId: "a", updated: "u", revision: "r", meta: meta() };
+
+  it("accepts a well-formed map", () => {
+    expect(isValidScalarMap(good)).toBe(true);
+  });
+
+  it.each([
+    ["no meta", { itemId: "a" }],
+    ["short percentiles", { ...good, meta: meta({ percentiles: [1, 2] }) }],
+    [
+      "decreasing percentiles",
+      { ...good, meta: meta({ percentiles: [...LINEAR].reverse() }) },
+    ],
+    [
+      "non-finite percentile",
+      {
+        ...good,
+        meta: meta({ percentiles: LINEAR.map((v, i) => (i === 5 ? NaN : v)) }),
+      },
+    ],
+    [
+      "bad value range",
+      { ...good, meta: meta({ valueRange: [2, 1] as [number, number] }) },
+    ],
+    ["no locations", { ...good, meta: meta({ locations: undefined as any }) }],
+    ["not an object", "nope"],
+  ])("rejects %s", (_label, map) => {
+    expect(isValidScalarMap(map)).toBe(false);
   });
 });
 
@@ -107,17 +229,10 @@ describe("scalarMap display helpers", () => {
     expect(formatMapValue(0)).toBe("0");
     expect(formatMapValue(NaN)).toBe("–");
     expect(formatMapValue(2.5e6)).toBe("2.50e+6");
+    expect(formatExactValue(0.1 + 0.2)).toBe("0.3");
+    expect(formatExactValue(1.23456789e-7)).toBe("1.23456789e-7");
     expect(formatShare(4.56)).toBe("4.6");
     expect(formatShare(42.4)).toBe("42");
-  });
-
-  it("has a legend gradient for every colormap offered", () => {
-    for (const { value } of SCALAR_MAP_COLORMAPS) {
-      expect(SCALAR_MAP_COLORMAP_STOPS[value].length).toBeGreaterThan(1);
-      expect(colormapGradientCss(value)).toContain(
-        SCALAR_MAP_COLORMAP_STOPS[value][0],
-      );
-    }
   });
 
   it("summarizes statistic, property and radius", () => {

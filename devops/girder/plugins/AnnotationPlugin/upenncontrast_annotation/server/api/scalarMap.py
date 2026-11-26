@@ -6,16 +6,26 @@ metadata describes it; its single file is an .npz of float arrays.
 Rendering and the array cache live in `helpers/scalarMap.py`.
 """
 
+import hashlib
+import json
 import math
+from collections import defaultdict
+
 import cherrypy
 from girder.api import access
 from girder.api.describe import Description, describeRoute
 from girder.api.rest import Resource, setRawResponse, setResponseHeader
 from girder.constants import AccessType, TokenScope
 from girder.exceptions import RestException
+from girder.models.file import File
 from girder.models.folder import Folder
 from girder.models.item import Item
 
+from ..helpers.constants import (
+    MAX_OVERLAY_IMAGE_EDGE,
+    MAX_OVERLAY_PYRAMID_LEVEL,
+    OVERLAY_TILE_SIZES,
+)
 from ..helpers.scalarMap import (
     SCALAR_MAP_COLORMAPS,
     SCALAR_MAP_META_KEY,
@@ -26,23 +36,17 @@ from ..helpers.scalarMap import (
     locationKeys,
     renderScalarMapTile,
     scalarMapMeta,
+    scalarMapRevision,
 )
-from ..helpers.validation import requireFloat, requireInt, requireObjectId
+from ..helpers.validation import (
+    requireFloat,
+    requireInt,
+    requireIntWithin,
+    requireObjectId,
+)
 
-# Same pyramid limits as the annotation overview raster.
-TILE_SIZES = (256, 512, 1024)
-MAX_IMAGE_EDGE = 131072
-MAX_PYRAMID_LEVEL = 30
-
-
-def _requireIntWithin(value, name, minimum, maximum):
-    number = requireInt(value, name)
-    if not minimum <= number <= maximum:
-        raise RestException(
-            "%s must be between %d and %d" % (name, minimum, maximum),
-            code=400,
-        )
-    return number
+# Bump when the rendering changes, so revalidating clients refetch.
+TILE_RENDER_VERSION = 1
 
 
 class ScalarMap(Resource):
@@ -68,8 +72,10 @@ class ScalarMap(Resource):
     @describeRoute(
         Description("List the scalar maps saved in a dataset")
         .notes("One entry per item directly in the dataset folder whose "
-               "meta.%s is a valid version-1 map: {itemId, updated, meta}. "
-               "Other items are skipped." % SCALAR_MAP_META_KEY)
+               "meta.%s is a valid version-1 map and that holds exactly one "
+               "file: {itemId, updated, revision, meta}. revision changes "
+               "whenever the map's file changes; put it in tile URLs. Other "
+               "items are skipped." % SCALAR_MAP_META_KEY)
         .param("datasetId", "The dataset (folder) id", required=True)
         .errorResponse("Read access denied", 403)
     )
@@ -79,35 +85,49 @@ class ScalarMap(Resource):
             datasetId, user=self.getCurrentUser(), level=AccessType.READ,
             exc=True,
         )
-        items = Item().find(
-            {
-                "folderId": folder["_id"],
-                "meta.%s" % SCALAR_MAP_META_KEY: {"$exists": True},
-            },
-            sort=[("created", 1)],
-            fields=["_id", "updated", "meta.%s" % SCALAR_MAP_META_KEY],
-        )
+        items = [
+            item for item in Item().find(
+                {
+                    "folderId": folder["_id"],
+                    "meta.%s" % SCALAR_MAP_META_KEY: {"$exists": True},
+                },
+                sort=[("created", 1)],
+                fields=["_id", "updated", "meta.%s" % SCALAR_MAP_META_KEY],
+            )
+            if isScalarMapMeta(item["meta"][SCALAR_MAP_META_KEY])
+        ]
+        filesByItem = defaultdict(list)
+        if items:
+            for fileDoc in File().find(
+                {"itemId": {"$in": [item["_id"] for item in items]}},
+                fields=["_id", "itemId", "size", "sha512"],
+            ):
+                filesByItem[fileDoc["itemId"]].append(fileDoc)
         return [
             {
                 "itemId": str(item["_id"]),
                 "updated": item.get("updated"),
+                "revision": scalarMapRevision(filesByItem[item["_id"]][0]),
                 "meta": item["meta"][SCALAR_MAP_META_KEY],
             }
             for item in items
-            if isScalarMapMeta(item["meta"][SCALAR_MAP_META_KEY])
+            if len(filesByItem[item["_id"]]) == 1
         ]
 
     # GeoJS loads OSM tiles through <img> requests, which cannot attach the
     # Girder-Token header: opt into the HttpOnly auth cookie like the
     # annotation overview raster. Share links pass their token as the
-    # `token` query parameter, which Girder reads on any route.
+    # `token` query parameter, which Girder reads on any route. Girder
+    # itself refuses a repeated query parameter with a 400 before this
+    # handler runs, so every param here is a single string.
     @access.public(scope=TokenScope.DATA_READ, cookie=True)
     @describeRoute(
         Description("Render a scalar map tile on the image's tile pyramid")
         .notes("scale = 2 ** (z - maxLevel); tile (x, y) covers image "
                "pixels [x, x + 1) * tileSize / scale. Bilinear, NaN-aware "
                "sampling; NaN and off-map pixels are transparent. With "
-               "threshold, pixels on the other side of it are dimmed.")
+               "threshold, pixels on the other side of it are dimmed. "
+               "Responses carry an ETag and must be revalidated.")
         .param("itemId", "The map item id", paramType="path")
         .param("z", "Tile pyramid level", paramType="path")
         .param("x", "Tile x index", paramType="path")
@@ -137,22 +157,23 @@ class ScalarMap(Resource):
             raise RestException(
                 "location must be one of the map's location keys", code=400
             )
-        maxLevel = _requireIntWithin(
-            params.get("maxLevel"), "maxLevel", 0, MAX_PYRAMID_LEVEL
+        maxLevel = requireIntWithin(
+            params.get("maxLevel"), "maxLevel", 0, MAX_OVERLAY_PYRAMID_LEVEL
         )
-        level = _requireIntWithin(z, "z", 0, maxLevel)
-        tileX = _requireIntWithin(x, "x", 0, MAX_IMAGE_EDGE)
-        tileY = _requireIntWithin(y, "y", 0, MAX_IMAGE_EDGE)
-        sizeX = _requireIntWithin(
-            params.get("sizeX"), "sizeX", 1, MAX_IMAGE_EDGE
+        level = requireIntWithin(z, "z", 0, maxLevel)
+        tileX = requireIntWithin(x, "x", 0, MAX_OVERLAY_IMAGE_EDGE)
+        tileY = requireIntWithin(y, "y", 0, MAX_OVERLAY_IMAGE_EDGE)
+        sizeX = requireIntWithin(
+            params.get("sizeX"), "sizeX", 1, MAX_OVERLAY_IMAGE_EDGE
         )
-        sizeY = _requireIntWithin(
-            params.get("sizeY"), "sizeY", 1, MAX_IMAGE_EDGE
+        sizeY = requireIntWithin(
+            params.get("sizeY"), "sizeY", 1, MAX_OVERLAY_IMAGE_EDGE
         )
         tileSize = requireInt(params.get("tileSize", 256), "tileSize")
-        if tileSize not in TILE_SIZES:
+        if tileSize not in OVERLAY_TILE_SIZES:
             raise RestException(
-                "tileSize must be one of %s" % (TILE_SIZES,), code=400
+                "tileSize must be one of %s" % (OVERLAY_TILE_SIZES,),
+                code=400,
             )
         scale = 2.0 ** (level - maxLevel)
         if (
@@ -184,6 +205,26 @@ class ScalarMap(Resource):
             raise RestException(
                 "A scalar map item must hold exactly one file", code=400
             )
+
+        # Same caching as the annotation overview raster: the browser must
+        # revalidate every tile (so READ is re-checked after a share link
+        # is revoked or the user changes), and an unchanged tile is a
+        # body-less 304 without loading or rendering anything.
+        etag = 'W/"%s"' % hashlib.sha1(json.dumps([
+            TILE_RENDER_VERSION, scalarMapRevision(files[0]), location,
+            level, tileX, tileY, sizeX, sizeY, maxLevel, tileSize, colormap,
+            vmin, vmax, threshold, thresholdSide,
+        ]).encode()).hexdigest()
+        setResponseHeader("ETag", etag)
+        setResponseHeader(
+            "Cache-Control", "private, max-age=0, must-revalidate"
+        )
+        cherrypy.response.headers.pop("Pragma", None)
+        if cherrypy.request.headers.get("If-None-Match") == etag:
+            cherrypy.response.status = 304
+            setRawResponse()
+            return b""
+
         try:
             array = loadScalarMapArray(files[0], meta, location)
             png = renderScalarMapTile(
@@ -194,10 +235,6 @@ class ScalarMap(Resource):
             raise RestException(str(exc), code=400)
         setRawResponse()
         setResponseHeader("Content-Type", "image/png")
-        # Every input is in the URL; a replaced map changes its item's
-        # `updated`, which the client puts in the URL to bust this.
-        setResponseHeader("Cache-Control", "private, max-age=3600")
-        cherrypy.response.headers.pop("Pragma", None)
         return png
 
     @access.user(scope=TokenScope.DATA_WRITE)
