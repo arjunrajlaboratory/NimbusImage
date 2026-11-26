@@ -23,7 +23,9 @@ setup(
         "Programming Language :: Python",
     ],
     install_requires=[
-        "girder[mount]>5",
+        # >=5.0.24 for EDIT_METADATA_FLAG, which resource/batch uses to
+        # match the _canEditMetadata field GET item/{id} returns.
+        "girder[mount]>=5.0.24",
         "girder-worker>5",
         "girder-plugin-worker>5",
         "girder-worker-utils",  # Doesn't follow Girder's version schema
