@@ -8,3 +8,5 @@
 **/*.pyc
 **/*.egg-info
 **/.venv
+# Cargo build output (plugins/AnnotationPlugin/bson-json-native).
+**/target

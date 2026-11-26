@@ -120,6 +120,7 @@ client = ni.connect(..., frontend_url="https://app.nimbusimage.com")
 - `.frontend_url` — str (read-only, default `http://localhost:5173`)
 - `.girder` — raw GirderClient (escape hatch)
 - `.list_datasets()` → `list[DatasetInfo]`
+- `.count_annotations(dataset_ids, shape=None, tags=None)` → one `{datasetId, count}` or `{datasetId, error}` per distinct dataset, one `POST upenn_annotation/counts` per 100 ids
 - `.dataset(id)` or `.dataset(name="...")` → `Dataset`
 - `.list_projects()` → `list[ProjectInfo]`
 - `.create_project(name, description="")` → `Project`
@@ -298,7 +299,7 @@ ds.sharing.set_public(True)                             # → dict (counts updat
 ds.sharing.get_access()                                 # → dict
 ```
 
-`share()` covers the dataset folder and each of its dataset views the caller can write, with that view's collection, as the web Share dialog does: `dataset_view/share` refuses a whole request (403) that names a view or collection the caller can't write, so the others are left unchanged. It raises `ValueError` without posting if the caller lacks WRITE on the dataset or can write none of its views. It sends any target as-is, the caller included: nothing on the server yet stops a dataset's only ADMIN from removing themselves (PR #1165 adds that guard), so never target yourself. Neither `share()` looks up the caller, so data-only API keys can share.
+`share()` covers the dataset folder and each of its dataset views the caller can write, with that view's collection, as the web Share dialog does: `dataset_view/share` refuses a whole request (403) that names a view or collection the caller can't write, so the others are left unchanged. It raises `ValueError` without posting if the caller lacks WRITE on the dataset or can write none of its views. It sends any target as-is, the caller included; the server refuses (400, nothing changed) any change that would leave the dataset with no user at ADMIN (PR #1165), so to hand a dataset over, give the new owner `admin` first and then remove yourself. Neither `share()` looks up the caller, so data-only API keys can share.
 
 ### URLs — `ds` methods
 
@@ -645,7 +646,10 @@ Rendering, query, and listing invariants established on PR #1390 across four rev
 - A downsampled layer is windowed by the server before its final resample, as the app's tiles are; full resolution stays exact in float — *"test_downsampled_layer_is_windowed_by_the_server_like_the_app"*.
 - `max_size` and `crop` reach the region request — *"test_max_size_and_crop_reach_the_region_request"*; `get_stack`/`get_all_channels` pass `max_size` — *"test_stack_and_all_channels_pass_max_size"*.
 - `max_size` never upsamples, including for a crop past the image edge — *"test_max_size_above_the_region_does_not_upsample"*, *"test_crop_past_the_image_does_not_upsample"*; negative crop edges count from the far edge — *"test_negative_crop_edges_count_from_the_far_edge"*.
-- `list_datasets` is one `resource/batch` call, not a GET per dataset — *"test_list_datasets_batches_the_folder_lookup"*.
+- `list_datasets` is one `resource/batch` call per 5,000 datasets (the server refuses more than 10,000 ids), not a GET per dataset — *"test_list_datasets_batches_the_folder_lookup"*, *"test_list_datasets_chunks_under_the_servers_id_cap"*. It reads `user/me` only when a server sends raw folders without `_accessLevel` (older servers), once — *"test_server_provided_level_wins"*, *"test_an_old_server_with_a_data_only_key_reads_no_grants"*.
+- List calls ask for every page (`limit=0`): Girder's list endpoints return 50 unless asked, which silently dropped projects, views, collections and properties (and made `get_or_create` create duplicates) — *"test_list_projects_requests_every_page"*, *"test_register_returns_collection_count"*. `get_values()` follows the server's `afterId` cursor instead, in pages — *"test_get_values_pages_through_every_value"*.
+- `annotations.compute` and `properties.compute` take `worker_labels` from a caller that already listed the workers, and their role check then skips its own listing — *"test_known_labels_skip_the_worker_listing"*.
+- `count_annotations` refuses a malformed id before any request (the server refuses a whole batch over one, which would drop earlier batches' rows), and counts case variants of one id once, even across batches — *"test_a_malformed_id_is_refused_before_any_request"*, *"test_case_variants_count_once_across_batches"*.
 
 **Annotation summary** (`ds.annotations.summary`, POST `upenn_annotation/summary`)
 - The request body and parsing, in the server's tag order — *"test_posts_the_summary_request_and_parses_it"*.
@@ -675,7 +679,7 @@ Rendering, query, and listing invariants established on PR #1390 across four rev
 **Sharing and project requests** (every one of these 400'd on the live server while mock tests that only asserted "post was called" passed; unit tests must pin the exact request)
 - Dataset `share()` sends `datasetViewIds`, the user, and the access code — *"test_share_sends_schema_body"*; a dataset without views is an error before any POST — *"test_share_without_views_raises_before_posting"*.
 - Dataset `share()` sends only views the caller can write whose collection they can also write, as the Share dialog does (the server 403s a whole request naming anything else) — *"test_share_skips_views_the_caller_cannot_write"*, *"test_share_skips_views_whose_configuration_is_read_only"*, *"test_share_skips_views_whose_configuration_is_unreadable"*; with none, or without WRITE on the dataset, it raises before posting — *"test_share_with_nothing_writable_raises_before_posting"*, *"test_share_without_write_on_the_dataset_raises_before_posting"*; live, a WRITE collaborator shares a dataset with a view and collection they can only read (the old client got a 403) — *"test_collaborator_shares_through_writable_views_only"*.
-- Self-targeting is the server's call, not the client's: `share()` makes no `user/me` lookup and posts any target unchanged — *"test_share_leaves_self_targeting_to_the_server"*; so a data-only API key (whose `user/me` is null) can share — live *"test_share_with_data_only_api_key"*; a non-admin creator removing themselves is not refused by the server until PR #1165 — live *"test_creator_cannot_remove_themselves"* (strict xfail until then).
+- Self-targeting is the server's call, not the client's: `share()` makes no `user/me` lookup and posts any target unchanged — *"test_share_leaves_self_targeting_to_the_server"*; so a data-only API key (whose `user/me` is null) can share — live *"test_share_with_data_only_api_key"*; a dataset's last ADMIN removing themselves is refused by the server (PR #1165) — live *"test_last_admin_cannot_remove_themselves"*.
 - Project `share`/`set_public`/`add_dataset`/`add_configuration`/`set_status` send query params, not JSON bodies — *"test_share_sends_query_params"*, *"test_set_public_sends_query_params"*, *"test_add_dataset"*.
 - Live: a second non-admin user can read only after sharing and loses access on remove — *"test_share_read_then_remove"*; project mutators land — *"test_project_mutators_round_trip"*.
 

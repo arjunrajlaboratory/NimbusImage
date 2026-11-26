@@ -47,6 +47,10 @@ def dataset_view_url(
     unroll_xy: bool | None = None,
     unroll_z: bool | None = None,
     unroll_t: bool | None = None,
+    x: float | None = None,
+    y: float | None = None,
+    zoom: float | None = None,
+    width: float | None = None,
 ) -> str:
     """URL for the dataset image viewer.
 
@@ -60,6 +64,10 @@ def dataset_view_url(
         unroll_xy: Unroll XY dimension.
         unroll_z: Unroll Z dimension.
         unroll_t: Unroll time dimension.
+        x, y: Center the viewer on this point, in full-resolution image
+            pixels (origin top-left, as annotation coordinates).
+        zoom: Viewer zoom level for the centered point.
+        width: Instead of zoom, image pixels to show across the viewer.
     """
     query = {
         "xy": xy,
@@ -69,6 +77,10 @@ def dataset_view_url(
         "unrollXY": str(unroll_xy).lower() if unroll_xy is not None else None,
         "unrollZ": str(unroll_z).lower() if unroll_z is not None else None,
         "unrollT": str(unroll_t).lower() if unroll_t is not None else None,
+        "x": x,
+        "y": y,
+        "zoom": zoom,
+        "width": width,
     }
     return _build_url(frontend_url, f"datasetView/{view_id}/view", query)
 

@@ -30,6 +30,14 @@ from . import analysis
 # few dozen properties at most.
 MAX_UNCOMPUTED_PROPERTIES = 10_000
 MAX_ANNOTATION_IDS = 100_000_000
+# Datasets per batch-count request (POST upenn_annotation/counts): one
+# indexed aggregation over all of them, so this bounds a public request's
+# work. Comparing a project's or a search's datasets is tens, not hundreds.
+MAX_COUNT_DATASETS = 100
+# Tag filters on the public counts endpoint: each tag is part of a $all
+# clause, so cap how many and how long (real filters are a few tags).
+MAX_FILTER_TAGS = 100
+MAX_TAG_LENGTH = 1000
 
 # Analysis-gating request ceilings (SERVER_GATING.md "Limits"): abuse guards
 # on the public gate-resolution endpoint, far above real use (a panel holds a
@@ -157,6 +165,49 @@ def requireObjectId(value, field="id"):
         raise RestException("%s is not a valid id" % field, code=400)
 
 
+def validateCountsRequest(body, shapes):
+    """Parse a batch-count body {datasetIds, shape?, tags?} into
+    (datasetIds, shape, tags). datasetIds keeps request order, one entry
+    per distinct id (two spellings of one id, e.g. upper and lower case,
+    count once), as (requested string, ObjectId) pairs: the reply echoes
+    the first string the caller sent for it. A malformed request (not an
+    object, ids not a list of valid id strings, over the cap, a shape not
+    in `shapes`, bad tags) raises RestException(400)."""
+    body = requireObjectBody(body)
+    rawIds = requireList(body.get("datasetIds"), "datasetIds")
+    requireCountWithin(len(rawIds), MAX_COUNT_DATASETS, "datasetIds")
+    # Strings only: ObjectId(None) would make a new id, not refuse it.
+    if not all(isinstance(value, str) for value in rawIds):
+        raise RestException("datasetIds must be a list of strings",
+                            code=400)
+    byId = {}
+    for value in rawIds:
+        try:
+            byId.setdefault(ObjectId(value), value)
+        except InvalidId:
+            raise RestException(
+                "datasetIds: %r is not a valid id" % value[:64], code=400
+            )
+    datasetIds = [(value, objectId) for objectId, value in byId.items()]
+    shape = body.get("shape")
+    if shape not in (None, "", *shapes):
+        raise RestException(
+            "shape must be one of: %s" % ", ".join(shapes), code=400
+        )
+    # Like GET count's tags: absent means no filter, anything but a list
+    # of strings is refused (not read as "no filter").
+    tags = body.get("tags")
+    tags = [] if tags is None else requireList(tags, "tags")
+    requireCountWithin(len(tags), MAX_FILTER_TAGS, "tags")
+    if not all(isinstance(tag, str) and len(tag) <= MAX_TAG_LENGTH
+               for tag in tags):
+        raise RestException(
+            "tags must be a list of strings of at most %d characters"
+            % MAX_TAG_LENGTH, code=400,
+        )
+    return datasetIds, shape or None, tags
+
+
 def requireInt(value, field):
     """Parse `value` into an int, raising RestException(400) on a non-integer.
     Pagination params reach a public endpoint, so a bad value must be a clean
@@ -228,6 +279,22 @@ def validatePropertyPaths(propertyPaths):
         raise RestException(
             "propertyPaths must be a list of valid paths", code=400
         )
+
+
+def validateDisjointPropertyPaths(propertyPaths):
+    """Refuse a path that extends another (["area"] with ["area", "mean"]).
+    Mongo rejects such a projection with "Path collision"; in an endpoint
+    that streams its response, that would arrive after the 200 as a
+    truncated body. Repeated identical paths are fine. Call after
+    validatePropertyPaths."""
+    ordered = sorted(tuple(path) for path in propertyPaths)
+    for shorter, longer in zip(ordered, ordered[1:]):
+        if shorter != longer and longer[:len(shorter)] == shorter:
+            raise RestException(
+                "propertyPaths must not contain a path and its sub-path "
+                "(%s and %s)" % (".".join(shorter), ".".join(longer)),
+                code=400,
+            )
 
 
 def validateUncomputedCountsProperties(properties):
@@ -619,6 +686,22 @@ def validateListInputs(filters, sort=None, propertyPaths=None):
     if tags is not None:
         if not isinstance(tags, dict):
             raise RestException("filters.tags must be an object", code=400)
+        # A key this server does not know is refused, not ignored: an
+        # ignored "all" would widen an ALL-tags match (e.g. a delete) to ANY.
+        unknown = set(tags) - {"values", "exclusive", "all"}
+        if unknown:
+            raise RestException(
+                "filters.tags has unknown keys: %s"
+                % ", ".join(sorted(map(str, unknown))),
+                code=400,
+            )
+        for flag in ("exclusive", "all"):
+            if tags.get(flag) is not None and not isinstance(
+                tags[flag], bool
+            ):
+                raise RestException(
+                    "filters.tags.%s must be a boolean" % flag, code=400
+                )
         tagValues = tags.get("values")
         if tagValues is not None:
             requireList(tagValues, "filters.tags.values")

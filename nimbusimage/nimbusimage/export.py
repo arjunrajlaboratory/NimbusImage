@@ -3,6 +3,8 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+from nimbusimage._girder import loads_json
+
 if TYPE_CHECKING:
     import girder_client
 
@@ -63,13 +65,8 @@ class ExportAccessor:
             "undefinedValue": undefined_value,
             "sanitizeColumnNames": sanitize_column_names,
         }
-        import json as json_mod
-
         response = self._gc.sendRestRequest(
-            "POST", "export/csv",
-            data=json_mod.dumps(body),
-            headers={"Content-Type": "application/json"},
-            jsonResp=False,
+            "POST", "export/csv", json=body, jsonResp=False,
         )
         data = response.content
 
@@ -96,18 +93,13 @@ class ExportAccessor:
         Returns:
             The FeatureCollection (also written to path if provided).
         """
-        import json as json_mod
-
         body = {"datasetId": self._dataset_id}
         if annotation_ids is not None:
             body["annotationIds"] = list(annotation_ids)
         response = self._gc.sendRestRequest(
-            "POST", "export/geojson",
-            data=json_mod.dumps(body),
-            headers={"Content-Type": "application/json"},
-            jsonResp=False,
+            "POST", "export/geojson", json=body, jsonResp=False,
         )
         if path is not None:
             with open(path, "wb") as f:
                 f.write(response.content)
-        return json_mod.loads(response.content)
+        return loads_json(response)

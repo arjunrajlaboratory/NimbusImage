@@ -4,6 +4,13 @@ import { shallowMount, enableAutoUnmount } from "@vue/test-utils";
 
 enableAutoUnmount(afterEach);
 
+const route = vi.hoisted(() => ({ value: null as any }));
+vi.mock("vue-router", async () => {
+  const { reactive } = await import("vue");
+  route.value = reactive({ name: "datasetview" });
+  return { useRoute: () => route.value };
+});
+
 const mocks = vi.hoisted(() => ({
   searchTranscriptGenes: vi.fn(),
   ensureSchema: vi.fn(),
@@ -43,6 +50,9 @@ vi.mock("@/store/transcripts", async () => {
       goToCell: mocks.goToCell,
       setSymbols: mocks.setSymbols,
       setReadout: vi.fn(),
+      setEnabled: vi.fn(function (this: any, enabled: boolean) {
+        this.enabled = enabled;
+      }),
     }),
   };
 });
@@ -55,6 +65,16 @@ vi.mock("@/utils/errors", () => ({
 import TranscriptsPanel from "./TranscriptsPanel.vue";
 import transcriptsStore from "@/store/transcripts";
 import store from "@/store";
+import { allCommands } from "@/commands/registry";
+import { boundKeys } from "@/utils/v-mousetrap";
+// Evaluates the vue-router mock even if the component stops importing it.
+import "vue-router";
+
+function transcriptsCommand() {
+  return allCommands.value.find(
+    (command) => command.id === "transcripts.toggle",
+  )!;
+}
 
 describe("TranscriptsPanel", () => {
   beforeEach(() => {
@@ -72,6 +92,7 @@ describe("TranscriptsPanel", () => {
     (transcriptsStore as any).hasTranscripts = true;
     (transcriptsStore as any).error = null;
     (transcriptsStore as any).mode = "auto";
+    route.value.name = "datasetview";
   });
 
   afterEach(() => {
@@ -278,5 +299,78 @@ describe("TranscriptsPanel", () => {
     expect(mocks.searchTranscriptGenes).toHaveBeenCalledWith("ds1", "cd", 25);
     vm.onSymbols(["CD3E", "CD2"]);
     expect(mocks.setSymbols).toHaveBeenCalledWith(["CD3E", "CD2"]);
+  });
+
+  it("binds the g key to toggle transcripts", () => {
+    const wrapper = shallowMount(TranscriptsPanel, {
+      props: { visible: false },
+    });
+    const vm = wrapper.vm as any;
+    const [hotkey] = vm.transcriptHotkeys;
+    expect(hotkey.bind).toBe("g");
+    expect(hotkey.disabled).toBe(false);
+    expect(hotkey.data).toEqual({
+      section: "View",
+      description: "Show/hide transcripts",
+    });
+    hotkey.handler();
+    expect(transcriptsStore.enabled).toBe(false);
+    hotkey.handler();
+    expect(transcriptsStore.enabled).toBe(true);
+  });
+
+  it("leaves the g key unbound without a transcript store", async () => {
+    (transcriptsStore as any).hasTranscripts = false;
+    const wrapper = shallowMount(TranscriptsPanel, {
+      props: { visible: false },
+    });
+    const vm = wrapper.vm as any;
+    expect(vm.transcriptHotkeys[0].disabled).toBe(true);
+    expect(transcriptsCommand().enabled!()).toBe(false);
+    (transcriptsStore as any).hasTranscripts = true;
+    await nextTick();
+    expect(vm.transcriptHotkeys[0].disabled).toBe(false);
+    expect(transcriptsCommand().enabled!()).toBe(true);
+  });
+
+  it("registers a palette command that names what it will do", async () => {
+    shallowMount(TranscriptsPanel, { props: { visible: false } });
+    expect(transcriptsCommand().title).toBe("Hide transcripts");
+    transcriptsCommand().run();
+    expect(transcriptsStore.enabled).toBe(false);
+    await nextTick();
+    expect(transcriptsCommand().title).toBe("Show transcripts");
+  });
+
+  it("leaves the g key unbound outside the viewer", async () => {
+    // The palette stays mounted on every route, e.g. the dataset info page.
+    route.value.name = "dataset";
+    const wrapper = shallowMount(TranscriptsPanel, {
+      props: { visible: false },
+    });
+    const vm = wrapper.vm as any;
+    expect(vm.transcriptHotkeys[0].disabled).toBe(true);
+    expect(transcriptsCommand().enabled!()).toBe(false);
+    route.value.name = "datasetview";
+    await nextTick();
+    expect(vm.transcriptHotkeys[0].disabled).toBe(false);
+    expect(transcriptsCommand().enabled!()).toBe(true);
+  });
+
+  it("hints the key in the switch label only while it is bound", async () => {
+    const wrapper = shallowMount(TranscriptsPanel, {
+      props: { visible: false },
+    });
+    const vm = wrapper.vm as any;
+    expect(vm.switchLabel).toBe("Show transcripts");
+    boundKeys.value = {
+      g: [
+        { section: "Tools", description: "Toggle tool:  Cells" },
+        { section: "View", description: "Show/hide transcripts" },
+      ],
+    };
+    await nextTick();
+    expect(vm.switchLabel).toBe("Show transcripts (G)");
+    boundKeys.value = {};
   });
 });

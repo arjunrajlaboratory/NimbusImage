@@ -2,7 +2,10 @@ import json
 import os
 
 import pytest
+from girder.models.folder import Folder
+from girder.models.token import Token
 from pytest_girder.assertions import assertStatus, assertStatusOk
+from pytest_girder.utils import getResponseBody
 
 from upenncontrast_annotation.server.models.annotation import Annotation
 from upenncontrast_annotation.server.models.connections import (
@@ -1278,5 +1281,75 @@ class TestGeoJsonExport:
         )
         response = self._postGeoJson(
             server, user, {"datasetId": str(dataset["_id"])}
+        )
+        assertStatus(response, 403)
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestExportLinks:
+    """GET export routes that a plain link can download: they accept
+    Girder's auth cookie, so no token travels in the URL."""
+
+    def _private(self, admin):
+        dataset, annotations, _ = createDatasetWithData(admin)
+        Folder().setPublic(dataset, False, save=True)
+        return dataset, annotations
+
+    def _get(self, server, path, params, cookie=None):
+        return server.request(
+            path=path, method="GET", params=params, isJson=False,
+            cookie=cookie,
+        )
+
+    @pytest.mark.parametrize("path", [
+        "/export/csv", "/export/geojson", "/export/json",
+    ])
+    def testCookieAuthenticatesDownloadLink(self, admin, server, path):
+        dataset, _ = self._private(admin)
+        params = {"datasetId": str(dataset["_id"])}
+        assertStatus(self._get(server, path, params), 401)
+        token = Token().createToken(admin)
+        response = self._get(
+            server, path, params,
+            cookie="girderToken={}".format(token["_id"]),
+        )
+        assertStatusOk(response)
+        assert "attachment" in response.headers["Content-Disposition"]
+
+    def testCsvLinkMatchesPost(self, admin, server):
+        dataset, _ = self._private(admin)
+        # Stored property paths start with a property id.
+        body = {"datasetId": str(dataset["_id"]),
+                "propertyPaths": [["6ae7d5722f576eb6a86a01cc", "Area"]]}
+        posted = server.request(
+            path="/export/csv", method="POST", user=admin,
+            body=json.dumps(body), type="application/json", isJson=False,
+        )
+        linked = server.request(
+            path="/export/csv", method="GET", user=admin, isJson=False,
+            params={
+                **body, "propertyPaths": json.dumps(body["propertyPaths"]),
+            },
+        )
+        assertStatusOk(posted)
+        assertStatusOk(linked)
+        assert getResponseBody(linked) == getResponseBody(posted)
+
+    def testCsvLinkRejectsMalformedPaths(self, admin, server):
+        dataset, _ = self._private(admin)
+        for paths in ('["Area"]', '[[]]', '[["a.b"]]', '{"a": 1}'):
+            response = server.request(
+                path="/export/csv", method="GET", user=admin, isJson=False,
+                params={"datasetId": str(dataset["_id"]),
+                        "propertyPaths": paths},
+            )
+            assertStatus(response, 400)
+
+    def testGeoJsonLinkRequiresReadAccess(self, admin, user, server):
+        dataset, _ = self._private(admin)
+        response = server.request(
+            path="/export/geojson", method="GET", user=user, isJson=False,
+            params={"datasetId": str(dataset["_id"])},
         )
         assertStatus(response, 403)

@@ -1,0 +1,19 @@
+How many NimbusImage datasets do I have access to?
+How many cells are annotated in the "Xenium Human Kidney RCC (XOA 4.0, protein)" dataset?
+Which annotation tags are used in the "Xenium Human Kidney RCC (XOA 4.0, protein)" dataset, and how many annotations have each?
+Show me the image for the dataset "Xenium tiny - Human Ovary (XOA 4.0)". Briefly describe what you see.
+How many z-slices and channels does dataset 6a76214b90dec97a5ccd18a3 have, and what are the channel names?
+Show me z-slice 5 of dataset 6a76214b90dec97a5ccd18a3 and tell me whether you can see spots.
+How many spot (point) annotations are in the "OPS DM1 Well1 Phenotyping 3x3 (genotype property)" dataset?
+Of my datasets with "kidney" in the name, which one has the most annotations?
+What is the pixel size, in microns, of the "Asmus unstitched ND2 (illum test)" dataset?
+List the annotation tags in the dataset "spotcheck-nd2-220135".
+Among my datasets with "OPS" in the name, which ones have any point annotations?
+How many nuclei are segmented in dataset 6a76214b90dec97a5ccd18a3?
+Zoom in on the tissue in the "Xenium tiny - Human Ovary (XOA 4.0)" dataset and describe what the cells look like.
+What measurements have been computed for the dataset "HCR - 2026-07-23 05:57", and what is the mean and spread of the nucleus area there?
+Is the area distribution of the "DAPI blob" objects in "HCR - 2026-07-23 05:57" skewed? Describe its shape.
+Which workers could I use to segment nuclei, and what parameters does the best one take?
+Show me just the DAPI channel of the "HCR - 2026-07-23 05:57" dataset and describe it.
+How do I measure the intensity of my cells in NimbusImage? Answer from the documentation.
+List five annotations from dataset 6a76214b90dec97a5ccd18a3 with their positions.

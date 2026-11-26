@@ -183,7 +183,8 @@ job = ds.properties.compute(
 )
 job.wait()
 
-# Step 4: Fetch the computed values
+# Step 4: Fetch the computed values (every value document; for statistics
+# use ds.annotations.summary(property_paths=...), which downloads none)
 values = ds.properties.get_values()
 ```
 
@@ -302,7 +303,7 @@ ds.properties.register(prop.id)
 job = ds.properties.compute(prop, worker_interface={"Channel": 0})
 job.wait()
 
-# Step 3: Get results
+# Step 3: Get results (every value document; prefer summary() for stats)
 values = ds.properties.get_values()
 ```
 

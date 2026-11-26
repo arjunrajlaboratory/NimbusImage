@@ -4,6 +4,8 @@ import { mount } from "@vue/test-utils";
 vi.mock("@/store", () => ({
   default: {
     selectedTool: null,
+    dataset: { id: "ds-1" },
+    selectedConfigurationId: "config-1",
     setSelectedToolId: vi.fn(),
     setToolPinned: vi.fn(),
     editToolInConfiguration: vi.fn(),
@@ -17,7 +19,14 @@ vi.mock("@/store", () => ({
 vi.mock("@/store/jobs", async () => {
   const { reactive } = await import("vue");
   const jobs: any = reactive({
-    jobIdForToolId: {} as Record<string, string>,
+    // Tracked tool jobs per dataset: { [datasetId]: { [toolId]: jobId } }
+    trackedToolJobs: {} as Record<string, Record<string, string>>,
+    jobIdForToolInDataset: (toolId: string, datasetId: string | null) =>
+      jobs.trackedToolJobs[String(datasetId)]?.[toolId] ?? null,
+    // Runs requested but not tracked yet: { [datasetId]: toolId[] }
+    toolRunsInFlight: {} as Record<string, string[]>,
+    isToolRunInFlight: (toolId: string, datasetId: string | null) =>
+      !!jobs.toolRunsInFlight[String(datasetId)]?.includes(toolId),
     toolJobOutcomes: {} as Record<string, { scope: string; success: boolean }>,
     toolJobScope: "user:dataset:config",
     toolJobOutcome: (toolId: string) => {
@@ -48,6 +57,7 @@ vi.mock("@/store/jobs", async () => {
 import store from "@/store";
 import jobs from "@/store/jobs";
 import ToolItem from "./ToolItem.vue";
+import { resetBatchRuns, runBatch } from "@/store/batchRuns";
 
 const baseTool = {
   id: "tool-1",
@@ -77,7 +87,7 @@ describe("ToolItem", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (store as any).selectedTool = null;
-    (jobs as any).jobIdForToolId = {};
+    (jobs as any).trackedToolJobs = {};
     (jobs as any).toolJobOutcomes = {};
     (jobs as any).toolJobScope = "user:dataset:config";
   });
@@ -107,15 +117,56 @@ describe("ToolItem", () => {
   });
 
   it("isToolLoading is true when not selected but has jobId", () => {
-    (jobs as any).jobIdForToolId = { "tool-1": "job-123" };
+    (jobs as any).trackedToolJobs = { "ds-1": { "tool-1": "job-123" } };
     const wrapper = mountComponent();
     expect((wrapper.vm as any).isToolLoading).toBe(true);
   });
 
+  it("isToolLoading is true while a run is being submitted", () => {
+    (jobs as any).toolRunsInFlight = { "ds-1": ["tool-1"] };
+    try {
+      const wrapper = mountComponent();
+      expect((wrapper.vm as any).isToolLoading).toBe(true);
+    } finally {
+      (jobs as any).toolRunsInFlight = {};
+    }
+  });
+
   it("isToolLoading is false when selected", () => {
     (store as any).selectedTool = { configuration: { id: "tool-1" } };
-    (jobs as any).jobIdForToolId = { "tool-1": "job-123" };
+    (jobs as any).trackedToolJobs = { "ds-1": { "tool-1": "job-123" } };
     const wrapper = mountComponent();
+    expect((wrapper.vm as any).isToolLoading).toBe(false);
+  });
+
+  it("shows the tool busy while its batch over the collection runs", async () => {
+    let finish!: () => void;
+    const batch = runBatch(
+      "workerTool",
+      "config-1",
+      baseTool.id,
+      3,
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    try {
+      const wrapper = mountComponent();
+      // The batch is working on another dataset: no job on this one
+      expect(wrapper.vm.jobId).toBeNull();
+      expect(wrapper.vm.isToolLoading).toBe(true);
+
+      finish();
+      await batch;
+      expect(wrapper.vm.isToolLoading).toBe(false);
+    } finally {
+      resetBatchRuns();
+    }
+  });
+
+  it("does not show the tool busy for its run on another dataset", () => {
+    // Tool ids are shared by every dataset of a collection
+    (jobs as any).trackedToolJobs = { "ds-other": { "tool-1": "job-123" } };
+    const wrapper = mountComponent();
+    expect((wrapper.vm as any).jobId).toBeNull();
     expect((wrapper.vm as any).isToolLoading).toBe(false);
   });
 
@@ -125,13 +176,13 @@ describe("ToolItem", () => {
   });
 
   it("jobId returns job id when present", () => {
-    (jobs as any).jobIdForToolId = { "tool-1": "job-456" };
+    (jobs as any).trackedToolJobs = { "ds-1": { "tool-1": "job-456" } };
     const wrapper = mountComponent();
     expect((wrapper.vm as any).jobId).toBe("job-456");
   });
 
   it("onJobChanged resolves promise and sets statusIcon", async () => {
-    (jobs as any).jobIdForToolId = { "tool-1": "job-789" };
+    (jobs as any).trackedToolJobs = { "ds-1": { "tool-1": "job-789" } };
     (jobs.getPromiseForJobId as any).mockResolvedValue(true);
     const wrapper = mountComponent();
     (wrapper.vm as any).onJobChanged();
@@ -141,7 +192,7 @@ describe("ToolItem", () => {
   });
 
   it("onJobChanged sets mdi-close on failure", async () => {
-    (jobs as any).jobIdForToolId = { "tool-1": "job-789" };
+    (jobs as any).trackedToolJobs = { "ds-1": { "tool-1": "job-789" } };
     (jobs.getPromiseForJobId as any).mockResolvedValue(false);
     const wrapper = mountComponent();
     (wrapper.vm as any).onJobChanged();
@@ -151,7 +202,7 @@ describe("ToolItem", () => {
   });
 
   it("keeps the job status icon when the item remounts (e.g. after pinning)", async () => {
-    (jobs as any).jobIdForToolId = { "tool-1": "job-789" };
+    (jobs as any).trackedToolJobs = { "ds-1": { "tool-1": "job-789" } };
     (jobs.getPromiseForJobId as any).mockResolvedValue(true);
     const first = mountComponent();
     (first.vm as any).onJobChanged();
@@ -160,13 +211,13 @@ describe("ToolItem", () => {
     });
     first.unmount();
 
-    (jobs as any).jobIdForToolId = {};
+    (jobs as any).trackedToolJobs = {};
     const remounted = mountComponent();
     expect((remounted.vm as any).statusIcon).toBe("mdi-check");
   });
 
   it("hides the status icon once the user, dataset or collection changes", async () => {
-    (jobs as any).jobIdForToolId = { "tool-1": "job-789" };
+    (jobs as any).trackedToolJobs = { "ds-1": { "tool-1": "job-789" } };
     (jobs.getPromiseForJobId as any).mockResolvedValue(true);
     const wrapper = mountComponent();
     (wrapper.vm as any).onJobChanged();
@@ -182,7 +233,7 @@ describe("ToolItem", () => {
   });
 
   it("does not report a job that finishes after the scope changed", async () => {
-    (jobs as any).jobIdForToolId = { "tool-1": "job-789" };
+    (jobs as any).trackedToolJobs = { "ds-1": { "tool-1": "job-789" } };
     let finish!: (success: boolean) => void;
     (jobs.getPromiseForJobId as any).mockReturnValue(
       new Promise<boolean>((resolve) => (finish = resolve)),
@@ -196,6 +247,25 @@ describe("ToolItem", () => {
       expect(jobs.setToolJobOutcome).toHaveBeenCalled();
     });
     expect((wrapper.vm as any).statusIcon).toBeNull();
+  });
+
+  // Logout settles tracked jobs as not successful without them failing, and
+  // the same user may log back in to the same scope.
+  it("records no outcome for a job that logout ended", async () => {
+    (jobs as any).trackedToolJobs = { "ds-1": { "tool-1": "job-789" } };
+    let finish!: (success: boolean) => void;
+    const settled = new Promise<boolean>((resolve) => (finish = resolve));
+    (jobs.getPromiseForJobId as any).mockReturnValue(settled);
+    const wrapper = mountComponent();
+    (jobs.setToolJobOutcome as any).mockClear();
+    (wrapper.vm as any).onJobChanged();
+
+    resetBatchRuns();
+    finish(false);
+    await settled;
+    await Promise.resolve();
+
+    expect(jobs.setToolJobOutcome).not.toHaveBeenCalled();
   });
 
   it("the pin button pins an unpinned tool without toggling it", async () => {

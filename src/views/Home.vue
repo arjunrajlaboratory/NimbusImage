@@ -467,7 +467,7 @@ function findCommonPrefix(strings: string[]): string {
   // Sweep through the first string, and compare the letter found in each
   // position with the letter at that position for all the strings. Stop when an
   // inequality occurs.
-  let result = [];
+  const result = [];
   for (let i = 0; i < minLength; i++) {
     const ch = matches[0].charAt(i);
 
@@ -527,6 +527,7 @@ import {
 import { formatDateNumber, formatDate } from "@/utils/date";
 import { logError } from "@/utils/log";
 import Persister from "@/store/Persister";
+import { isReturningAfterLogin } from "@/utils/returnAfterLogin";
 import { useTour } from "@/utils/useTour";
 import { userDisplayInfo, type IUserDisplayInfo } from "@/utils/userDisplay";
 
@@ -589,6 +590,10 @@ const datasetNames = ref<string[]>([]);
 const nameConflicts = ref<number[]>([]);
 const validatingNames = ref(false);
 let validateNamesDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+// Latest-wins tokens for the name checks: a superseded check (an older
+// name, location or mode) must not write its verdict.
+let nameCheckToken = 0;
+let batchNamesCheckToken = 0;
 
 const userDisplayNames = ref<Record<string, IUserDisplayInfo>>({});
 
@@ -751,11 +756,16 @@ function validateDatasetNamesDebounced() {
 }
 
 async function validateDatasetNames() {
+  const token = ++batchNamesCheckToken;
   if (
     !batchMode.value ||
     !selectedLocation.value ||
     !("_id" in selectedLocation.value)
   ) {
+    // This check superseded any in flight, which can no longer write: clear
+    // their spinner and verdict here, since nothing else will.
+    nameConflicts.value = [];
+    validatingNames.value = false;
     return;
   }
 
@@ -784,7 +794,8 @@ async function validateDatasetNames() {
       }
     });
 
-    // Check each unique name against existing datasets
+    // Check each unique name against existing datasets. One request per
+    // name: there is no batch endpoint for this yet.
     const uniqueNames = [...new Set(datasetNames.value.map((n) => n.trim()))];
     for (const name of uniqueNames) {
       if (!name) continue;
@@ -804,8 +815,55 @@ async function validateDatasetNames() {
       }
     }
   } finally {
-    nameConflicts.value = conflicts;
-    validatingNames.value = false;
+    if (token === batchNamesCheckToken) {
+      nameConflicts.value = conflicts;
+      validatingNames.value = false;
+    }
+  }
+}
+
+// Stop batch name validation: drops any check in flight and its verdict.
+function clearBatchNameValidation() {
+  ++batchNamesCheckToken;
+  if (validateNamesDebounceTimer) {
+    clearTimeout(validateNamesDebounceTimer);
+    validateNamesDebounceTimer = null;
+  }
+  nameConflicts.value = [];
+  validatingNames.value = false;
+}
+
+// Check the single-dataset name against the selected location. Re-run on
+// every change of name, location or mode; only the latest check writes.
+async function checkDatasetName() {
+  const token = ++nameCheckToken;
+  nameTaken.value = false;
+  nameError.value = "";
+  checkingName.value = false;
+
+  // Batch mode names a collection; its datasets are checked separately.
+  const name = datasetName.value.trim();
+  const location = selectedLocation.value;
+  if (batchMode.value || !name || !location || !("_id" in location)) {
+    return;
+  }
+
+  checkingName.value = true;
+  try {
+    const exists = await store.api.checkDatasetNameExists(name, location);
+    if (token !== nameCheckToken) {
+      return;
+    }
+    nameTaken.value = exists;
+    nameError.value = exists
+      ? "A dataset with this name already exists in the selected location"
+      : "";
+  } catch (error) {
+    // If check fails, don't block submission - let the server handle it
+  } finally {
+    if (token === nameCheckToken) {
+      checkingName.value = false;
+    }
   }
 }
 
@@ -1077,18 +1135,14 @@ function closeUploadDialog() {
   pendingFiles.value = [];
   datasetName.value = "";
   selectedLocation.value = null;
+  ++nameCheckToken;
   nameTaken.value = false;
   nameError.value = "";
   checkingName.value = false;
   batchMode.value = false;
   // Reset batch mode name validation state
   datasetNames.value = [];
-  nameConflicts.value = [];
-  validatingNames.value = false;
-  if (validateNamesDebounceTimer) {
-    clearTimeout(validateNamesDebounceTimer);
-    validateNamesDebounceTimer = null;
-  }
+  clearBatchNameValidation();
 }
 
 function toggleZenodoImporter(): void {
@@ -1130,6 +1184,12 @@ function navigateToDatasetView(datasetViewId: string) {
 async function initializeWelcomeTour() {
   // Only proceed if the user is logged in
   if (!store.isLoggedIn) {
+    return;
+  }
+  // This login is on its way to another page (e.g. the MCP OAuth consent
+  // page): the tour would pull it back here. Not marked as run, so it
+  // still shows on the next visit.
+  if (isReturningAfterLogin()) {
     return;
   }
 
@@ -1180,11 +1240,7 @@ watch(routeName, () => {
 });
 
 watch(selectedLocation, () => {
-  // Clear name validation state when location changes
-  if (nameTaken.value) {
-    nameTaken.value = false;
-    nameError.value = "";
-  }
+  checkDatasetName();
   // Validate batch mode dataset names when location changes
   if (batchMode.value && pendingFiles.value.length > 0) {
     validateDatasetNames();
@@ -1199,54 +1255,19 @@ watch(pendingFiles, () => {
 });
 
 watch(batchMode, (newVal) => {
+  // Each mode's verdict is about different names; drop the other mode's.
+  checkDatasetName();
   if (newVal) {
     initializeDatasetNames();
     if (selectedLocation.value) {
       validateDatasetNames();
     }
+  } else {
+    clearBatchNameValidation();
   }
 });
 
-watch(datasetName, async (newName) => {
-  // Skip validation in batch mode - collection names are checked differently
-  if (batchMode.value) {
-    return;
-  }
-
-  if (!newName || !newName.trim()) {
-    nameTaken.value = false;
-    nameError.value = "";
-    return;
-  }
-
-  if (!selectedLocation.value || !("_id" in selectedLocation.value)) {
-    return;
-  }
-
-  checkingName.value = true;
-  nameTaken.value = false;
-  nameError.value = "";
-
-  try {
-    const exists = await store.api.checkDatasetNameExists(
-      newName.trim(),
-      selectedLocation.value,
-    );
-    if (exists) {
-      nameTaken.value = true;
-      nameError.value =
-        "A dataset with this name already exists in the selected location";
-    } else {
-      nameTaken.value = false;
-      nameError.value = "";
-    }
-  } catch (error) {
-    // If check fails, don't block submission - let the server handle it
-    nameError.value = "";
-  } finally {
-    checkingName.value = false;
-  }
-});
+watch(datasetName, checkDatasetName);
 
 // Lifecycle
 onMounted(() => {
@@ -1297,6 +1318,7 @@ defineExpose({
   initializeDatasetNames,
   validateDatasetNamesDebounced,
   validateDatasetNames,
+  checkDatasetName,
   getNameError,
   getUserDisplayName,
   getUserShortName,

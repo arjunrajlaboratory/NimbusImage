@@ -134,6 +134,7 @@
             variant="flat"
             size="small"
             color="primary"
+            :disabled="hydrating"
             @click="send"
           >
             <v-icon size="small">mdi-send</v-icon>
@@ -197,6 +198,7 @@ const items = computed(() => aiPanelStore.items);
 // always in view (same trick as ChatComponent)
 const reversedItems = computed(() => [...items.value].reverse());
 const running = computed(() => aiPanelStore.running);
+const hydrating = computed(() => aiPanelStore.hydrating);
 const canRevert = computed(() => aiPanelStore.canRevert);
 
 const autoApprove = computed({
@@ -242,7 +244,9 @@ function statusColor(status?: TAgentToolStatus) {
 
 async function send() {
   const text = textInput.value.trim();
-  if (!text || running.value) {
+  // The store drops a send while a stored conversation is still loading;
+  // keep the typed message rather than clearing it for nothing.
+  if (!text || running.value || hydrating.value) {
     return;
   }
   textInput.value = "";

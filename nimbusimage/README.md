@@ -132,6 +132,7 @@ ni.connect() -> NimbusClient
         ds.history       # undo/redo
         ds.sharing       # access control
     client.list_datasets()
+    client.count_annotations(ids)   # per-dataset counts, one request
     client.list_workers()
     client.list_projects()
 ```

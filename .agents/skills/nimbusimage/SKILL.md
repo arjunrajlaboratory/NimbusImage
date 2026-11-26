@@ -8,7 +8,8 @@ description: >
   `import nimbusimage` in code or the user references dataset IDs, channels,
   z-slices, or time points in an imaging context. This is the entry point —
   it routes to more specific skills (annotations, images, workers, analyze)
-  for deeper operations.
+  for deeper operations. If NimbusImage MCP tools (ni_*) are also connected,
+  prefer this API for anything beyond a quick lookup.
 ---
 
 # NimbusImage — Core
@@ -16,6 +17,13 @@ description: >
 The `nimbusimage` Python API lets you programmatically access NimbusImage scientific imaging datasets. This skill teaches you the API patterns so you can write correct code for the user.
 
 The package follows an accessor pattern: connect → get dataset → use sub-accessors (`ds.images`, `ds.annotations`, `ds.connections`, `ds.properties`, `ds.collections`, `ds.export`, `ds.history`, `ds.sharing`).
+
+## This API or the MCP tools?
+
+NimbusImage also has an MCP server whose tools are named `ni_*` (`ni_datasets_list`, `ni_annotations_count`, ...). It exists for clients that cannot run code, such as claude.ai and Claude Desktop. When both are available, as in Claude Code or Codex with the connector added:
+
+- A quick read-only lookup (list datasets, count annotations, look at one image) may use the `ni_*` tools.
+- Everything else uses this Python API: bulk creation or deletion, image arrays, measurements and analysis, exports, workers beyond a single run, and anything worth saving as a script.
 
 ## Setup
 
@@ -363,5 +371,5 @@ For full accessor signatures, read `references/api-overview.md`. Before using lo
 
 The accessors (`ds.images`, `ds.annotations`, `ds.sharing`, etc.) are the supported surface. `client._gc` is the raw `girder-client` and exposes every Girder endpoint, including ones that can do irreversible damage if used wrong. Specifically:
 
-- **Never** call `client._gc.put(f"folder/{ds.id}/access", ...)` to change a dataset's ACL. Use `ds.sharing.share()` / `ds.sharing.set_public()` — `share()` uses the incremental `dataset_view/share` endpoint, which changes one user at a time. The raw endpoint replaces the whole ACL and has been the source of an in-the-wild lockout. Never target yourself with `share()` either: as a dataset's only ADMIN, removing or demoting yourself locks you out. See `references/gotchas.md` for the full list of `_gc` footguns.
+- **Never** call `client._gc.put(f"folder/{ds.id}/access", ...)` to change a dataset's ACL. Use `ds.sharing.share()` / `ds.sharing.set_public()` — `share()` uses the incremental `dataset_view/share` endpoint, which changes one user at a time. The raw endpoint replaces the whole ACL and has been the source of an in-the-wild lockout. A dataset always keeps at least one user at ADMIN: removing or demoting the last one is refused (400), so give a new owner `admin` before stepping down. See `references/gotchas.md` for the full list of `_gc` footguns.
 - If an accessor doesn't expose what you need, ask the user before reaching for `_gc`. The accessor surface is curated for a reason; adding to it is preferable to bypassing it.

@@ -1,0 +1,36 @@
+name: Lint and test annotation_client
+
+on:
+  push:
+    paths:
+      - devops/girder/annotation_client/**
+      - .github/workflows/annotation-client.yaml
+
+# A newer push to the same branch supersedes a running check; master keeps
+# every run so each merge has a result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+jobs:
+  all:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python environment
+        uses: actions/setup-python@v5
+        with:
+          # Worker images run Python 3.9-3.12.
+          python-version: "3.11"
+      - name: flake8 Lint
+        uses: py-actions/flake8@v2
+        with:
+          path: devops/girder/annotation_client/
+      - name: Install and test annotation_client
+        run: |
+          cd devops/girder/annotation_client
+          pip install -r requirements.txt
+          pip install -e . numpy pytest
+          pytest tests

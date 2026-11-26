@@ -47,6 +47,9 @@ A reviewer flags **one instance** of a pattern per round. After fixing it, grep 
 | Stale comments/tests describing pre-fix behavior | Wherever behavior changed | Grep for the old function contract in comments and test names |
 | Partial persistence: one change writing the same config key twice | Handlers that change several fields of one resource | All inputs validated *before* the first write? Two actions in the handler both syncing the same key? (see nimbus-frontend skill) |
 | Store action throws/propagates without `rawError: true` | Any `src/store/*.ts` | Audit **every** store module and the **whole** chain — errors re-wrap at each `@Action` boundary, and an action needs the flag when it merely propagates (no `throw` of its own) |
+| **State outlives the thing it describes** | Store maps and module-level variables kept across navigation, a remount or a logout (run statuses, tracked jobs, caches, batch progress) | A finding names one store; the class is every store. List each store module and module-level variable with a verdict (cleared where, keyed by what), then read every waiter on any promise the reset settles: settling it to release a lock also resumes each loop and reporter awaiting it. PR #1469 found one more instance in each of four rounds before this was done as a list |
+| **A transition the state's owner did not write** | A parent holding a phase for a flow a child runs; anything a `:key`/`v-if` can remount | List every way the state can change that is not in the owner's code: the child's own buttons and exposed methods, a dismissal, a second instance, a remount, a late error from a superseded attempt. Each must land in a defined state |
+| **A fix added an `await`** | Any review fix that makes a function wait (a status read, a refresh, a confirmation) | The fix is a new suspension point in every caller. List the callers and, for each, what it read before the call and uses after it. Do this before pushing the fix, not after the next round |
 | **A rule applied to one of two symmetric paths** | Anywhere the same concept has two implementations | See below — this was the single most-repeated finding across a 10-round review |
 | **Derived-state invalidation stops at the edited item** | Ordered pipelines, chained filters, dependent plots, wizard steps | Map the dependency closure: if item N changes the input to N+1, invalidate N (when its own derivation changed) and every downstream item; a toggle can preserve N's own result while still invalidating N+1..end |
 | **Failed refresh retains state derived from different inputs** | Cached filters, search results, gates, projections | Record the exact derivation-input identity on successful commit. A failed identical retry may retain the result; if dataset/population/revision changed, invalidate before awaiting so failure cannot strand stale state. When active/filtering and visible-disabled consumers materialize different subsets, track their validity separately: a null active signature does not mean no visible derived state exists, and invalidating visible-only state must not drop still-valid active constraints. |
@@ -441,6 +444,28 @@ Report per-finding outcomes (fixed / stale / by-design / needs-decision) keyed t
   and reread the winning persisted identity before returning derived state.
 - Projection-aware mocks matter: a mock returning every field hides code that
   reads a discriminator omitted from its database projection.
+- A deadline on an async call bounds only the awaits it wraps. Blocking work
+  hides in arguments evaluated on the event loop (`scales=ds.collections.scales`
+  inside an `in_thread(...)` call) and in lazy properties that fetch on first
+  read. Sweep every read in the async function, not just the explicit calls. An
+  abandoned thread keeps running, so the client needs an HTTP timeout. Build the
+  result from a snapshot taken in the thread, never from an object it may still
+  mutate (PR #1409, rounds 4-7).
+- When successive review rounds keep finding races in hand-rolled "pending"
+  state (timestamps, saved job ids, locks with rechecks), stop patching it.
+  Make the operation a single-flight task: one task per key does the whole
+  thing, callers `await shield(task)` up to their own deadline, and a done task
+  is replaced. "Pending" then means "task not done", and every outcome (sent,
+  refused, never sent, failed) reaches every waiter. PR #1409 went through
+  three rounds of fixes before switching.
+- Harness trap: faking a per-request identity (`caller_id`) with a module
+  global makes concurrent fake users overwrite each other, so a correct
+  "is this the caller who started it?" check fails, or a wrong one passes.
+  Fake it with a `contextvars.ContextVar`, as the real one is.
+- Harness trap: patching `time.monotonic` patches the clock asyncio uses
+  (`loop.time()`), so `move_on_after` and `sleep` deadlines follow the fake clock.
+  A test like that proves nothing about real timeouts. Test those with a fake
+  operation that blocks for real (e.g. `time.sleep(3)` against a 1 s cap).
 - Replacing a data source invalidates values, pending responses, AND revisions
   consumed by gates. Test lazy and wholesale paths separately, plus late replies.
 - Virtual entities have no backing document ID. Persistence validators must

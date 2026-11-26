@@ -102,6 +102,32 @@ class TestAnnotationAccessControl:
         )
         assertStatus(resp, 403)
 
+    @pytest.mark.parametrize("path", ["/upenn_annotation/count",
+                                      "/annotation_connection/count",
+                                      "/annotation_property_values/count"])
+    def testCountMalformedDatasetIdIs400(self, admin, server, path):
+        resp = server.request(
+            path=path, method="GET", user=admin,
+            params={"datasetId": "bad"},
+        )
+        assertStatus(resp, 400)
+        assert resp.json["message"] == "datasetId is not a valid id"
+
+    @pytest.mark.parametrize("field", ["datasetId", "afterId"])
+    def testFindAnnotationsMalformedIdIs400(self, admin, server, field):
+        folder = utilities.createFolder(
+            admin, "public_ds", upenn_utilities.datasetMetadata
+        )
+        params = {"datasetId": str(folder["_id"]), field: "bad"}
+        resp = server.request(
+            path="/upenn_annotation",
+            method="GET",
+            user=admin,
+            params=params,
+        )
+        assertStatus(resp, 400)
+        assert resp.json["message"] == "%s is not a valid id" % field
+
     def testDeleteMultipleAnnotationsAllowedWithAccess(
         self, admin, server
     ):
@@ -216,11 +242,103 @@ class TestConnectionAccessControl:
         )
         assertStatus(resp, 400)
 
+    def testFindConnectionsWithEmptyDatasetIdDenied(self, admin, server):
+        """An empty datasetId passes the route's required check; it must
+        not skip the READ check and list every dataset's connections."""
+        folder = utilities.createPrivateFolder(
+            admin, "private_ds", upenn_utilities.datasetMetadata
+        )
+        ann1 = Annotation().create(
+            upenn_utilities.getSampleAnnotation(folder["_id"])
+        )
+        ann2 = Annotation().create(
+            upenn_utilities.getSampleAnnotation(folder["_id"])
+        )
+        AnnotationConnection().create(upenn_utilities.getSampleConnection(
+            ann1["_id"], ann2["_id"], folder["_id"]
+        ))
+        resp = server.request(
+            path="/annotation_connection",
+            method="GET",
+            params={"datasetId": "", "limit": 0},
+        )
+        assertStatus(resp, 400)
+        assert resp.json["message"] == "datasetId is not a valid id"
+
+    @pytest.mark.parametrize("field", ["parentId", "childId",
+                                       "nodeAnnotationId", "afterId"])
+    def testFindConnectionsMalformedIdIs400(self, admin, server, field):
+        folder = utilities.createFolder(
+            admin, "public_ds", upenn_utilities.datasetMetadata
+        )
+        resp = server.request(
+            path="/annotation_connection",
+            method="GET",
+            user=admin,
+            params={"datasetId": str(folder["_id"]), field: "bad"},
+        )
+        assertStatus(resp, 400)
+        assert resp.json["message"] == "%s is not a valid id" % field
+
 
 @pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
 @pytest.mark.plugin("upenncontrast_annotation")
 class TestPropertyValuesAccessControl:
     """Test that property value endpoints enforce dataset access."""
+
+    def _privateValue(self, admin):
+        folder = utilities.createPrivateFolder(
+            admin, "private_ds", upenn_utilities.datasetMetadata
+        )
+        ann = Annotation().create(
+            upenn_utilities.getSampleAnnotation(folder["_id"])
+        )
+        AnnotationPropertyValues().appendValues(
+            {"secret": 42}, ann["_id"], folder["_id"]
+        )
+        return folder, ann
+
+    def testFindPropertyValuesRequiresDatasetId(self, admin, server):
+        """Without datasetId the query had no dataset filter and no READ
+        check: anyone could list every dataset's values."""
+        _, ann = self._privateValue(admin)
+        for params in ({"limit": 0},
+                       {"annotationId": str(ann["_id"]), "limit": 0}):
+            resp = server.request(
+                path="/annotation_property_values",
+                method="GET",
+                params=params,
+            )
+            assertStatus(resp, 400)
+            assert resp.json["message"] == "datasetId is required"
+
+    def testFindPropertyValuesDeniedWithoutAccess(
+        self, admin, user, server
+    ):
+        folder, _ = self._privateValue(admin)
+        resp = server.request(
+            path="/annotation_property_values",
+            method="GET",
+            user=user,
+            params={"datasetId": str(folder["_id"])},
+        )
+        assertStatus(resp, 403)
+
+    @pytest.mark.parametrize("field", ["datasetId", "annotationId",
+                                       "afterId"])
+    def testFindPropertyValuesMalformedIdIs400(self, admin, server, field):
+        folder = utilities.createFolder(
+            admin, "public_ds", upenn_utilities.datasetMetadata
+        )
+        params = {"datasetId": str(folder["_id"]), field: "bad"}
+        resp = server.request(
+            path="/annotation_property_values",
+            method="GET",
+            user=admin,
+            params=params,
+        )
+        assertStatus(resp, 400)
+        assert resp.json["message"] == "%s is not a valid id" % field
 
     def testAddPropertyValueDeniedWithoutAccess(
         self, admin, user, server

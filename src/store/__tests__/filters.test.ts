@@ -1197,6 +1197,28 @@ describe("filters.refreshAnalysis above the cap (server resolution)", () => {
     expect(filters.analysisGateIds).toEqual({ p1: ["fresh"] });
   });
 
+  it("clears loading when a superseding refresh has nothing left to fetch", async () => {
+    // The superseded request leaves the loading flag to the newer refresh;
+    // the newer one finding every remaining gate current returned early
+    // without clearing it, so the spinner stayed on for good.
+    fetchAnalysisGateIds.mockResolvedValueOnce({ p1: ["id-1"] });
+    await addGatedPlot("p1");
+    await filters.refreshAnalysis();
+    await addGatedPlot("p2");
+    const pending = deferred<any>();
+    fetchAnalysisGateIds.mockReturnValueOnce(pending.promise);
+    const firstRun = filters.refreshAnalysis();
+    expect(filters.analysisLoading).toBe(true);
+    // Deleting the plot being resolved leaves only p1, which is current.
+    await filters.removeAnalysisPlot("p2");
+    await filters.refreshAnalysis();
+    pending.resolve({ p2: ["id-2"] });
+    await firstRun;
+    expect(fetchAnalysisGateIds).toHaveBeenCalledTimes(2);
+    expect(filters.analysisGateIds).toEqual({ p1: ["id-1"] });
+    expect(filters.analysisLoading).toBe(false);
+  });
+
   it("skips disabled gates while the panel is closed", async () => {
     fetchAnalysisGateIds.mockResolvedValue({ p1: ["id-1"] });
     await addGatedPlot("p1");

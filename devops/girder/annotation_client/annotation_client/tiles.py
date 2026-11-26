@@ -1,8 +1,9 @@
 import io
 import pickle
 
-import girder_client
 import tifffile
+
+from annotation_client.transport import createGirderClient
 
 PATHS = {
     "image": "/item/{datasetId}/tiles/fzxy/{frameIndex}/0/0/0",
@@ -34,8 +35,7 @@ class UPennContrastDataset:
         """
         # TODO: The naming conventions in this class are confusing.
         # For instance, self.datasetId is the largeImageId, not the datasetId
-        self.client = girder_client.GirderClient(apiUrl=apiUrl)
-        self.client.setToken(token)
+        self.client = createGirderClient(apiUrl, token)
 
         self.folderId = datasetId
         # Get the dataset item's id

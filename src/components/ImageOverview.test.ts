@@ -70,6 +70,7 @@ vi.mock("@/store", () => {
 });
 
 vi.mock("@/utils/screenshot", () => ({
+  LayerSelectionError: class LayerSelectionError extends Error {},
   getBaseURLFromDownloadParameters: vi.fn(() => "http://test/base"),
   getLayersDownloadUrls: vi
     .fn()
@@ -78,6 +79,7 @@ vi.mock("@/utils/screenshot", () => ({
 
 import ImageOverview from "./ImageOverview.vue";
 import store from "@/store";
+import { getLayersDownloadUrls, LayerSelectionError } from "@/utils/screenshot";
 
 function mountComponent(props = {}) {
   (store as any).dataset = null;
@@ -251,6 +253,60 @@ describe("ImageOverview", () => {
     vm.osmLayer = { url: urlFn };
     await vm.onUrlChanged();
     expect(urlFn).toHaveBeenCalledWith("");
+  });
+
+  // A component with a dataset and a map, so the overview URL is computed
+  async function mountWithImage() {
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    (store as any).dataset = {
+      anyImage: () => ({ sizeX: 100, sizeY: 100, item: { _id: "item" } }),
+    };
+    // Let the dataset watcher build its own map first, then replace it
+    await wrapper.vm.$nextTick();
+    vm.map = { unitsPerPixel: () => 1 };
+    const url = vi.fn();
+    vm.osmLayer = { url };
+    return { vm, url };
+  }
+
+  it("shows no overview image when the layers have no image here", async () => {
+    const { vm, url } = await mountWithImage();
+    vi.mocked(getLayersDownloadUrls).mockRejectedValueOnce(
+      new LayerSelectionError("No image for layer CY3 at XY1, T1, Z1."),
+    );
+    // New layers: the URL is computed again, and this time has no image
+    (store as any).layers = [{ id: "no-image-here" }];
+
+    await expect(vm.onUrlChanged()).resolves.toBeUndefined();
+
+    expect(url).toHaveBeenLastCalledWith("");
+    (store as any).layers = [];
+  });
+
+  it("does not apply an overview URL a newer one has replaced", async () => {
+    const { vm, url } = await mountWithImage();
+    let resolveFirst!: (urls: { url: string }[]) => void;
+    vi.mocked(getLayersDownloadUrls)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveFirst = resolve as typeof resolveFirst;
+        }) as any,
+      )
+      .mockResolvedValueOnce([{ url: "http://test/newer" }] as any);
+
+    (store as any).layers = [{ id: "first" }];
+    const first = vm.onUrlChanged();
+    // The store moves on (another dataset's layers): a new URL is computed
+    (store as any).layers = [{ id: "next" }];
+    await vm.onUrlChanged();
+    resolveFirst([{ url: "http://test/older" }]);
+    await first;
+
+    expect(url.mock.calls.map((call: unknown[]) => call[0])).toEqual([
+      "http://test/newer",
+    ]);
+    (store as any).layers = [];
   });
 
   it("map is initially null when no dataset", () => {

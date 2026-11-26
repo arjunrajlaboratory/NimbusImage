@@ -32,8 +32,8 @@ class TestExportAccessor:
             property_paths=[["prop1", "Area"]],
             sanitize_column_names=True,
         )
-        body = mock_gc.sendRestRequest.call_args.kwargs["data"]
-        assert '"sanitizeColumnNames": true' in body
+        body = mock_gc.sendRestRequest.call_args.kwargs["json"]
+        assert body["sanitizeColumnNames"] is True
 
     def test_to_csv_with_path(self, mock_gc, tmp_path):
         mock_response = MagicMock()
@@ -55,8 +55,8 @@ class TestExportAccessor:
         result = accessor.to_geojson(path=str(out_file))
         assert result["type"] == "FeatureCollection"
         assert out_file.read_bytes() == mock_response.content
-        body = mock_gc.sendRestRequest.call_args.kwargs["data"]
+        body = mock_gc.sendRestRequest.call_args.kwargs["json"]
         assert "annotationIds" not in body  # None: every annotation
         accessor.to_geojson(annotation_ids=[])
-        body = mock_gc.sendRestRequest.call_args.kwargs["data"]
-        assert '"annotationIds": []' in body  # empty: none
+        body = mock_gc.sendRestRequest.call_args.kwargs["json"]
+        assert body["annotationIds"] == []  # empty: none

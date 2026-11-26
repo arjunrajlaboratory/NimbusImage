@@ -117,7 +117,8 @@ class CollectionAccessor:
                 every view they can read, including other users' views
                 of a shared dataset.
         """
-        parameters = {"datasetId": self._dataset_id}
+        # limit=0: the endpoint pages at Girder's default of 50.
+        parameters = {"datasetId": self._dataset_id, "limit": 0}
         if current_user_only:
             parameters["currentUserOnly"] = "true"
         return self._gc.get("dataset_view", parameters=parameters)

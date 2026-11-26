@@ -146,8 +146,11 @@
       @click:outside="onWorkerDialogClickOutside"
       @update:model-value="onWorkerDialogToggle"
     >
+      <!-- Keyed by tool: the menu's run state (log, errors, progress)
+           belongs to one tool and must not carry over to the next. -->
       <annotation-worker-menu
         v-if="selectedWorkerTool"
+        :key="selectedWorkerTool.id"
         :tool="selectedWorkerTool"
         @close="store.setSelectedToolId(null)"
       />

@@ -41,7 +41,7 @@ pnpm tsc
 # Linting
 pnpm lint
 pnpm lint:fix
-pnpm lint:ci  # CI mode with zero warnings
+pnpm lint:ci  # CI mode with zero warnings (CI also sets NODE_ENV=production, which enables no-console)
 
 # Testing
 pnpm test
@@ -196,6 +196,9 @@ async updateSomething(value: any) {
   await this.syncConfiguration('keyName');  // Sync to backend
 }
 ```
+
+**A flag is a state machine:**
+A ref, store field or module-level variable that answers "what is this doing right now" (`loading`, `running`, `saving`, `isDragging`, a pending id) is a state machine whether or not it is written as one. Before adding or changing one, answer the seven questions in the `nimbus-frontend` skill ("State flags are state machines"): is the fact already held in a store, what are the states, who writes each transition (including a child's own buttons, a remount, navigation and logout), how does each state end (success, failure, cancel, abandonment), how long does it live and who clears it, can two overlap, and what does each `await` assume. Reviews check the same list (`branch-review`, frontend check 15). The audit that produced these rules, and its regression checklist, is `codebaseDocumentation/IMPLICIT_STATE_MACHINES.md`.
 
 **DatasetView vs Configuration:**
 - `Configuration` - Shared settings (layers, tools, scales)
@@ -567,7 +570,7 @@ docs = list(MyModel().collection.find({'datasetId': dataset_id}))
 docs = list(MyModel().find({'datasetId': dataset_id}))
 ```
 
-**Exception:** Aggregation pipelines require `collection.aggregate()` since Girder's `find()` doesn't support them. This is the only acceptable use of `collection` directly.
+**Exception:** Aggregation pipelines require `collection.aggregate()` since Girder's `find()` doesn't support them. The one other acceptable use is reading raw BSON batches to stream as JSON, through `findRawBatches` (`server/helpers/customModel.py`, which repeats what `Model.find` adds) or `aggregate_raw_batches`; see `codebaseDocumentation/NATIVE_JSON_TRANSCODER.md`.
 
 ### Backend Python Patterns
 

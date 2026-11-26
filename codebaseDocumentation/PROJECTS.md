@@ -536,12 +536,13 @@ every dataset using the collection, even ones you could not read. Tests:
 **Sharing with a user (`POST /project/:id/share`):**
 1. Caller must have ADMIN access on the project.
 2. Looks up the target user by email or username (`findShareTarget`; share-link users are unknown).
-3. Calls `propagateUserAccess(project, targetUser, level, actor)` first, which:
+3. Checks the project's own ACL with `requireCanSetUserAccess`: among other things, the change must leave the project at least one user at ADMIN (400 otherwise; `last_admin_guard`).
+4. Calls `propagateUserAccess(project, targetUser, level, actor)`, which:
    - Bulk-loads all datasets, collections, and dataset views via `_gatherAllResources()`
-   - Checks every reached resource first (`requireCanSetUserAccess`) and refuses the whole share (403, nothing written, the project's own ACL included) if it would grant more than the actor's level on one, or change a user whose entry there is above it
+   - Checks every reached resource first (`requireCanSetUserAccess`) and refuses the whole share (nothing written, the project's own ACL included) if it would grant more than the actor's level on one, or change a user whose entry there is above it (403), or leave a dataset with no user at ADMIN (400)
    - Then applies the same level to every reached resource with bulk `$pull`/`$push` updates (`_bulkSetUserAccess`); `None` only pulls
-4. Only then calls `setUserAccess(project, targetUser, level)` on the project itself, so a refused share leaves the project unchanged.
-5. Level `-1` revokes access: the endpoint maps it to `None` (`parseShareAccessType`), which removes the user's entry from the project's ACL and every reached resource's ACL. Passing `-1` straight through would store an inert `level: -1` entry instead.
+5. Only then calls `setUserAccess(project, targetUser, level)` on the project itself, so a refused share leaves the project unchanged.
+6. Level `-1` revokes access: the endpoint maps it to `None` (`parseShareAccessType`), which removes the user's entry from the project's ACL and every reached resource's ACL. Passing `-1` straight through would store an inert `level: -1` entry instead.
 
 **Making public/private (`POST /project/:id/set_public`):**
 1. Caller must have ADMIN access on the project.
@@ -679,8 +680,8 @@ that writes an ACL or a public flag, or that exports a project.
   *"testConfigurationOwnerIsNotDowngraded"*.
 - Views must belong to one dataset; an empty list is a 400, not a 500 —
   *"testViewsMustShareOneDataset"*, *"testEmptyViewListIsRejected"*.
-- (Owner self-lockout -- an owner removing or lowering their own ADMIN -- is handled
-  by PR #1165, not here.)
+- A dataset or project always keeps at least one user at ADMIN (`last_admin_guard`, PR
+  #1165); its invariants are in `SHARING.md` "Regression checklist" ("Last ADMIN").
 
 **Project propagation**
 - Adding a dataset you can only edit to your own project does not make you its owner —

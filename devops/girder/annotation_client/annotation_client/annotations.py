@@ -1,5 +1,6 @@
-import girder_client
 import json
+
+from annotation_client.transport import createGirderClient
 
 PATHS = {
     "annotation": "/upenn_annotation/",
@@ -74,8 +75,7 @@ class UPennContrastAnnotationClient:
         :param str token: The girder token for authentication
         """
 
-        self.client = girder_client.GirderClient(apiUrl=apiUrl)
-        self.client.setToken(token)
+        self.client = createGirderClient(apiUrl, token)
 
     # Annotations
 

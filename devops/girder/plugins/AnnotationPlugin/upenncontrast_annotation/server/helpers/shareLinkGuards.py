@@ -26,6 +26,8 @@ DOWNLOAD_ROUTES = (
     "rest.get.export/json.before",
     "rest.post.export/csv.before",
     "rest.post.export/geojson.before",
+    "rest.get.export/csv.before",
+    "rest.get.export/geojson.before",
 )
 HANDLER_NAME = "upenncontrast_annotation.shareLinkGuards"
 

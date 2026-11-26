@@ -149,6 +149,9 @@ vi.mock("@/store", () => {
       popMap: vi.fn(),
       clearMaps: vi.fn(),
       setCameraInfo: vi.fn(),
+      pendingCameraDeepLink: null as any,
+      setPendingCameraDeepLink: vi.fn(),
+      consumeCameraDeepLink: vi.fn(),
       setDrawAnnotations: vi.fn(),
       setShowTooltips: vi.fn(),
       setXY: vi.fn(),
@@ -261,11 +264,13 @@ vi.mock("@/pipelines/computePipeline", () => ({
 }));
 
 import store from "@/store";
+import sync from "@/store/sync";
 import annotationStore from "@/store/annotation";
 import annotationListServer from "@/store/annotationListServer";
 import progressStore from "@/store/progress";
 import { ProgressType } from "@/store/model";
 import { logWarning } from "@/utils/log";
+import geojs from "geojs";
 import ImageViewer from "./ImageViewer.vue";
 
 const mockedStore = vi.mocked(store);
@@ -406,6 +411,15 @@ describe("ImageViewer", () => {
     });
     (mockedStore.setCameraInfo as any).mockImplementation((v: any) => {
       mockedStore.cameraInfo = v;
+    });
+    mockedStore.pendingCameraDeepLink = null;
+    (mockedStore.setPendingCameraDeepLink as any).mockImplementation(
+      (v: any) => {
+        mockedStore.pendingCameraDeepLink = v;
+      },
+    );
+    (mockedStore.consumeCameraDeepLink as any).mockImplementation(() => {
+      mockedStore.pendingCameraDeepLink = null;
     });
   });
 
@@ -776,7 +790,7 @@ describe("ImageViewer", () => {
         initialMouseEvent: new MouseEvent("mousedown"),
       };
 
-      const evt = new MouseEvent("mousemove", {});
+      const evt = new MouseEvent("mousemove", { buttons: 1 });
       Object.defineProperty(evt, "x", { value: 100 });
       Object.defineProperty(evt, "y", { value: 150 });
       const stopPropagation = vi.spyOn(evt, "stopPropagation");
@@ -838,6 +852,103 @@ describe("ImageViewer", () => {
       };
       (wrapper.vm as any).mouseLeave();
       expect((wrapper.vm as any).mouseState).not.toBeNull();
+    });
+
+    // Shift-capture: every end is either an explicit commit or a cancel
+    function startCapture() {
+      const target = document.createElement("div");
+      target.getBoundingClientRect = vi.fn().mockReturnValue({ x: 0, y: 0 });
+      const state = {
+        isMouseMovePreviewState: false,
+        mapEntry: mockedStore.maps[0],
+        target,
+        path: [{ x: 0, y: 0 }],
+        initialMouseEvent: new MouseEvent("mousedown"),
+      };
+      (wrapper.vm as any).mouseState = state;
+      // The reactive proxy the AnnotationViewer receives as its old state
+      return (wrapper.vm as any).mouseState;
+    }
+
+    it("mouseUp ends the capture as an explicit commit", () => {
+      const state = startCapture();
+      (wrapper.vm as any).mouseUp(new MouseEvent("mouseup"));
+      expect(state.outcome).toBe("commit");
+      expect((wrapper.vm as any).mouseState).toBeNull();
+    });
+
+    it("a release outside the map commits the capture", () => {
+      const state = startCapture();
+      document.body.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      expect(state.outcome).toBe("commit");
+      expect((wrapper.vm as any).mouseState).toBeNull();
+    });
+
+    it("commits a release over an empty cell of the map grid", () => {
+      const state = startCapture();
+      wrapper
+        .find(".map-layout")
+        .element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      expect(state.outcome).toBe("commit");
+      expect((wrapper.vm as any).mouseState).toBeNull();
+    });
+
+    it("leaves a release over the map to the map's own mouseup handler", () => {
+      const state = startCapture();
+      const mapLayout = wrapper.find(".map-layout").element;
+      const inside = document.createElement("div");
+      mapLayout.appendChild(inside);
+      // The window capture listener sees it first; it must not end the
+      // capture (mouseUp does, and also stops the event reaching GeoJS)
+      inside.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      expect(state.outcome).toBeUndefined();
+      expect((wrapper.vm as any).mouseState).not.toBeNull();
+    });
+
+    it("cancels a capture whose button was released while away, without blocking pan or hover", () => {
+      const state = startCapture();
+      const target = document.createElement("div");
+      target.getBoundingClientRect = vi.fn().mockReturnValue({ x: 0, y: 0 });
+      const evt = new MouseEvent("mousemove", { buttons: 0 });
+      Object.defineProperty(evt, "target", { value: target });
+      const stopPropagation = vi.spyOn(evt, "stopPropagation");
+
+      (wrapper.vm as any).mouseMove(evt, 0);
+
+      expect(state.outcome).toBe("cancel");
+      expect(state.path).toHaveLength(1);
+      expect(stopPropagation).not.toHaveBeenCalled();
+      expect((wrapper.vm as any).mouseState.isMouseMovePreviewState).toBe(true);
+    });
+
+    it("cancels the capture when the window loses focus", () => {
+      const state = startCapture();
+      window.dispatchEvent(new Event("blur"));
+      expect(state.outcome).toBe("cancel");
+      expect((wrapper.vm as any).mouseState).toBeNull();
+    });
+
+    it("cancels the capture when its map entry is replaced", async () => {
+      const state = startCapture();
+      mockedStore.maps = [
+        { map: mockMap(), imageLayers: [], params: {} } as any,
+      ];
+      await nextTick();
+      expect(state.outcome).toBe("cancel");
+      expect((wrapper.vm as any).mouseState).toBeNull();
+    });
+
+    it("removes its window listeners on unmount", () => {
+      const removeSpy = vi.spyOn(window, "removeEventListener");
+      wrapper.unmount();
+      wrapper = undefined as any;
+      expect(removeSpy).toHaveBeenCalledWith(
+        "mouseup",
+        expect.any(Function),
+        true,
+      );
+      expect(removeSpy).toHaveBeenCalledWith("blur", expect.any(Function));
+      removeSpy.mockRestore();
     });
   });
 
@@ -905,6 +1016,120 @@ describe("ImageViewer", () => {
     });
   });
 
+  describe("camera deep link", () => {
+    let map1: ReturnType<typeof mockMap>;
+    const link = { x: 100, y: 200, zoom: 7, datasetId: "dataset1" };
+
+    function deepLinkCenterCalls() {
+      return map1.center.mock.calls.filter(
+        ([center]: any[]) => center?.x === 100 && center?.y === 200,
+      );
+    }
+
+    async function fitDataset(datasetId: string) {
+      (wrapper.vm as any).lastFittedDatasetId = datasetId;
+      (wrapper.vm as any).fitOnDatasetChange++;
+      await nextTick();
+    }
+
+    beforeEach(() => {
+      map1 = mockMap();
+      map1.unitsPerPixel = vi.fn().mockReturnValue(4096);
+      map1.zoomRange = vi.fn().mockReturnValue({ min: 0, max: 20 });
+      mockedStore.maps = [{ map: map1, imageLayers: [], params: {} } as any];
+      sync.setDatasetLoading(false);
+    });
+
+    afterEach(() => {
+      sync.setDatasetLoading(false);
+    });
+
+    it("centers on the link after the dataset's fit, not before", async () => {
+      wrapper = mountComponent();
+      mockedStore.pendingCameraDeepLink = { ...link };
+      await nextTick();
+      // No fit for this dataset yet: centering now would be undone by it.
+      expect(deepLinkCenterCalls()).toHaveLength(0);
+
+      await fitDataset("dataset1");
+
+      expect(map1.bounds).toHaveBeenCalled();
+      expect(map1.zoom).toHaveBeenCalledWith(7);
+      expect(deepLinkCenterCalls()).toHaveLength(1);
+      expect(
+        map1.bounds.mock.invocationCallOrder[0] <
+          map1.center.mock.invocationCallOrder.at(-1)!,
+      ).toBe(true);
+      // Consumed, which is what tells the routes to drop the URL keys.
+      expect(mockedStore.consumeCameraDeepLink).toHaveBeenCalledTimes(1);
+      expect(mockedStore.setPendingCameraDeepLink).not.toHaveBeenCalledWith(
+        null,
+      );
+      expect(mockedStore.pendingCameraDeepLink).toBeNull();
+    });
+
+    it("applies once: a later fit or frame change does not re-center", async () => {
+      wrapper = mountComponent();
+      mockedStore.pendingCameraDeepLink = { ...link };
+      await fitDataset("dataset1");
+      expect(deepLinkCenterCalls()).toHaveLength(1);
+
+      mockedStore.z = 3 as any;
+      await fitDataset("dataset1");
+      sync.setDatasetLoading(true);
+      sync.setDatasetLoading(false);
+      await nextTick();
+
+      expect(deepLinkCenterCalls()).toHaveLength(1);
+    });
+
+    it("does not center the outgoing dataset on a link for the incoming one", async () => {
+      wrapper = mountComponent();
+      await fitDataset("dataset1");
+      mockedStore.pendingCameraDeepLink = { ...link, datasetId: "dataset2" };
+      await nextTick();
+
+      expect(deepLinkCenterCalls()).toHaveLength(0);
+      expect(mockedStore.pendingCameraDeepLink).not.toBeNull();
+    });
+
+    it("waits for loading to end when the dataset is unchanged", async () => {
+      wrapper = mountComponent();
+      await fitDataset("dataset1");
+      sync.setDatasetLoading(true);
+      mockedStore.pendingCameraDeepLink = { ...link };
+      await nextTick();
+      expect(deepLinkCenterCalls()).toHaveLength(0);
+
+      sync.setDatasetLoading(false);
+      await nextTick();
+
+      expect(deepLinkCenterCalls()).toHaveLength(1);
+      expect(mockedStore.pendingCameraDeepLink).toBeNull();
+    });
+
+    it("defaults the zoom to show about 512 image pixels across", async () => {
+      wrapper = mountComponent();
+      mockedStore.pendingCameraDeepLink = { ...link, zoom: null };
+      await fitDataset("dataset1");
+
+      // 4096 units per screen pixel at zoom 0, 800 px wide viewport.
+      const zoom = map1.zoom.mock.calls.find(
+        ([value]: any[]) => typeof value === "number",
+      )?.[0];
+      expect((4096 / 2 ** zoom) * 800).toBeCloseTo(512);
+    });
+
+    it("does nothing without a link", async () => {
+      wrapper = mountComponent();
+      await fitDataset("dataset1");
+
+      expect(map1.bounds).toHaveBeenCalled();
+      expect(map1.zoom).not.toHaveBeenCalledWith(7);
+      expect(mockedStore.consumeCameraDeepLink).not.toHaveBeenCalled();
+    });
+  });
+
   // ---- 7. View Lock & Rotation ----
 
   describe("view lock and rotation", () => {
@@ -933,6 +1158,21 @@ describe("ImageViewer", () => {
       (wrapper.vm as any).toggleViewLock();
       const interactor = map1.interactor();
       expect(interactor.options).toHaveBeenCalledWith({ actions: [] });
+    });
+
+    it("locks a map created while the view is locked", () => {
+      mockedStore.layerStackImages = [createLayerStackImage()];
+      (wrapper.vm as any).toggleViewLock();
+      const created = vi.mocked(geojs.map).mock.results.length;
+
+      // e.g. a dataset change resets the map
+      (wrapper.vm as any)._setupMap(0, createLayerStackImage().images[0], true);
+
+      const newMaps = vi.mocked(geojs.map).mock.results.slice(created);
+      expect(newMaps).toHaveLength(1);
+      expect(newMaps[0].value.interactor().options).toHaveBeenCalledWith({
+        actions: [],
+      });
     });
 
     it("unlock restores default actions", () => {
@@ -1084,6 +1324,66 @@ describe("ImageViewer", () => {
       (wrapper.vm as any).readyLayers.splice(0, 1, true);
       await nextTick();
       expect((wrapper.vm as any).readyLayersCount).toBe(1);
+    });
+
+    it("ignores a replaced layer going idle after a map reset", async () => {
+      // Layers that stay busy: GeoJS queues onIdle handlers until idle
+      const busyLayers: any[] = [];
+      vi.mocked(geojs.map).mockImplementation(() => {
+        const map = mockMap();
+        map.createLayer.mockImplementation(() => {
+          const layer: any = mockLayer();
+          layer.idle = false;
+          layer.idleHandlers = [];
+          layer.onIdle = vi.fn((cb: Function) => {
+            if (layer.idle) cb();
+            else layer.idleHandlers.push(cb);
+          });
+          busyLayers.push(layer);
+          return layer;
+        });
+        return map;
+      });
+      try {
+        mockedStore.layerStackImages = [createLayerStackImage()];
+        wrapper = mountComponent();
+        const oldImageLayers = [...(wrapper.vm as any).maps[0].imageLayers];
+        expect(oldImageLayers).toHaveLength(2);
+        expect((wrapper.vm as any).readyLayers).toEqual([false]);
+
+        // A map reset replaces the map and its layers; the new ones load
+        await wrapper.setProps({ shouldResetMaps: true });
+        const newImageLayers = (wrapper.vm as any).maps[0].imageLayers;
+        expect(
+          newImageLayers.some((l: any) => oldImageLayers.includes(l)),
+        ).toBe(false);
+
+        // The replaced layers finish their old work
+        for (const layer of oldImageLayers) {
+          layer.idle = true;
+          layer.idleHandlers.splice(0).forEach((cb: Function) => cb());
+        }
+        await nextTick();
+        expect((wrapper.vm as any).readyLayers).toEqual([false]);
+        expect((wrapper.vm as any).layersReady).toBe(false);
+        expect(wrapper.emitted("layers-ready")).toBeUndefined();
+
+        // The current layers going idle still mark the layer ready. Every
+        // other busy layer goes idle too: another viewer reacting to the
+        // shared store mock may have replaced the store's map entry.
+        const currentLayers = busyLayers.filter(
+          (layer) => !oldImageLayers.includes(layer),
+        );
+        currentLayers.forEach((layer) => (layer.idle = true));
+        for (const layer of currentLayers) {
+          layer.idleHandlers.splice(0).forEach((cb: Function) => cb());
+        }
+        await nextTick();
+        expect((wrapper.vm as any).readyLayers).toEqual([true]);
+        expect(wrapper.emitted("layers-ready")).toHaveLength(1);
+      } finally {
+        vi.mocked(geojs.map).mockImplementation(() => mockMap());
+      }
     });
 
     it("maps array itself remains reactive", async () => {

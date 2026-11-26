@@ -446,7 +446,7 @@ async function checkDatasetsCompatibility() {
           };
         }
       }
-    } catch (err) {
+    } catch {
       // Silently skip datasets that fail to load
     }
   }

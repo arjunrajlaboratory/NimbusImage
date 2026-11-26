@@ -882,9 +882,10 @@ function toggleAiPanel() {
 }
 
 // Clear the AI-panel conversation whenever the authenticated user changes.
-// Login/logout is client-side (no page reload), so the module-level wire
-// history would otherwise carry one user's prompts and results into the next
-// user's session. See codebaseDocumentation/AI_PANEL_REVIEW.md finding #4.
+// Login is client-side (no page reload; the Logout button reloads, but a
+// session can also end without it), so the module-level wire history would
+// otherwise carry one user's prompts and results into the next user's
+// session. See codebaseDocumentation/AI_PANEL_REVIEW.md finding #4.
 watch(
   () => store.girderUser?._id ?? null,
   (userId) => aiPanelStore.handleAuthenticatedUserChange(userId),
@@ -1528,6 +1529,11 @@ watch(
     }
     if (open) {
       openPalette("annotationPanel");
+      // Refused (embed mode): put the store back, or it stays "open" over a
+      // closed palette and the next request is no change, so never opens it
+      if (!annotationPanel.value) {
+        annotationPanelChanged();
+      }
     } else {
       annotationPanel.value = false;
     }

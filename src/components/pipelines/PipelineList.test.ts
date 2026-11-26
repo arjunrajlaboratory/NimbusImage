@@ -1,8 +1,9 @@
 import { ref } from "vue";
-import { shallowMount } from "@vue/test-utils";
+import { flushPromises, shallowMount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
+  logError: vi.fn(),
   pipelinesStore: {
     pipelines: [] as any[],
     runningPipelineId: null as string | null,
@@ -13,7 +14,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/store/pipelines", () => ({ default: h.pipelinesStore }));
-vi.mock("@/utils/log", () => ({ logError: vi.fn() }));
+vi.mock("@/utils/log", () => ({ logError: h.logError }));
 
 import PipelineList from "./PipelineList.vue";
 import { PipelineRunControllerKey } from "./usePipelineRun";
@@ -70,6 +71,20 @@ describe("PipelineList", () => {
     expect(controller.run).toHaveBeenCalledWith(pipeline, {
       allowBatch: false,
     });
+  });
+
+  it("logs a quick run that rejects instead of leaving it unhandled", async () => {
+    const failure = new Error("dataset lookup failed");
+    controller.run.mockRejectedValueOnce(failure);
+    const wrapper = mountList();
+
+    (wrapper.vm as any).runPipeline(pipeline);
+    await flushPromises();
+
+    expect(h.logError).toHaveBeenCalledWith(
+      expect.stringContaining("failed to run"),
+      failure,
+    );
   });
 
   it("guards duplicate and delete actions while a run is active", async () => {

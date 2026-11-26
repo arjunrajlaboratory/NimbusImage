@@ -1,5 +1,6 @@
 from girder import events
 from girder.exceptions import ValidationException
+from girder.models import model_base
 from girder.models.model_base import AccessControlledModel, Model
 
 from pymongo import InsertOne, ReplaceOne
@@ -96,6 +97,33 @@ class CustomNimbusImageModel(AccessControlledModel):
             )
 
         return documents
+
+    def findRawBatches(self, query=None, offset=0, limit=0, timeout=None,
+                       fields=None, sort=None, **kwargs):
+        """`Model.find`, but the cursor yields raw BSON batches (concatenated
+        documents, as bytes) instead of decoded documents.
+
+        For endpoints that stream large result sets straight to JSON
+        (`serialization.streamRawJsonArray`): decoding 100K annotations into
+        dicts costs more than everything else in the request. It reaches the
+        collection directly, the one exception besides aggregations to
+        CLAUDE.md's "use Model().find(), not collection.find()" rule, so it
+        repeats what Girder's `find` adds: the allowed extra find arguments,
+        the cursor timeout, and the projection. Keep it in step with
+        `girder.models.model_base.Model.find`
+        (`testFindRawBatchesMatchesFind` compares the two).
+        """
+        query = query or {}
+        kwargs = {
+            k: kwargs[k] for k in kwargs if k in model_base._allowedFindArgs
+        }
+        timeout = timeout or model_base._MAX_CURSOR_TIMEOUT_MS
+        cursor = self.collection.find_raw_batches(
+            filter=query, skip=offset, limit=limit, projection=fields,
+            no_cursor_timeout=timeout is None, sort=sort, **kwargs)
+        if timeout:
+            cursor.max_time_ms(timeout)
+        return cursor
 
     def getUpdatableFields(self):
         """Return the set of fields that may be modified via update.

@@ -1,3 +1,4 @@
+import { toRaw } from "vue";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Regression tests for addMultiSourceMetadata's error propagation.
@@ -17,6 +18,8 @@ import jobs from "./jobs";
 import progress from "./progress";
 import { jobStates } from "./jobConstants";
 import rootStore from "./root";
+import sync from "./sync";
+import girderResources from "./girderResources";
 import "./filters";
 import "./properties";
 // Registers hydrateTrackLabelPath, which hydrateAnnotationBrowserState
@@ -24,6 +27,7 @@ import "./properties";
 import "./connectionList";
 import { RestClient } from "@/girder";
 import ShareLinkAPI from "./ShareLinkAPI";
+import batchRuns, { runBatch } from "./batchRuns";
 
 describe("share-link bootstrap identity", () => {
   let originalClient: typeof main.girderRest;
@@ -170,10 +174,115 @@ describe("share-link bootstrap identity", () => {
     vi.spyOn(ShareLinkAPI.prototype, "me").mockResolvedValue({
       datasetViewId: "v",
     } as any);
+    (rootStore.state as any).main.authRestored = false;
     await main.openShareLink({ token: "link-a" });
     await main.leaveShareLink();
     expect(main.girderRest).toBe(client);
     expect(main.girderUser?._id).toBe("owner-token");
+    // initialize() never ran in this tab; leaving settles the login.
+    expect(main.authRestored).toBe(true);
+  });
+
+  it("settles the saved login when a shared URL opened directly fails", async () => {
+    // initialize() never ran in this tab and no link session took over:
+    // leaving must restore the owner and settle authRestored, or the
+    // consent page waits forever.
+    const client = main.girderRest;
+    Object.assign(client, { user: null, token: "owner-token" });
+    vi.spyOn(RestClient.prototype, "fetchUser").mockImplementation(
+      async function (this: any) {
+        this.user = { _id: this.token };
+        return this.user;
+      },
+    );
+    vi.spyOn(ShareLinkAPI.prototype, "me").mockRejectedValue(
+      new Error("not a link"),
+    );
+    (rootStore.state as any).main.authRestored = false;
+    await messageOf(main.openShareLink({ token: "bad-link" }));
+    await main.leaveShareLink();
+    expect(main.girderRest).toBe(client);
+    expect(main.girderUser?._id).toBe("owner-token");
+    expect(main.authRestored).toBe(true);
+  });
+
+  it("leaves a link that took over during the restore alone", async () => {
+    const client = main.girderRest;
+    Object.assign(client, { user: null, token: "owner-token" });
+    let finishOwner!: () => void;
+    vi.spyOn(RestClient.prototype, "fetchUser").mockImplementation(
+      async function (this: any) {
+        if (toRaw(this) === toRaw(client)) {
+          await new Promise<void>((resolve) => {
+            finishOwner = resolve;
+          });
+        }
+        this.user = { _id: this.token };
+        return this.user;
+      },
+    );
+    vi.spyOn(ShareLinkAPI.prototype, "me").mockRejectedValueOnce(
+      new Error("not a link"),
+    );
+    (rootStore.state as any).main.authRestored = false;
+    await messageOf(main.openShareLink({ token: "bad-link" }));
+    const leaving = main.leaveShareLink();
+    await vi.waitFor(() => expect(finishOwner).toBeTypeOf("function"));
+    // Another link takes over while the owner's user is being fetched.
+    const linkClient = { token: "other" };
+    (rootStore.state as any).main.girderRest = linkClient;
+    const loggedIn = vi.spyOn(main as any, "loggedIn");
+    finishOwner();
+    await leaving;
+    expect(loggedIn).not.toHaveBeenCalled();
+    expect(toRaw(main.girderRest)).toBe(linkClient);
+    expect(main.authRestored).toBe(true);
+  });
+
+  it("settles authRestored when a login replaced the link before leaving", async () => {
+    // A tab started on a shared URL (no initialize()); the share user
+    // logged out and in as themselves, then left the shared route. The
+    // login is settled: a consent page waiting on authRestored must not
+    // spin after a later logout.
+    const client = main.girderRest;
+    Object.assign(client, { user: null, token: "owner-token" });
+    vi.spyOn(RestClient.prototype, "fetchUser").mockImplementation(
+      async function (this: any) {
+        this.user = { _id: this.token, shareLink: { datasetId: "d" } };
+        return this.user;
+      },
+    );
+    vi.spyOn(ShareLinkAPI.prototype, "me").mockResolvedValue({
+      datasetViewId: "v",
+    } as any);
+    (rootStore.state as any).main.authRestored = false;
+    await main.openShareLink({ token: "link-a" });
+    const login = { token: "new-login" };
+    (rootStore.state as any).main.girderRest = login;
+    const loggedIn = vi.spyOn(main as any, "loggedIn");
+    await main.leaveShareLink();
+    expect(loggedIn).not.toHaveBeenCalled();
+    expect(toRaw(main.girderRest)).toBe(login);
+    expect(main.authRestored).toBe(true);
+  });
+
+  it("settles authRestored even if restoring the login throws", async () => {
+    const client = main.girderRest;
+    Object.assign(client, { user: null, token: "owner-token" });
+    vi.spyOn(RestClient.prototype, "fetchUser").mockImplementation(
+      async function (this: any) {
+        this.user = { _id: this.token };
+        return this.user;
+      },
+    );
+    vi.spyOn(ShareLinkAPI.prototype, "me").mockResolvedValue({
+      datasetViewId: "v",
+    } as any);
+    (rootStore.state as any).main.authRestored = false;
+    await main.openShareLink({ token: "link-a" });
+    vi.spyOn(main as any, "loggedIn").mockRejectedValue(new Error("boom"));
+    await main.leaveShareLink().catch(() => undefined);
+    expect(main.authRestored).toBe(true);
   });
 
   it("does not commit a share bootstrap after its route is canceled", async () => {
@@ -984,6 +1093,24 @@ describe("tool job outcome scoping", () => {
   });
 });
 
+describe("logout clears batch runs", () => {
+  it("does not show the previous session's batch after logging out", async () => {
+    vi.spyOn(main.girderRest, "logout").mockResolvedValue(undefined as any);
+    void runBatch(
+      "workerTool",
+      "config-1",
+      "tool-1",
+      2,
+      () => new Promise(() => {}),
+    );
+    expect(batchRuns.shownRun("workerTool", "config-1")).not.toBeNull();
+
+    await main.logout();
+
+    expect(batchRuns.shownRun("workerTool", "config-1")).toBeNull();
+  });
+});
+
 describe("scales getters normalize an unknown pixel size", () => {
   afterEach(() => {
     (rootStore.state as any).main.configuration = null;
@@ -1029,5 +1156,87 @@ describe("scales getters normalize an unknown pixel size", () => {
       scales: { pixelSize: { value: 0.3, unit: "µm" } },
     };
     expect(main.scales.pixelSize).toEqual({ value: 0.3, unit: "µm" });
+  });
+});
+
+describe("initialize: authRestored", () => {
+  it("is set when there is no stored login", async () => {
+    const client = main.girderRest;
+    const token = client.token;
+    Object.assign(client, { token: "" });
+    (rootStore.state as any).main.authRestored = false;
+    try {
+      await main.initialize();
+      expect(main.authRestored).toBe(true);
+    } finally {
+      Object.assign(client, { token });
+    }
+  });
+
+  it("is set even when restoring the login fails", async () => {
+    const client = main.girderRest;
+    const token = client.token;
+    Object.assign(client, { token: "stale" });
+    (rootStore.state as any).main.authRestored = false;
+    vi.spyOn(RestClient.prototype, "fetchUser").mockRejectedValue(
+      new Error("401"),
+    );
+    try {
+      await main.initialize();
+      expect(main.authRestored).toBe(true);
+      expect(main.isLoggedIn).toBe(false);
+    } finally {
+      Object.assign(client, { token });
+      vi.restoreAllMocks();
+    }
+  });
+});
+
+describe("sync indicator: balanced saves", () => {
+  // The indicator counts saves in flight, so each action must end exactly
+  // the saves it starts: a missing end leaves "Saving" on forever, an extra
+  // one hides another request that is still running.
+  beforeEach(() => {
+    Object.assign((rootStore.state as any).sync, {
+      saving: false,
+      savesInFlight: 0,
+      lastError: null,
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    jobs.clearStoredMessages("job1");
+  });
+
+  it("addMultiSourceMetadata ends its save when the upload succeeds", async () => {
+    mockSuccessfulUploadAndTiles();
+
+    await main.addMultiSourceMetadata({
+      parentId: "folder1",
+      metadata: "{}",
+      transcode: false,
+    });
+
+    expect(sync.saving).toBe(false);
+  });
+
+  it("a failed colorByProperty write does not end another save in flight", async () => {
+    const original = (girderResources as any).getConfiguration;
+    (girderResources as any).getConfiguration = vi
+      .fn()
+      .mockRejectedValue(new Error("offline"));
+    sync.setSaving(true); // another request, still running
+    try {
+      await main.saveColorByPropertyFor({
+        datasetId: "ds1",
+        configurationId: "not-the-loaded-one",
+        state: null,
+      });
+    } finally {
+      (girderResources as any).getConfiguration = original;
+    }
+
+    expect(sync.lastError?.message).toBe("offline");
+    expect(sync.saving).toBe(true);
   });
 });

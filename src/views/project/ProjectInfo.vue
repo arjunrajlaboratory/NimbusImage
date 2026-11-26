@@ -1128,7 +1128,7 @@ async function saveMetadata() {
       type: "success",
       message: "Metadata saved successfully",
     });
-  } catch (error) {
+  } catch {
     openAlert({ type: "error", message: "Failed to save metadata" });
   } finally {
     savingMetadata.value = false;

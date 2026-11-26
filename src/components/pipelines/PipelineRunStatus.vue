@@ -1,5 +1,13 @@
 <template>
-  <div v-if="visible" class="pipeline-run-status px-3 py-2 mb-2">
+  <!-- Always rendered at one height, hidden while idle: the strip sits above
+       the list and the editor's Run button, so appearing (or growing when a
+       run starts) would shift them under the cursor and land the second click
+       of a double-click on a different control. -->
+  <div
+    class="pipeline-run-status px-3 py-2 mb-2"
+    :class="{ 'pipeline-run-status--idle': !visible }"
+    :aria-hidden="visible ? undefined : 'true'"
+  >
     <div class="d-flex align-center ga-2">
       <v-progress-circular
         v-if="controller.isRunning.value"
@@ -12,8 +20,11 @@
 
       <div class="flex-grow-1 min-width-0">
         <div class="text-body-2 text-truncate">{{ headline }}</div>
-        <div class="text-caption text-medium-emphasis text-truncate">
-          {{ detail }}
+        <!-- Kept when empty (a non-breaking space) so the height holds. -->
+        <div
+          class="pipeline-run-status__detail text-caption text-medium-emphasis text-truncate"
+        >
+          {{ detail || "\u00a0" }}
         </div>
       </div>
 
@@ -28,14 +39,15 @@
       </v-btn>
     </div>
 
-    <v-progress-linear
-      v-if="controller.isRunning.value"
-      :model-value="percent"
-      :indeterminate="percent === 0"
-      color="primary"
-      height="6"
-      class="mt-2"
-    />
+    <div class="pipeline-run-status__bar mt-2">
+      <v-progress-linear
+        v-if="controller.isRunning.value"
+        :model-value="percent"
+        :indeterminate="percent === 0"
+        color="primary"
+        height="6"
+      />
+    </div>
   </div>
 </template>
 
@@ -155,6 +167,12 @@ defineExpose({ visible, headline, detail, percent });
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   border-radius: 6px;
   background-color: rgba(var(--v-theme-primary), 0.06);
+}
+.pipeline-run-status--idle {
+  visibility: hidden;
+}
+.pipeline-run-status__bar {
+  height: 6px;
 }
 .min-width-0 {
   min-width: 0;

@@ -32,8 +32,33 @@ NimbusImage uses Girder's built-in access control system with three permission l
   ADMIN-only
 - Any user with READ access can view the access list (who has access and at what level)
 - Owners (ADMIN) can't be changed or removed by anyone below ADMIN (`requireCanSetUserAccess`).
-  The dialog also locks owner rows for everyone. Another ADMIN can still change an owner through
-  the API.
+  The dialog also locks owner rows for everyone. Another ADMIN can change a co-owner through the
+  API.
+- A dataset or project always keeps **at least one user at ADMIN** (`last_admin_guard`). Who holds
+  it doesn't matter: the creator can give another user ADMIN and then step down, and a co-owner
+  can remove the creator. What is refused (400, nothing written) is removing or demoting the
+  *last* ADMIN, whether they remove themselves or another ADMIN does. Site admins can override
+  (recovery path). Both share endpoints check it before writing anything, `project/:id/share`
+  on the project's own ACL as well as every dataset it reaches, and a folder-save listener backs
+  up Girder's raw `PUT folder/{id}/access`. Only user entries count: a group ADMIN grant doesn't,
+  because group membership is managed elsewhere and a group can be emptied. See the regression
+  checklist below for the tests.
+  - Handing a dataset over is API-only for now (`ds.sharing` or `dataset_view/share`): both
+    Share dialogs lock every Admin row. Give the new owner ADMIN on the dataset *and* its views
+    and configurations (a `dataset_view/share` at ADMIN does all three) before stepping down;
+    only the folder is guarded, so a new owner who is ADMIN on the folder alone leaves the
+    views and configurations with no ADMIN when the old owner leaves.
+  - Known gaps:
+    - Any user entry at ADMIN counts, whether or not the account still exists. Girder doesn't
+      remove a deleted user's ACL entries, and the raw `PUT folder/{id}/access` accepts any
+      id, including a typo or a share-link principal.
+    - Two co-owners removing each other at the same moment through project shares (bulk
+      writes, no save event) can both pass the check.
+    - A recursive raw `PUT folder/{id}/access?recurse=true` saves the parent and earlier
+      subfolders before a refused dataset subfolder, so it isn't all-or-nothing. The plugin's
+      share endpoints are.
+
+The folder-save listener (`server/helpers/last_admin_guard.py`) rejects a save of a `contrastDataset` folder that leaves no user at ADMIN, comparing against the stored folder: a dataset that already had none (damaged before the guard, or by a site admin) stays editable instead of being frozen. That exception covers only folders that were already datasets: marking a folder `contrastDataset` with no user at ADMIN is refused, or clearing the subtype, removing the last ADMIN and re-importing would get around the guard. This guard plugs a gap in core Girder's `setAccessList`, which otherwise accepts any ACL including one that locks the owner out — see `BUG_OWNER_CAN_REMOVE_SELF_FROM_DATASET.md`.
 
 ## Architecture
 
@@ -551,6 +576,19 @@ Run `pnpm test src/components/ShareDataset.test.ts` and, from
 - [ ] **Only ints -1/0/1/2 are levels** (no SITE_ADMIN, fractions or booleans). — *"testShareEndpointRejectsInvalidAccessType"*, *"test_invalid_access_type_is_400"*
 - [ ] **Share-link principals are not share targets.** — *"testShareEndpointRejectsShareLinkPrincipals"*, *"test_share_link_principal_is_not_a_target"*
 - [ ] **The dialog takes the caller's rights from the server's effective level and shares only writable views of shareable collections.** — *"takes management rights from the server's effective level"*, *"selects writable collections and sends writable views"*, *"never shows a collection selected that would not be shared"*, *"removing your last access fails closed on the 403"*
+
+### Last ADMIN (`last_admin_guard`)
+
+Run `tox -- upenncontrast_annotation/test/test_last_admin_guard.py`.
+
+- [ ] **The last user at ADMIN can't remove or demote themselves, on a dataset or a project, and a refused request writes nothing** (views and configurations, and the project's own ACL, included). — *"testLastAdminCannotRemoveThemselvesViaDatasetShare"*, *"testLastAdminCannotDemoteThemselvesViaDatasetShare"*, *"testNewSoleAdminCannotRemoveThemselves"*, *"testLastDatasetAdminCannotLeaveViaProjectShare"*, *"testRefusedProjectShareLeavesTheProjectUnchanged"*
+- [ ] **`project/:id/share` checks the project's own ACL, not only what it propagates to.** Before this, an owner could leave a project holding none of their datasets and get a 403 on it. — *"testLastAdminCannotLeaveAnEmptyProject"*, *"testLastAdminCannotDemoteThemselvesOnAProject"*
+- [ ] **Ownership can move.** The creator isn't special: they can hand ADMIN over and step down, and a co-owner can remove them. — *"testCreatorCanTransferOwnershipThenStepDown"*, *"testCoOwnerCanRemoveTheCreator"*, *"testCreatorCanHandOverViaRestEndpoint"*, *"testProjectOwnerCanHandOverThenLeave"*
+- [ ] **Girder's raw folder endpoints are guarded by the save listener**, at the model layer too. — *"testSoleAdminCannotEmptyAccessViaRestEndpoint"*, *"testSoleAdminCannotDemoteSelfViaRestEndpoint"*, *"testModelLayerAlsoGuarded"*
+- [ ] **Only user entries count; a group ADMIN grant doesn't.** — *"testGroupAdminDoesNotCountAsAnAdmin"*
+- [ ] **Site admins can override (recovery path).** — *"testSiteAdminCanOverride"*, *"testSiteAdminCanRemoveTheLastAdminViaDatasetShare"*, *"testSiteAdminCanRemoveTheLastProjectAdmin"*
+- [ ] **A dataset that already has no ADMIN isn't frozen, but a folder can't become a dataset without one.** The listener compares against the stored folder. — *"testDamagedDatasetStaysShareable"*, *"testFolderCannotBecomeADatasetWithoutAnAdmin"*
+- [ ] **Plain Girder folders are untouched.** — *"testNonContrastFolderUnaffected"*
 
 ### Dataset-view writes
 

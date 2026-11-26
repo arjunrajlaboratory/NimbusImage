@@ -123,6 +123,46 @@ class AnnotationSchema:
         ],
     }
 
+    # The same schema with no rule on coordinates at all (the key is still
+    # required), for documents whose coordinates already passed
+    # coordinatesMatchSchema, which checks the type, minItems and
+    # per-vertex rules itself. It accepts any coordinates value on its own.
+    annotationSchemaWithoutCoordinates = {
+        **annotationSchema,
+        "properties": {**annotationSchema["properties"], "coordinates": {}},
+    }
+
+
+_NUMBER_TYPES = frozenset((int, float))
+
+
+def coordinatesMatchSchema(coordinates):
+    """Whether `coordinates` certainly satisfies AnnotationSchema.coordsSchema.
+
+    The compiled schema spends ~1 µs per vertex building key sets, which
+    was most of the validation time for a 100K-polygon create. This checks
+    the common case, plain dicts of int/float from a JSON body, in a fraction
+    of that. It is conservative: True implies the schema accepts, while
+    False only means "run the full validator", which also accepts tuples,
+    Decimals, and dict or int subclasses, and words the error otherwise.
+    `bool` fails the exact type test, as the schema rejects it as a number.
+    """
+    if type(coordinates) is not list or not coordinates:
+        return False
+    for coordinate in coordinates:
+        if (
+            type(coordinate) is not dict
+            or type(coordinate.get("x")) not in _NUMBER_TYPES
+            or type(coordinate.get("y")) not in _NUMBER_TYPES
+            # Beyond x and y, only z has a rule.
+            or (
+                len(coordinate) > 2
+                and type(coordinate.get("z", 0.0)) not in _NUMBER_TYPES
+            )
+        ):
+            return False
+    return True
+
 
 # AccessControlMixin must precede ProxiedModel so its permission-aware
 # find/load methods (e.g. findWithPermissions) take MRO precedence over
@@ -189,6 +229,26 @@ class Annotation(AccessControlMixin, ProxiedModel):
     jsonValidate = staticmethod(
         customJsonSchemaCompile(AnnotationSchema.annotationSchema)
     )
+    _jsonValidateWithoutCoordinates = staticmethod(
+        customJsonSchemaCompile(
+            AnnotationSchema.annotationSchemaWithoutCoordinates
+        )
+    )
+
+    @classmethod
+    def validateSchema(cls, annotation):
+        """Validate against AnnotationSchema, raising an error with the same
+        message, path and rule as jsonValidate (only `.definition` may name
+        the reduced schema), but with a fast path for the per-vertex
+        coordinates rule. The two agree on every document: when the
+        coordinates certainly pass, the rest of the schema decides
+        (properties are checked independently, so its first error is the
+        full validator's); otherwise the full validator runs."""
+        if type(annotation) is dict and coordinatesMatchSchema(
+            annotation.get("coordinates")
+        ):
+            return cls._jsonValidateWithoutCoordinates(annotation)
+        return cls.jsonValidate(annotation)
 
     def _aggregate(self, collection, pipeline, hint=DEFAULT_AGGREGATE_HINT):
         """Run an aggregation with the standard index hint, allowDiskUse, and a
@@ -357,7 +417,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
         # Validate using the schema
         try:
             for annotation in annotations:
-                self.jsonValidate(annotation)
+                self.validateSchema(annotation)
         except fastjsonschema.JsonSchemaValueException as exp:
             raise ValidationException(exp)
 
@@ -425,6 +485,16 @@ class Annotation(AccessControlMixin, ProxiedModel):
         Built here (not in the API method) so pipeline construction and the
         runtime-bound _aggregate options live with the other list aggregations.
         """
+        # Mongo evaluating the pipeline and pymongo decoding its output each
+        # take seconds at 700K; the prefetch overlaps them.
+        return prefetchedDocuments(
+            self.stubBatches(datasetId, shape=shape, tags=tags),
+            self.collection.codec_options,
+        )
+
+    def stubBatches(self, datasetId, shape=None, tags=None):
+        """`stubs` as a raw-batch cursor (concatenated BSON documents per
+        batch), for streaming straight to JSON without decoding."""
         match = {"datasetId": datasetId}
         if shape:
             match["shape"] = shape
@@ -467,16 +537,11 @@ class Annotation(AccessControlMixin, ProxiedModel):
             }},
             {"$project": {"coordinates": 0, "_stub": 0}},
         ]
-        # Mongo evaluating the pipeline and pymongo decoding its output each
-        # take seconds at 700K; the prefetch overlaps them.
-        return prefetchedDocuments(
-            self.collection.aggregate_raw_batches(
-                pipeline,
-                hint=DEFAULT_AGGREGATE_HINT,
-                allowDiskUse=True,
-                maxTimeMS=AGGREGATION_MAX_TIME_MS,
-            ),
-            self.collection.codec_options,
+        return self.collection.aggregate_raw_batches(
+            pipeline,
+            hint=DEFAULT_AGGREGATE_HINT,
+            allowDiskUse=True,
+            maxTimeMS=AGGREGATION_MAX_TIME_MS,
         )
 
     def _buildListMatchStages(self, datasetId, filters):
@@ -487,7 +552,8 @@ class Annotation(AccessControlMixin, ProxiedModel):
         only in `values`, and `exclusive` is a mode flag — so a tag
         literally named "exclusive" is handled like any other tag.
         Semantics mirror the client tagCloudFilterFunction:
-        inclusive -> $in (has any); exclusive -> exactly that set.
+        inclusive -> $in (has any); all -> $all (has every one, others
+        allowed); exclusive -> exactly that set.
         """
         match = {"datasetId": datasetId}
         if filters.get("shape"):
@@ -498,6 +564,9 @@ class Annotation(AccessControlMixin, ProxiedModel):
         if tagValues:
             if tags.get("exclusive"):
                 match["tags"] = {"$all": tagValues, "$size": len(tagValues)}
+            elif tags.get("all"):
+                # Every given tag, others allowed: the count endpoint's rule.
+                match["tags"] = {"$all": tagValues}
             else:
                 match["tags"] = {"$in": tagValues}
 
@@ -1482,6 +1551,23 @@ class Annotation(AccessControlMixin, ProxiedModel):
         elif exclusive:
             match["tags"] = {"$size": 0}
         return match
+
+    def countByDataset(self, datasetIds, shape=None, tags=None):
+        """Annotation counts for several datasets in one aggregation, as
+        {datasetId: count}; a dataset with no matching annotation is absent.
+        `tags` must all be present (like the single-dataset count)."""
+        if not datasetIds:
+            return {}
+        match = {"datasetId": {"$in": list(datasetIds)}}
+        if shape:
+            match["shape"] = shape
+        if tags:
+            match["tags"] = {"$all": list(tags)}
+        rows = self._aggregate(self.collection, [
+            {"$match": match},
+            {"$group": {"_id": "$datasetId", "count": {"$sum": 1}}},
+        ])
+        return {row["_id"]: row["count"] for row in rows}
 
     def uncomputedCounts(self, datasetId, propertyFilters):
         """Per property, the count of annotations awaiting its computation.

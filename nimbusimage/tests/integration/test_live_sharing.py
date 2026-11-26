@@ -221,14 +221,9 @@ class TestLiveSharing:
                 gc.delete(f"dataset_view/{second_view['_id']}")
             gc.delete(f"upenn_collection/{collection['_id']}")
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="The server guard that keeps a dataset's creator at ADMIN "
-        "lands in PR #1165; remove this marker once it is deployed.",
-    )
-    def test_creator_cannot_remove_themselves(self, client, second_user):
-        """Owner lockout is refused by the server, not the client:
-        share() sends a self-removal like any other, and
+    def test_last_admin_cannot_remove_themselves(self, client, second_user):
+        """Leaving a dataset with no ADMIN is refused by the server, not
+        the client: share() sends a self-removal like any other, and
         dataset_view/share answers 400 without changing anything."""
         login, owner = second_user
         gc = owner.girder

@@ -31,6 +31,7 @@ from .server.models.datasetView import DatasetView as DatasetViewModel
 from .server.models.history import History as HistoryModel
 from .server.models.documentChange import DocumentChange as DocumentChangeModel
 from .server.models.project import Project as ProjectModel
+from .server.helpers import last_admin_guard
 from .server.models.shareLink import ShareLink as ShareLinkModel
 from .server.helpers import shareLinkGuards
 
@@ -187,3 +188,8 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         info["apiRoot"].share_link = ShareLink()
         shareLinkGuards.bind()
         system.addSystemEndpoints(info["apiRoot"])
+
+        # Keep at least one user at ADMIN on every `contrastDataset`
+        # folder, so a dataset can't be left with no owner. See
+        # `server/helpers/last_admin_guard.py`.
+        last_admin_guard.register()

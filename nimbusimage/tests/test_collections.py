@@ -128,6 +128,8 @@ class TestClientCollections:
         assert len(colls) == 1
         call_url = mock_gc.get.call_args[0][0]
         assert "folderId=explicit_folder" in call_url
+        # Every page: the endpoint returns 50 collections by default.
+        assert "limit=0" in call_url
 
     def test_collection_by_id(self, mock_gc, sample_collection_data):
         mock_gc.get.return_value = sample_collection_data
@@ -256,11 +258,13 @@ class TestCollectionAccessorDefaultView:
         accessor.list_views(current_user_only=True)
         mock_gc.get.assert_called_with(
             "dataset_view",
-            parameters={"datasetId": "ds_001", "currentUserOnly": "true"},
+            parameters={"datasetId": "ds_001", "limit": 0,
+                        "currentUserOnly": "true"},
         )
+        # limit=0: the endpoint pages at 50 views otherwise.
         accessor.list_views()
         mock_gc.get.assert_called_with(
-            "dataset_view", parameters={"datasetId": "ds_001"}
+            "dataset_view", parameters={"datasetId": "ds_001", "limit": 0}
         )
 
     def test_layer_contrasts_come_from_the_view(self, mock_gc):

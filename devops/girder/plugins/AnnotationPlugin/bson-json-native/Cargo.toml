@@ -1,0 +1,24 @@
+[package]
+name = "bson_json_native"
+version = "0.1.0"
+edition = "2024"
+description = "Raw BSON documents to the JSON the annotation plugin serves (orjson-identical)"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "bson_json_native"
+# cdylib for the Python extension, rlib so `cargo test` can link the tests.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Built by maturin (pyproject.toml); `cargo test` runs without Python.
+python = ["dep:pyo3"]
+
+[dependencies]
+ryu = "1.0.23"
+pyo3 = { version = "0.30.1", features = ["extension-module", "abi3-py39"], optional = true }
+
+[profile.release]
+lto = true
+codegen-units = 1

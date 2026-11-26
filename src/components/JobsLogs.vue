@@ -215,7 +215,12 @@ const getStatusText = getJobStatusText;
 const getEndTime = getJobEndTime;
 const getDuration = getJobDuration;
 
+// Only the newest log request may write: a slow log for a job closed since
+// would otherwise land under the next job's title
+let jobLogRequest = 0;
+
 async function viewJobLog(job: IJob): Promise<void> {
+  const request = ++jobLogRequest;
   selectedJob.value = job;
 
   if (!refreshingLog.value) {
@@ -225,6 +230,9 @@ async function viewJobLog(job: IJob): Promise<void> {
 
   try {
     const jobWithLog = await store.api.getJobInfo(job._id);
+    if (request !== jobLogRequest) {
+      return;
+    }
 
     if (!jobWithLog) {
       currentJobLog.value = "Failed to load job log.";
@@ -236,7 +244,9 @@ async function viewJobLog(job: IJob): Promise<void> {
       (jobWithLog.log || "No log content available.");
   } catch (error) {
     logError("Error fetching job log:", error);
-    currentJobLog.value = "Error fetching job log. Please try again.";
+    if (request === jobLogRequest) {
+      currentJobLog.value = "Error fetching job log. Please try again.";
+    }
   }
 }
 

@@ -364,7 +364,10 @@ const mockRouter = { push: vi.fn() };
 
 function mountComponent(
   props: any = {},
-  { skipInitialize = true }: { skipInitialize?: boolean } = {},
+  {
+    skipInitialize = true,
+    renderSlots = false,
+  }: { skipInitialize?: boolean; renderSlots?: boolean } = {},
 ) {
   const app = document.createElement("div");
   app.setAttribute("data-app", "true");
@@ -384,6 +387,7 @@ function mountComponent(
       ...props,
     },
     global: {
+      renderStubDefaultSlot: renderSlots,
       provide: {
         ...routerProvider(mockRouter),
       },
@@ -906,6 +910,31 @@ describe("MultiSourceConfiguration", () => {
       ).toEqual(["ds-1", "ds-1", "ds-1"]);
     });
 
+    it("loads the new dataset when the superseded load fails", async () => {
+      mockGetItems.mockResolvedValue(namedItems(3));
+      mockGetSourceMetadata.mockImplementation(
+        async (datasetId: string, itemIds: string[]) => {
+          if (datasetId === "ds-1") {
+            throw { response: { status: 403, data: { message: "Gone" } } };
+          }
+          return sourceMetadataFromItemMocks(datasetId, itemIds);
+        },
+      );
+      const wrapper = mountComponent({}, { skipInitialize: false });
+      const vm = wrapper.vm as any;
+      // The id changes while the first load is still running; that load
+      // then fails.
+      await wrapper.setProps({ datasetId: "ds-2" });
+      await vm.initialized;
+      expect(mockGetSourceMetadata.mock.calls.map((c) => c[0])).toEqual([
+        "ds-1",
+        "ds-2",
+      ]);
+      expect(vm.initError).toBeNull();
+      expect(vm.tilesMetadata).toHaveLength(3);
+      expect(vm.initializing).toBe(false);
+    });
+
     it("saves the labels of the config it generated, not a later toggle", async () => {
       const vm = mountComponent().vm as any;
       await vm.initialized.catch(() => {});
@@ -1300,6 +1329,103 @@ describe("MultiSourceConfiguration", () => {
   // ─── 3. Initialization with real parsing ────────────────────────────
 
   describe("initialization", () => {
+    it("clears initializing and keeps the error when initialization fails", async () => {
+      mockGetItems.mockReset();
+      mockGetItems.mockRejectedValue(new Error("Network down"));
+      const wrapper = mountComponent(
+        {},
+        { skipInitialize: false, renderSlots: true },
+      );
+      const vm = wrapper.vm as any;
+
+      await expect(vm.initialized).rejects.toThrow("Network down");
+      await nextTick();
+
+      expect(vm.initializing).toBe(false);
+      expect(vm.initError).toEqual({
+        name: "the dataset's files",
+        message: "Network down",
+      });
+      // The error is shown although initialization is no longer running.
+      expect(wrapper.text()).toContain(
+        "Failed on the dataset's files: Network down",
+      );
+      expect(wrapper.text()).not.toContain("Not all variables are assigned");
+      // Nothing was loaded, so there is nothing to submit.
+      expect(vm.submitEnabled()).toBe(false);
+      expect(vm.submitError).not.toBeNull();
+    });
+
+    it("runs a later initialize() after a failed one", async () => {
+      mockGetItems.mockReset();
+      mockGetItems.mockRejectedValueOnce(new Error("Network down"));
+      const vm = mountComponent({}, { skipInitialize: false }).vm as any;
+      await vm.initialized.catch(() => {});
+
+      mockGetItems.mockResolvedValue(makeSetCItems());
+      mockGetTiles.mockResolvedValue(makeND2TileMeta(3, 5, 4));
+      await vm.initialize();
+
+      expect(mockGetItems).toHaveBeenCalledTimes(2);
+      expect(vm.initError).toBeNull();
+      expect(vm.initializing).toBe(false);
+    });
+
+    it("does not keep the previous load's variables when initialize() runs again", async () => {
+      mockGetItems.mockResolvedValue(makeSetDItems());
+      mockGetTiles.mockResolvedValue(makeBasicTileMeta());
+      mockGetTilesInternalMetadata.mockResolvedValue({});
+      const vm = mountComponent({}, { skipInitialize: false }).vm as any;
+      await vm.initialized;
+      const firstLoad = vm.dimensions.map((d: any) => [d.id, d.name]);
+      expect(firstLoad.length).toBeGreaterThan(0);
+
+      await vm.initialize();
+
+      expect(vm.dimensions.map((d: any) => [d.id, d.name])).toEqual(firstLoad);
+    });
+
+    it("names the files the server could not open as images once retries run out", async () => {
+      vi.useFakeTimers();
+      try {
+        mockGetItems.mockResolvedValue(
+          ["a.png", "b.png", "c.png", "d.png"].map((name, i) => ({
+            _id: `item-${i}`,
+            _modelType: "item",
+            name,
+            folderId: "folder1",
+            creatorId: "user1",
+            description: "",
+            meta: {},
+          })),
+        );
+        mockGetSourceMetadata.mockImplementation(
+          async (_datasetId: string, itemIds: string[]) =>
+            itemIds.map((itemId) => ({
+              itemId,
+              error: "No large image file in this item.",
+              notReady: true,
+            })),
+        );
+        const vm = mountComponent({}, { skipInitialize: false }).vm as any;
+        const outcome = vm.initialized.catch((error: unknown) => error);
+
+        await vi.advanceTimersByTimeAsync(15000);
+        await outcome;
+
+        // Still retried before giving up.
+        expect(mockGetSourceMetadata).toHaveBeenCalledTimes(11);
+        expect(vm.initError).toEqual({
+          name: "a.png, b.png, c.png and 1 more",
+          message:
+            "the server could not open these files as images; the format " +
+            "may be one the server does not import, such as PNG",
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("Set A: detects 2 filename variables from OME-TIFF files", async () => {
       const items = makeSetAItems();
       mockGetItems.mockResolvedValue(items);
@@ -2036,6 +2162,45 @@ describe("MultiSourceConfiguration", () => {
       expect(vm.assignments.Z).toBeNull();
     });
 
+    it("reinitializeAndApplyStrategy proceeds after a failed initialization", async () => {
+      mockGetItems.mockReset();
+      mockGetItems.mockRejectedValueOnce(new Error("Network down"));
+      const vm = mountComponent({}, { skipInitialize: false }).vm as any;
+      await vm.initialized.catch(() => {});
+
+      mockGetItems.mockResolvedValue(makeSetCItems());
+      mockGetTiles.mockResolvedValue(makeND2TileMeta(2, 3, 2));
+      const outcome = await Promise.race([
+        vm
+          .reinitializeAndApplyStrategy({
+            XY: null,
+            Z: { source: "file", guess: "Z" },
+            T: { source: "file", guess: "T" },
+            C: { source: "file", guess: "C" },
+            transcode: false,
+          })
+          .then(() => "done"),
+        new Promise((resolve) => setTimeout(() => resolve("stuck"), 1000)),
+      ]);
+
+      expect(outcome).toBe("done");
+      expect(vm.assignments.C).not.toBeNull();
+    });
+
+    it("reinitializeAndApplyStrategy rejects and records the error when loading fails", async () => {
+      const vm = mountComponent().vm as any;
+      await vm.initialized.catch(() => {});
+      mockGetItems.mockReset();
+      mockGetItems.mockRejectedValue(new Error("Network down"));
+
+      await expect(
+        vm.reinitializeAndApplyStrategy({ XY: null, transcode: false }),
+      ).rejects.toThrow("Network down");
+
+      expect(vm.initializing).toBe(false);
+      expect(vm.initError.message).toBe("Network down");
+    });
+
     it("reinitializeAndApplyStrategy resets state and re-initializes", async () => {
       const items = makeSetCItems();
       const tileMeta = makeND2TileMeta(2, 3, 2);
@@ -2410,6 +2575,25 @@ describe("MultiSourceConfiguration", () => {
   });
 
   describe("submit", () => {
+    it("reports a failure once, as generationError, without a generatedJson", async () => {
+      mockAddMultiSourceMetadata.mockResolvedValue(null);
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      await vm.initialized.catch(() => {});
+
+      vm.dimensions = [];
+      vm.girderItems = [{ _id: "item1", name: "test.tif" }];
+      vm.tilesMetadata = [{ frames: [{ Index: 0 }] }];
+      vm.tilesInternalMetadata = [{}];
+
+      await vm.submit();
+
+      expect(wrapper.emitted("generationError")).toEqual([
+        ["Failed to add multi source"],
+      ]);
+      expect(wrapper.emitted("generatedJson")).toBeUndefined();
+    });
+
     it("emits generatedJson event", async () => {
       const wrapper = mountComponent();
       const vm = wrapper.vm as any;

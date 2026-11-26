@@ -197,9 +197,14 @@ const showLogDialog = ref(false);
 const localJobLog = ref("");
 const showCopySnackbar = ref(false);
 
+// This dataset's run: property ids are shared by every dataset of a
+// collection, so another dataset's run must not show its log here.
 const currentJobId = computed(() => {
   return props.property
-    ? jobsStore.jobIdForPropertyId[props.property.id]
+    ? jobsStore.jobIdForPropertyInDataset(
+        props.property.id,
+        store.dataset?.id ?? null,
+      )
     : null;
 });
 

@@ -1,0 +1,12 @@
+[build-system]
+requires = ["maturin>=1.16,<2"]
+build-backend = "maturin"
+
+[project]
+name = "bson_json_native"
+version = "0.1.0"
+description = "Raw BSON documents to the JSON the annotation plugin serves (orjson-identical)"
+requires-python = ">=3.9"
+
+[tool.maturin]
+features = ["python"]

@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { formatHotkey, isAskAiKey } from "./hotkeys";
+import {
+  canonicalHotkey,
+  formatHotkey,
+  hotkeysOverlap,
+  isAskAiKey,
+} from "./hotkeys";
 
 describe("formatHotkey", () => {
   it("renders Mac modifiers as symbols", () => {
@@ -44,5 +49,45 @@ describe("isAskAiKey", () => {
   it("shows as ⌘↵ on a Mac and Ctrl+Enter elsewhere", () => {
     expect(formatHotkey("mod+enter", true)).toBe("⌘↵");
     expect(formatHotkey("mod+enter", false)).toBe("Ctrl+Enter");
+  });
+});
+
+describe("canonicalHotkey", () => {
+  it("resolves mod to the platform modifier", () => {
+    expect(canonicalHotkey("mod+z", false)).toBe("ctrl+z");
+    expect(canonicalHotkey("mod+z", true)).toBe("meta+z");
+  });
+
+  it("unifies aliases and modifier order", () => {
+    expect(canonicalHotkey("mod+shift+z", false)).toBe(
+      canonicalHotkey("ctrl+shift+z", false),
+    );
+    expect(canonicalHotkey("command+option+k", true)).toBe("alt+meta+k");
+    expect(canonicalHotkey("G", false)).toBe("g");
+  });
+
+  it("keeps sequences and the plus key", () => {
+    expect(canonicalHotkey("g i", false)).toBe("g i");
+    expect(canonicalHotkey("ctrl++", false)).toBe("ctrl++");
+  });
+});
+
+describe("hotkeysOverlap", () => {
+  it("matches equal keys and a single key inside a sequence", () => {
+    expect(hotkeysOverlap("g", "g")).toBe(true);
+    expect(hotkeysOverlap("g i", "g")).toBe(true);
+    expect(hotkeysOverlap("i", "g i")).toBe(true);
+  });
+
+  it("matches a sequence running inside a longer one", () => {
+    expect(hotkeysOverlap("g i", "g i x")).toBe(true);
+    expect(hotkeysOverlap("i x", "g i x")).toBe(true);
+    expect(hotkeysOverlap("g i x", "g x")).toBe(false);
+  });
+
+  it("does not match different keys or different sequences", () => {
+    expect(hotkeysOverlap("g", "h")).toBe(false);
+    expect(hotkeysOverlap("g i", "g h")).toBe(false);
+    expect(hotkeysOverlap("ctrl+g", "g")).toBe(false);
   });
 });

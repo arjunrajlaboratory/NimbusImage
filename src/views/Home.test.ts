@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { nextTick } from "vue";
-import { shallowMount, type VueWrapper } from "@vue/test-utils";
+import { shallowMount, flushPromises, type VueWrapper } from "@vue/test-utils";
 
 // --- Top-level mock fn handles (hoisted before vi.mock calls) ---
 const mockSetFolderLocation = vi.fn();
@@ -108,6 +108,11 @@ vi.mock("@/girder/components", () => ({
 import { routeProvider, routerProvider } from "@/test/helpers";
 import Home from "./Home.vue";
 import store from "@/store";
+import {
+  finishReturn,
+  saveReturnTo,
+  takeReturnTo,
+} from "@/utils/returnAfterLogin";
 import girderResources from "@/store/girderResources";
 import { isDatasetFolder, isConfigurationItem } from "@/utils/girderSelectable";
 
@@ -634,8 +639,10 @@ describe("Home", () => {
       const vm = wrapper.vm as any;
       vm.batchMode = true;
       vm.selectedLocation = { _id: "loc1" };
-      vm.datasetNames = ["name", "name"];
       vm.pendingFiles = [new File([""], "a.tif"), new File([""], "b.tif")];
+      // Let the mode and file watchers set the default names first.
+      await flushPromises();
+      vm.datasetNames = ["name", "name"];
 
       await vm.validateDatasetNames();
 
@@ -668,6 +675,115 @@ describe("Home", () => {
 
       // No conflicts set, checkDatasetNameExists not called
       expect(mockCheckDatasetNameExists).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("name validation lifecycle", () => {
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((r) => (resolve = r));
+      return { promise, resolve };
+    }
+
+    it("keeps only the latest single-name check's verdict", async () => {
+      const older = deferred<boolean>();
+      const newer = deferred<boolean>();
+      mockCheckDatasetNameExists
+        .mockReturnValueOnce(older.promise)
+        .mockReturnValueOnce(newer.promise);
+      const vm = mountComponent().vm as any;
+      vm.selectedLocation = { _id: "loc1" };
+      vm.datasetName = "taken";
+      await flushPromises();
+      vm.datasetName = "free";
+      await flushPromises();
+
+      newer.resolve(false);
+      await flushPromises();
+      older.resolve(true);
+      await flushPromises();
+
+      expect(vm.nameTaken).toBe(false);
+      expect(vm.nameError).toBe("");
+      expect(vm.checkingName).toBe(false);
+    });
+
+    it("drops the dataset-name verdict when switching to batch mode", async () => {
+      mockCheckDatasetNameExists.mockResolvedValue(true);
+      const vm = mountComponent().vm as any;
+      vm.pendingFiles = [new File([""], "a.tif"), new File([""], "b.tif")];
+      vm.selectedLocation = { _id: "loc1" };
+      vm.datasetName = "taken";
+      await flushPromises();
+      expect(vm.nameTaken).toBe(true);
+
+      mockCheckDatasetNameExists.mockResolvedValue(false);
+      vm.batchMode = true;
+      await flushPromises();
+
+      expect(vm.nameTaken).toBe(false);
+      expect(vm.nameError).toBe("");
+    });
+
+    it("re-checks the dataset name when the location changes", async () => {
+      mockCheckDatasetNameExists.mockResolvedValue(true);
+      const vm = mountComponent().vm as any;
+      vm.selectedLocation = { _id: "loc1" };
+      vm.datasetName = "taken";
+      await flushPromises();
+
+      vm.selectedLocation = { _id: "loc2" };
+      await flushPromises();
+
+      expect(mockCheckDatasetNameExists).toHaveBeenLastCalledWith("taken", {
+        _id: "loc2",
+      });
+      expect(vm.nameTaken).toBe(true);
+    });
+
+    it("drops batch name conflicts, and a check in flight, when leaving batch mode", async () => {
+      const inFlight = deferred<boolean>();
+      mockCheckDatasetNameExists.mockResolvedValue(true);
+      const vm = mountComponent().vm as any;
+      vm.pendingFiles = [new File([""], "a.tif"), new File([""], "b.tif")];
+      vm.selectedLocation = { _id: "loc1" };
+      vm.batchMode = true;
+      await flushPromises();
+      expect(vm.nameConflicts).toEqual([0, 1]);
+
+      mockCheckDatasetNameExists.mockReturnValue(inFlight.promise);
+      vm.validateDatasetNames();
+      vm.batchMode = false;
+      await flushPromises();
+      inFlight.resolve(true);
+      await flushPromises();
+
+      expect(vm.nameConflicts).toEqual([]);
+      expect(vm.validatingNames).toBe(false);
+    });
+
+    it("clears the batch name check when the location loses its id mid-check", async () => {
+      const inFlight = deferred<boolean>();
+      mockCheckDatasetNameExists.mockResolvedValue(true);
+      const vm = mountComponent().vm as any;
+      vm.pendingFiles = [new File([""], "a.tif"), new File([""], "b.tif")];
+      vm.selectedLocation = { _id: "loc1" };
+      vm.batchMode = true;
+      await flushPromises();
+      expect(vm.nameConflicts).toEqual([0, 1]);
+
+      mockCheckDatasetNameExists.mockReturnValue(inFlight.promise);
+      vm.validateDatasetNames();
+      expect(vm.validatingNames).toBe(true);
+      // A location without an _id cannot be checked: the selected-location
+      // watcher runs a check that returns early, superseding the one above.
+      vm.selectedLocation = { type: "user" };
+      await flushPromises();
+      inFlight.resolve(true);
+      await flushPromises();
+
+      expect(vm.validatingNames).toBe(false);
+      expect(vm.nameConflicts).toEqual([]);
     });
   });
 
@@ -874,6 +990,29 @@ describe("Home", () => {
       await vm.initializeWelcomeTour();
 
       expect(mockStartTour).not.toHaveBeenCalled();
+    });
+
+    it("holds back while a login returns to another page", async () => {
+      mockPersisterGet.mockReturnValue("notYetRun");
+      (store as any).isLoggedIn = true;
+      const wrapper = mountComponent();
+      mockStartTour.mockClear();
+      mockPersisterSet.mockClear();
+      saveReturnTo("/oauth/consent?request=abc");
+      await (wrapper.vm as any).initializeWelcomeTour();
+      expect(mockStartTour).not.toHaveBeenCalled();
+      // Not marked as run: the next visit home still shows it.
+      expect(mockPersisterSet).not.toHaveBeenCalledWith(
+        "WelcomeTourType.home",
+        expect.anything(),
+      );
+      // Taken but not yet arrived counts too.
+      expect(takeReturnTo()).toBe("/oauth/consent?request=abc");
+      await (wrapper.vm as any).initializeWelcomeTour();
+      expect(mockStartTour).not.toHaveBeenCalled();
+      finishReturn();
+      await (wrapper.vm as any).initializeWelcomeTour();
+      expect(mockStartTour).toHaveBeenCalledWith("WelcomeTourHome");
     });
 
     it("skips when tour already run", async () => {

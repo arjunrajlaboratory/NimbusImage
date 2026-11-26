@@ -349,6 +349,8 @@ class AnnotationAccessor:
         scales: dict | None = None,
         connect_to: dict | None = None,
         name: str = "worker",
+        *,
+        worker_labels: dict | None = None,
     ) -> Job:
         """Run an annotation worker on this dataset.
 
@@ -382,6 +384,9 @@ class AnnotationAccessor:
                 ``channel`` (int) keys. If not provided, no connections
                 are created.
             name: Job name shown in the Girder UI.
+            worker_labels: ``image``'s labels from ``client.list_workers()``,
+                if you already have them; the role check then uses them
+                instead of listing every worker again.
 
         Returns:
             A Job object. Call ``job.wait()`` to block until completion.
@@ -432,7 +437,8 @@ class AnnotationAccessor:
         # annotation-compute payload (list-valued tags) after the job
         # has already started. After the cheap argument checks above so
         # bad arguments fail without an HTTP round-trip.
-        check_worker_role(self._gc, image, ANNOTATION_ROLE_LABEL)
+        check_worker_role(self._gc, image, ANNOTATION_ROLE_LABEL,
+                          labels=worker_labels)
 
         body = {
             "datasetId": self._dataset_id,

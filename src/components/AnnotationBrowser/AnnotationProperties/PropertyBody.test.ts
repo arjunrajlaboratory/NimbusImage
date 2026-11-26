@@ -10,7 +10,11 @@ vi.mock("@/store/properties", () => ({
 
 vi.mock("@/store/jobs", () => ({
   default: {
-    jobIdForPropertyId: {},
+    // Tracked property jobs per dataset: { [datasetId]: { [propertyId]: jobId } }
+    trackedPropertyJobs: {} as Record<string, Record<string, string>>,
+    jobIdForPropertyInDataset(propertyId: string, datasetId: string | null) {
+      return this.trackedPropertyJobs[String(datasetId)]?.[propertyId] ?? null;
+    },
     getJobLog: vi.fn().mockReturnValue(null),
   },
 }));
@@ -81,7 +85,7 @@ describe("PropertyBody", () => {
     vi.restoreAllMocks();
     (propertyStore.deleteProperty as any) = vi.fn();
     (propertyStore.deletePropertyValues as any) = vi.fn();
-    (jobsStore as any).jobIdForPropertyId = {};
+    (jobsStore as any).trackedPropertyJobs = {};
     (jobsStore.getJobLog as any) = vi.fn().mockReturnValue(null);
     pipelinesMock.state.linkedSteps = [];
     pipelinesMock.state.runningPipeline = null;
@@ -228,14 +232,26 @@ describe("PropertyBody", () => {
   it("currentJobId returns null when no mapping exists for property", () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
-    expect(vm.currentJobId).toBeUndefined();
+    expect(vm.currentJobId).toBeNull();
   });
 
   it("currentJobId returns jobId from store when property exists in mapping", () => {
-    (jobsStore as any).jobIdForPropertyId = { "prop-1": "job-123" };
+    (jobsStore as any).trackedPropertyJobs = {
+      "ds-a": { "prop-1": "job-123" },
+    };
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     expect(vm.currentJobId).toBe("job-123");
+  });
+
+  it("currentJobId ignores the property's run on another dataset", () => {
+    // Property ids are shared by every dataset of a collection
+    (jobsStore as any).trackedPropertyJobs = {
+      "ds-b": { "prop-1": "job-123" },
+    };
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    expect(vm.currentJobId).toBeNull();
   });
 
   it("deleteProperty calls propertyStore.deleteProperty", () => {
@@ -265,7 +281,9 @@ describe("PropertyBody", () => {
       clipboard: { writeText },
     });
 
-    (jobsStore as any).jobIdForPropertyId = { "prop-1": "job-123" };
+    (jobsStore as any).trackedPropertyJobs = {
+      "ds-a": { "prop-1": "job-123" },
+    };
     (jobsStore.getJobLog as any) = vi.fn().mockReturnValue("some log output");
 
     const wrapper = mountComponent();

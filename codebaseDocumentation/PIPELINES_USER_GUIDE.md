@@ -147,6 +147,11 @@ running, it can't be removed: wait for the run to finish, or cancel it. If the
 removal is refused (for example the collection's properties have not loaded
 yet), the dialog stays open and says why.
 
+The same applies when you import annotations with **Overwrite properties**,
+which removes every property in the collection: the import dialog lists the
+pipeline steps that use them, and while a pipeline that computes one of them is
+running, the import is disabled until the run finishes or you cancel it.
+
 ### Configuring a step
 
 Expanding a step shows its editor:
