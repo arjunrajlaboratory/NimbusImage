@@ -9,7 +9,9 @@ Two parts, in two repos:
   as a heat-map overlay, like the transcript density layer, with a live
   threshold preview. Builds on Part A's saved map; ship it second.
 
-Status: spec, not started. Requested by Dale Brokaw (Shaffer lab), Slack
+Status: Part B is implemented in NimbusImage (see `SCALAR_MAP_LAYER.md`,
+which supersedes §8 where they differ); Part A is built in
+ImageAnalysisProject and is not tracked here. Requested by Dale Brokaw (Shaffer lab), Slack
 `#CKLU4RM18`, thread of 2026-11-06. His answers of 2026-11 are folded in (§10).
 
 ## 1. Problem
@@ -315,7 +317,15 @@ folder and describe it in the item's metadata. Part B reads only this.
 
   `percentiles` are the 0th–100th percentiles of the masked values, pooled
   over locations, so the layer can convert "top 20% of tissue" to a value
-  without loading the array.
+  without loading the array. They are **required**: exactly 101 finite,
+  non-decreasing numbers.
+
+  The server validates this object (`validateScalarMapMeta`): version 1,
+  `gridSpacingPx > 0`, finite numbers, `valueRange` with min ≤ max, at least
+  one location, unique keys matching `xy\d+_z\d+_t\d+`, and at most 32M
+  cells. An item that fails, or that holds more or fewer than one file, is
+  not listed. Each `.npz` member must be a 2-D float array of exactly
+  `shape`. See `SCALAR_MAP_LAYER.md`.
 - `Replace previous run` deletes the tool's previous map item (match on
   `nimbusScalarMap.toolId`) before uploading.
 - Upload with `gc.uploadFileToFolder` + `gc.addMetadataToItem`, as
@@ -388,48 +398,72 @@ on any dataset.
 
 New resource `scalar_map`, API file `server/api/scalarMap.py`, tile rendering
 in a helper (`server/helpers/scalarMap.py`), no model: the items are the
-records.
+records. Implemented; the details (validation, file reading, cache, sampling,
+limits) are in `SCALAR_MAP_LAYER.md`.
 
 | Route | Returns |
 |---|---|
-| `GET scalar_map?datasetId=` (READ on the dataset) | the `nimbusScalarMap` metadata of every map item in the dataset folder, with `itemId`. One `Item().find` on the folder, not a request per item. |
-| `GET scalar_map/{itemId}/tiles/{z}/{x}/{y}` (READ) | PNG tile. Params: `location` key, `sizeX`, `sizeY`, `tileSize`, `maxLevel`, `colormap`, `min`, `max`, `threshold?`, `thresholdSide?` (`above`/`below`). |
-| `DELETE scalar_map/{itemId}` (WRITE) | removes the map item. |
+| `GET scalar_map?datasetId=` (READ on the dataset) | `[{itemId, updated, revision, meta}]` for every valid map item directly in the dataset folder that holds exactly one file. One `Item().find` plus one batched `File().find`. `revision` changes whenever the file changes; clients put it in tile URLs. |
+| `GET scalar_map/{itemId}/tiles/{z}/{x}/{y}` (READ) | PNG tile. Params: `location` key, `sizeX`, `sizeY`, `tileSize` (256/512/1024), `maxLevel`, `colormap` (viridis/magma/inferno/gray), `min`, `max`, `threshold?`, `thresholdSide?` (`above`/`below`). `Cache-Control: private, max-age=0, must-revalidate` with an ETag; a 304 is sent only after the READ check. |
+| `DELETE scalar_map/{itemId}` (WRITE) | removes the map item and its cached arrays. |
 
 Tile rendering:
 
-- Load the `.npz` once and keep arrays in a byte-bounded LRU (follow
-  `TranscriptStore`'s density-grid cache). Maps are at most ~4096², float32.
+- Arrays are decoded once into a process-wide byte-bounded LRU (512 MiB),
+  keyed by file revision, with single-flight cold loads. The file is read in
+  chunks, because Girder refuses a single read above 16 MiB.
 - Render on the **image's** tile pyramid (`sizeX`/`sizeY`/`maxLevel` from the
   client, as the transcript density route does), sampling the map through
-  `gridSpacingPx` and `originPx`, bilinear. This keeps the GeoJS layer setup
-  identical to the transcript heat map.
+  `gridSpacingPx` and `originPx`, bilinear and NaN-aware. This keeps the
+  GeoJS layer setup identical to the transcript heat map.
 - Color: `colormap` between `min` and `max`; `NaN` is fully transparent.
+  Without `min`/`max`, `valueRange` is used, widened to `[v - 0.5, v + 0.5]`
+  for a constant map.
 - With `threshold`: pixels on the selected side keep their color, the rest
-  are drawn at low alpha, so the would-be regions stand out.
+  are drawn at low alpha. The comparison is inclusive (`>=` above, `<=`
+  below), like the worker's `Value at least` / `Value at most`.
 - Validate every param at the boundary (`server/helpers/validation.py`); a
   tile outside the pyramid is a 400. Shared views send their token on the
   tile URL, as the transcript route does.
 
 ### 8.3 Frontend
 
+Implemented as described below; `SCALAR_MAP_LAYER.md` has the details and the
+regression checklist.
+
 - `src/store/scalarMaps.ts`: the dataset's maps (from the list route), and per
   map: visible, opacity, colormap, display range, threshold. API calls in
-  `GirderAPI.ts` (or a small `ScalarMapAPI.ts`), not in components.
+  `src/store/ScalarMapAPI.ts`, not in components. Its mutation and action
+  names are module-specific (`setScalarMaps`, ...): store modules are not
+  namespaced, and a shared name runs in every module that declares it.
+- The list is fetched whenever a dataset is opened in the viewer, when the
+  palette is shown, after any worker job on the open dataset succeeds, and
+  from the palette's Refresh button, so a map the worker just saved appears
+  without a reload.
 - `ScalarMapOverlay.vue`, mounted by `ImageViewer` beside `TranscriptOverlay`:
   one GeoJS `osm` layer per visible map, under the annotation layer,
   `keepLower = false`, opacity as a restyle (never a refetch). Factor the
   shared layer setup out of `TranscriptOverlay.vue` instead of copying it.
   Follows the viewer's current XY/Z/Time; a map with no array for the current
   location shows nothing.
-- `ScalarMapsPanel.vue`, a palette: list of maps (name, statistic, radius),
-  visibility, opacity, colormap, range, a threshold slider that can be read as
-  a value or as "top N% of tissue" (from `percentiles`), a color bar legend,
-  and delete. Fetch on `:visible`, not `onMounted` (palette content is always
-  mounted). Hidden when the dataset has no maps.
+- `ScalarMapsPanel.vue`, the **Map Layers** palette: list of maps (name,
+  statistic, radius), visibility, opacity, colormap, range, a threshold slider
+  that can be read as a value or as "top N% of tissue" (from `percentiles`),
+  a color bar legend, and delete. Fetch on `:visible`, not `onMounted`
+  (palette content is always mounted). The app-bar button and its command
+  are hidden when the dataset has no maps, but stay available while the list
+  loads or after it failed.
+- Ties: the cutoff is inclusive, so when many cells share the cutoff value
+  the selected share can exceed the requested one; the panel then shows both
+  ("bottom 50% requested, 60% selected (ties)"). A share picked in percent
+  mode is kept as state and the value derived from it.
+- The legend uses the server's colormap tables (via
+  `color_by_property/options`), the same ones the tiles are rendered with.
 - The panel shows the threshold in the form the worker takes (`Threshold
-  type` + `Threshold`), so the user can copy it into the tool. Launching the
-  worker from the panel is a follow-up (§9).
+  type` + `Threshold`), so the user can copy it into the tool. The value is
+  printed in full precision; a percent that is not a whole stored percentile
+  is marked approximate. Launching the worker from the panel is a follow-up
+  (§9).
 
 ### 8.4 Tests and docs
 
@@ -439,8 +473,8 @@ params and out-of-pyramid tiles; delete needs WRITE. Frontend (vitest): the
 overlay creates/removes layers with visibility, changes URL on
 range/threshold/location change and only restyles on opacity; percent ↔ value
 conversion. Live check with real clicks on a dataset that has a saved map.
-Add `codebaseDocumentation/SCALAR_MAP_LAYER.md` with a regression checklist,
-and the route to the endpoint table in `CLAUDE.md`.
+Done: `codebaseDocumentation/SCALAR_MAP_LAYER.md` (with the regression
+checklist) and the `scalar_map` row in `CLAUDE.md`'s endpoint table.
 
 ## 9. Out of scope / later
 

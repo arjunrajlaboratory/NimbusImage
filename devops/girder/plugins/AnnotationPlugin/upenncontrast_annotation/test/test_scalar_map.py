@@ -224,6 +224,15 @@ class TestScalarMapHelpers:
         with pytest.raises(ValueError):
             colorizeScalarValues(values, "viridis", 1, 1)
 
+    def testThresholdIsInclusive(self):
+        # A value exactly at the cutoff is selected on both sides: the
+        # worker's `Value at least` / `Value at most` are inclusive, and the
+        # panel's "% selected" counts ties with the selected side.
+        values = np.array([[0.5]])
+        for side in ("above", "below"):
+            rgba = colorizeScalarValues(values, "viridis", 0, 1, 0.5, side)
+            assert rgba[0, 0, 3] == 255, side
+
     def testReadRejectsBadArrays(self, monkeypatch):
         good = np.zeros((ROWS, COLS), dtype=np.float64)
         array = readScalarMapArray(_npz(**{LOCATION: good}), LOCATION,
