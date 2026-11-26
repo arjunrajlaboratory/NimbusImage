@@ -140,6 +140,13 @@ test that holds the invariant.
       _"hides a group with one save instead of one toggle per path"_, and
       _"clamps over-limit paths restored from configuration"_, and
       _"rejects a singular addition when the column limit is already full"_.
+- [x] A lazy-mode value merge never re-fires the visible-value fetch: the
+      displayed-path setter keeps its array when the pruned list is unchanged,
+      so visible annotations with no value are fetched once per visible-set
+      change, not in a loop (prod, 2026-11-03: ~7 batch requests/s for 9 hours) —
+      _"keeps the displayed path array when nothing is pruned"_,
+      _"fetches once when a visible annotation has no value for the column"_ and
+      _"still prunes a displayed path that is no longer computed"_.
 - [x] Large property-value lists render through a bounded/virtualized surface —
       _"renders multi-value menus with virtual scrolling"_ and
       _"renders expanded property values with virtual scrolling"_.

@@ -195,8 +195,10 @@ describe("ensureVisiblePropertyValues stale guard (Finding 6)", () => {
 // the global propertyValues watcher prunes displayedPropertyPaths, and the
 // viewer's displayedPropertyPaths watcher fetches again. Visible annotations
 // the property has no value for (another tag) stay "missing", so every pass
-// fetched them again. The watchers below are the ones setupWatchers (index.ts)
-// and AnnotationViewer.vue register.
+// fetched them again. The watchers below replicate the ones setupWatchers
+// (index.ts) and AnnotationViewer.vue register; "keeps the displayed path array
+// when nothing is pruned" pins the setter rule that breaks the ring however it
+// is wired.
 describe("visible property value fetch does not loop", () => {
   const unwatchers: (() => void)[] = [];
 
@@ -247,6 +249,17 @@ describe("visible property value fetch does not loop", () => {
 
     expect(properties.propertyValues).toEqual({ a: { propA: { Area: 10 } } });
     expect(getPropertyValuesForIds).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the displayed path array when nothing is pruned", () => {
+    const before = properties.displayedPropertyPaths;
+
+    properties.updatePropertyValues({ a: { propA: { Area: 1 } } });
+    properties.updateDisplayedFromComputedProperties();
+    expect(properties.displayedPropertyPaths).toBe(before);
+
+    properties.hydrateDisplayedPropertyPaths([["propA", "Area"]]);
+    expect(properties.displayedPropertyPaths).toBe(before);
   });
 
   it("still prunes a displayed path that is no longer computed", async () => {

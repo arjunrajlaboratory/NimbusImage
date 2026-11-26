@@ -312,7 +312,7 @@ Fixed by returning early from `setDisplayedPropertyPaths` when the clamped list 
 - **A setter fed by a watcher keeps the old reference when nothing changed.** That is the one place that breaks every ring at once, and it also stops needless re-renders of every column consumer.
 - **"Fetch what's missing" needs a fixed point.** If the server can legitimately return nothing for an id, "missing" never clears, so anything that re-runs the fetch re-requests the same ids. Check that each re-run trigger only fires on a real change.
 
-To test a ring, wire the real watchers with `store.watch` against the real module (see `"fetches once when a visible annotation has no value for the column"` in `src/store/__tests__/properties.test.ts`). Make the API mock **stop resolving after a few calls**: an unbounded promise ring starves `setTimeout`, so without the cap the pre-fix run hangs the test file instead of failing it.
+To test a ring, replicate the watchers with `store.watch` against the real module (see `"fetches once when a visible annotation has no value for the column"` in `src/store/__tests__/properties.test.ts`). Store tests mock `@/store/index`, so `setupWatchers` never runs and component watchers aren't involved; a replica keeps passing if the real watcher changes. So also pin the rule that breaks the ring directly, e.g. `toBe` on the array identity (`"keeps the displayed path array when nothing is pruned"`). Make the API mock **stop resolving after a few calls**: an unbounded promise ring starves `setTimeout`, so without the cap the pre-fix run hangs the test file instead of failing it.
 
 ### An "unknown" value needs ONE spelling and ONE predicate
 

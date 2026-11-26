@@ -47,7 +47,11 @@ import jobs, {
   createErrorEventCallback,
 } from "./jobs";
 import { logError, logWarning } from "@/utils/log";
-import { findIndexOfPath, serializePropertyPath } from "@/utils/paths";
+import {
+  arePathEquals,
+  findIndexOfPath,
+  serializePropertyPath,
+} from "@/utils/paths";
 import type { TPropertyValueEntry } from "./PropertiesAPI";
 
 // Virtual property paths (server-side value providers, SPATIAL_PLUGIN.md
@@ -823,10 +827,8 @@ export class Properties extends VuexModule {
     // refetched forever for visible annotations the property has no value for.
     if (
       unique.length === this.displayedPropertyPaths.length &&
-      unique.every(
-        (path, index) =>
-          serializePropertyPath(path) ===
-          serializePropertyPath(this.displayedPropertyPaths[index]),
+      unique.every((path, index) =>
+        arePathEquals(path, this.displayedPropertyPaths[index]),
       )
     ) {
       return;
