@@ -61,8 +61,18 @@ vi.mock("@/store/scalarMaps", async () => {
   return {
     default: reactive({
       hasMaps: false,
-      error: null,
+      error: null as string | null,
       loading: false,
+      scalarMapsListed: false,
+      // The store's rule (tested in scalarMaps.test.ts), mirrored so App's
+      // binding to it is exercised.
+      get scalarMapsAvailable(): boolean {
+        return (
+          this.hasMaps ||
+          this.error !== null ||
+          (this.loading && !this.scalarMapsListed)
+        );
+      },
       refreshScalarMaps: vi.fn(),
     }),
   };
@@ -178,6 +188,7 @@ describe("App", () => {
     (scalarMapsStore as any).hasMaps = false;
     (scalarMapsStore as any).error = null;
     (scalarMapsStore as any).loading = false;
+    (scalarMapsStore as any).scalarMapsListed = false;
     (axios.get as any) = vi
       .fn()
       .mockResolvedValue({ data: [{ name: "Tool1", type: "create" }] });
@@ -202,6 +213,14 @@ describe("App", () => {
     await nextTick();
     expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(true);
     (scalarMapsStore as any).hasMaps = false;
+    await nextTick();
+    expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(false);
+    // The first list for a dataset offers it while loading; a re-list of a
+    // dataset already known to have no maps does not flash it.
+    (scalarMapsStore as any).loading = true;
+    await nextTick();
+    expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(true);
+    (scalarMapsStore as any).scalarMapsListed = true;
     await nextTick();
     expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(false);
     wrapper.unmount();

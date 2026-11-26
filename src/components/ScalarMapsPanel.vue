@@ -58,13 +58,18 @@
           :model-value="displayOf(map).visible"
           color="primary"
           density="compact"
-          :aria-label="`Show ${map.meta.name}`"
+          :aria-label="`Show ${scalarMapTitle(map.meta)}`"
           class="flex-grow-0 mr-1"
           @update:model-value="update(map, { visible: !!$event })"
         />
         <div class="flex-grow-1 map-title">
-          <div class="text-body-2 font-weight-medium">{{ map.meta.name }}</div>
-          <div class="text-caption text-medium-emphasis">
+          <div class="text-body-2 font-weight-medium">
+            {{ scalarMapTitle(map.meta) }}
+          </div>
+          <div
+            v-if="scalarMapSummary(map.meta)"
+            class="text-caption text-medium-emphasis"
+          >
             {{ scalarMapSummary(map.meta) }}
           </div>
         </div>
@@ -74,7 +79,7 @@
           color="error"
           size="small"
           icon="mdi-delete"
-          :aria-label="`Delete ${map.meta.name}`"
+          :aria-label="`Delete ${scalarMapTitle(map.meta)}`"
           @click="askDelete(map)"
         />
       </div>
@@ -213,18 +218,24 @@
           <div class="text-caption text-medium-emphasis mt-1">
             For the Hotspot Regions tool:
           </div>
+          <!-- Two rows per form, label beside its value, so a phrase never
+               wraps away from its number. -->
           <div
             v-for="form in workerForms(map)"
             :key="form.type"
             class="text-caption worker-form"
           >
-            <code>Threshold type: {{ form.type }}</code>
-            <code class="ml-1">Threshold: {{ form.threshold }}</code>
-            <span
-              v-if="form.approximate"
-              class="ml-1 text-medium-emphasis approximate"
-              >(≈ approximate)</span
-            >
+            <span class="worker-form-label">Threshold type</span>
+            <code class="worker-form-value">{{ form.type }}</code>
+            <span class="worker-form-label">Threshold</span>
+            <span>
+              <code class="worker-form-value">{{ form.threshold }}</code>
+              <span
+                v-if="form.approximate"
+                class="ml-1 text-medium-emphasis approximate"
+                >(≈ approximate)</span
+              >
+            </span>
           </div>
         </template>
       </template>
@@ -235,8 +246,9 @@
         <v-card-title>Delete saved map?</v-card-title>
         <v-card-text>
           <p class="mb-2">
-            “{{ pendingDelete?.meta.name }}” will be deleted for everyone with
-            access to this dataset. Regions already created from it are kept.
+            “{{ pendingDelete ? scalarMapTitle(pendingDelete.meta) : "" }}” will
+            be deleted for everyone with access to this dataset. Regions already
+            created from it are kept.
           </p>
           <p v-if="deleteError" class="text-error mb-0">{{ deleteError }}</p>
         </v-card-text>
@@ -281,6 +293,8 @@ import {
   formatShare,
   scalarMapLocationKey,
   scalarMapSummary,
+  scalarMapTitle,
+  separatedRangePositions,
   sliderPositionToValue,
   thresholdShare,
   valueToSliderPosition,
@@ -354,13 +368,11 @@ function rangePositions(map: IScalarMap): number[] {
 }
 
 function onRange(map: IScalarMap, positions: number[]) {
-  const [low, high] = positions;
-  if (high > low) {
-    update(map, {
-      min: sliderPositionToValue(low, bounds(map)),
-      max: sliderPositionToValue(high, bounds(map)),
-    });
-  }
+  const [low, high] = separatedRangePositions(positions, rangePositions(map));
+  update(map, {
+    min: sliderPositionToValue(low, bounds(map)),
+    max: sliderPositionToValue(high, bounds(map)),
+  });
 }
 
 function thresholdPosition(map: IScalarMap): number {
@@ -397,12 +409,17 @@ function thresholdText(map: IScalarMap): string {
   )}${units}`;
   const share = shareOf(map);
   const sideWord = above ? "top" : "bottom";
+  // An estimate from the percentiles pooled over every position of the map,
+  // not a count on the plane on screen.
+  const estimate = `≈ ${sideWord} ${formatShare(
+    share.selected,
+  )}% of tissue (all positions)`;
   if (share.tied && share.requested !== null) {
-    return `${value} · ${sideWord} ${formatShare(
+    return `${value} · ${estimate}; ${formatShare(
       share.requested,
-    )}% requested, ${formatShare(share.selected)}% selected (ties)`;
+    )}% requested, more selected because of ties at the cutoff`;
   }
-  return `${value} · ${sideWord} ${formatShare(share.selected)}% of tissue`;
+  return `${value} · ${estimate}`;
 }
 
 function workerForms(map: IScalarMap) {
@@ -415,30 +432,71 @@ function workerForms(map: IScalarMap) {
   );
 }
 
-function askDelete(map: IScalarMap) {
-  pendingDelete.value = map;
+// One confirmation is one session. The palette is mounted for the app's
+// lifetime, so a dialog can outlive its dataset (browser Back/Forward) and a
+// request can outlive its dialog (Escape while deleting): a result applies
+// only to the session that started it, and closing the dialog or switching
+// datasets ends the session.
+let deleteSession = 0;
+
+// `pendingDelete` is kept so the closing dialog does not flash an empty
+// name; confirmDelete refuses a map that is not on screen anyway.
+function endDeleteSession() {
+  deleteSession++;
+  deleting.value = false;
   deleteError.value = null;
+}
+
+function askDelete(map: IScalarMap) {
+  endDeleteSession();
+  pendingDelete.value = map;
   deleteDialog.value = true;
 }
 
 async function confirmDelete() {
   const map = pendingDelete.value;
-  if (!map) {
+  // Only a map of the dataset on screen: the confirmation names one of them.
+  if (
+    !map ||
+    !scalarMapsStore.currentMaps.some(
+      (candidate) => candidate.itemId === map.itemId,
+    )
+  ) {
     return;
   }
+  const session = deleteSession;
   deleting.value = true;
   deleteError.value = null;
   try {
     await scalarMapsStore.deleteScalarMap(map.itemId);
-    deleteDialog.value = false;
-    pendingDelete.value = null;
+    if (session === deleteSession) {
+      deleteDialog.value = false;
+    }
   } catch (error) {
     logError("Failed to delete the saved map:", error);
-    deleteError.value = extractErrorMessage(error);
+    if (session === deleteSession) {
+      deleteError.value = extractErrorMessage(error);
+    }
   } finally {
-    deleting.value = false;
+    if (session === deleteSession) {
+      deleting.value = false;
+    }
   }
 }
+
+watch(deleteDialog, (open) => {
+  if (!open) {
+    endDeleteSession();
+  }
+});
+
+watch(
+  () => store.dataset?.id,
+  () => {
+    deleteDialog.value = false;
+    endDeleteSession();
+  },
+);
 
 // The palette content stays mounted while hidden: list the maps again only
 // when it is shown (a worker run may have saved one since), and for a new
@@ -486,7 +544,21 @@ defineExpose({
   border-radius: 2px;
 }
 
-.worker-form code {
+.worker-form {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: baseline;
+  margin-top: 4px;
+}
+
+.worker-form-label {
+  white-space: nowrap;
+}
+
+.worker-form-value {
+  font-family: monospace;
   font-size: 0.75rem;
+  overflow-wrap: anywhere;
 }
 </style>

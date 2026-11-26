@@ -48,9 +48,7 @@ vi.mock("@/store/progress", () => ({
 }));
 
 vi.mock("@/store/scalarMaps", () => ({
-  default: {
-    refreshScalarMaps: (...args: any[]) => mocks.refreshMaps(...args),
-  },
+  scheduleScalarMapsRefresh: (...args: any[]) => mocks.refreshMaps(...args),
 }));
 
 vi.mock("@/utils/log", () => ({ logError: vi.fn(), logWarning: vi.fn() }));
@@ -319,25 +317,26 @@ describe("jobs store: settling tracked jobs when the stream fails", () => {
       (main as any).dataset = undefined;
     });
 
-    it("lists the open dataset's maps again when a job on it succeeds", async () => {
-      (main as any).dataset = { id: "ds" };
-      mocks.refreshMaps.mockClear();
-      const job = await track("map-job");
-      mocks.statuses["map-job"] = SUCCESS;
-      await failConnection(4);
-      await expect(job.completion).resolves.toBe(true);
-      await microtasks();
-      await vi.dynamicImportSettled();
-      expect(mocks.refreshMaps).toHaveBeenCalledWith(true);
-    });
+    it.each([
+      ["succeeds", SUCCESS, true],
+      ["fails", ERROR, false],
+    ])(
+      "lists the open dataset's maps again when a job on it %s",
+      async (_label, status, outcome) => {
+        (main as any).dataset = { id: "ds" };
+        mocks.refreshMaps.mockClear();
+        const job = await track(`map-job-${status}`);
+        mocks.statuses[`map-job-${status}`] = status;
+        await failConnection(4);
+        await expect(job.completion).resolves.toBe(outcome);
+        await microtasks();
+        await vi.dynamicImportSettled();
+        expect(mocks.refreshMaps).toHaveBeenCalledTimes(1);
+      },
+    );
 
-    it("does not list for a failed job or another dataset's job", async () => {
+    it("does not list for another dataset's job", async () => {
       mocks.refreshMaps.mockClear();
-      (main as any).dataset = { id: "ds" };
-      const failed = await track("failed-map-job");
-      mocks.statuses["failed-map-job"] = ERROR;
-      await failConnection(4);
-      await expect(failed.completion).resolves.toBe(false);
       (main as any).dataset = { id: "other" };
       const elsewhere = await track("other-map-job");
       mocks.statuses["other-map-job"] = SUCCESS;

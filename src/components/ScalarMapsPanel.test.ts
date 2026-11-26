@@ -147,7 +147,10 @@ describe("ScalarMapsPanel", () => {
 
   it("reads the threshold as a value and as a share of tissue", () => {
     const vm = mount().vm as any;
-    expect(vm.thresholdText(MAP)).toBe("Value ≥ 160 µm² · top 20% of tissue");
+    // The share is an estimate over every position of the map.
+    expect(vm.thresholdText(MAP)).toBe(
+      "Value ≥ 160 µm² · ≈ top 20% of tissue (all positions)",
+    );
     (scalarMapsStore as any).display = {
       a: display({
         threshold: 20,
@@ -155,7 +158,9 @@ describe("ScalarMapsPanel", () => {
         thresholdSide: "below",
       }),
     };
-    expect(vm.thresholdText(MAP)).toBe("Value ≤ 20 µm² · bottom 10% of tissue");
+    expect(vm.thresholdText(MAP)).toBe(
+      "Value ≤ 20 µm² · ≈ bottom 10% of tissue (all positions)",
+    );
   });
 
   it("says when ties select more tissue than was asked for", () => {
@@ -170,7 +175,7 @@ describe("ScalarMapsPanel", () => {
     };
     const vm = mount().vm as any;
     expect(vm.thresholdText(tied)).toBe(
-      "Value ≤ 0 µm² · bottom 50% requested, 60% selected (ties)",
+      "Value ≤ 0 µm² · ≈ bottom 60% of tissue (all positions); 50% requested, more selected because of ties at the cutoff",
     );
   });
 
@@ -219,10 +224,17 @@ describe("ScalarMapsPanel", () => {
     const { changes } = mocks.updateDisplay.mock.lastCall![0];
     expect(changes.min).toBeCloseTo(1e-8, 20);
     expect(changes.max).toBeCloseTo(9e-8, 20);
-    // An empty range is ignored.
-    mocks.updateDisplay.mockClear();
-    vm.onRange(tiny, [400, 400]);
-    expect(mocks.updateDisplay).not.toHaveBeenCalled();
+  });
+
+  it("keeps the range one position wide instead of dropping a collapsed range", () => {
+    const vm = mount().vm as any;
+    // Display [0, 200] is positions [0, 1000]; the high thumb is dragged
+    // all the way down onto the low one.
+    vm.onRange(MAP, [0, 0]);
+    expect(mocks.updateDisplay).toHaveBeenLastCalledWith({
+      itemId: "a",
+      changes: { min: 0, max: 0.2 },
+    });
   });
 
   it("gives a constant map a usable slider range", () => {
@@ -247,6 +259,40 @@ describe("ScalarMapsPanel", () => {
     await vm.confirmDelete();
     expect(vm.deleteDialog).toBe(false);
     expect(vm.deleteError).toBeNull();
+  });
+
+  it("closes a pending confirmation on a dataset switch and never deletes the previous dataset's map", async () => {
+    const vm = mount().vm as any;
+    vm.askDelete(MAP);
+    expect(vm.deleteDialog).toBe(true);
+    // Browser Back to another dataset with the dialog open.
+    (store as any).dataset = { id: "ds2" };
+    (scalarMapsStore as any).currentMaps = [];
+    await nextTick();
+    expect(vm.deleteDialog).toBe(false);
+    await vm.confirmDelete();
+    expect(mocks.deleteMap).not.toHaveBeenCalled();
+  });
+
+  it("applies a delete's result only to the confirmation that started it", async () => {
+    const vm = mount().vm as any;
+    let reject!: (error: unknown) => void;
+    mocks.deleteMap.mockReturnValueOnce(
+      new Promise((_resolve, rejectDelete) => {
+        reject = rejectDelete;
+      }),
+    );
+    vm.askDelete(MAP);
+    const inFlight = vm.confirmDelete();
+    // Escape while it runs, then a new confirmation.
+    vm.deleteDialog = false;
+    await nextTick();
+    vm.askDelete(MAP);
+    reject(new Error("Write access denied"));
+    await inFlight;
+    expect(vm.deleteDialog).toBe(true);
+    expect(vm.deleteError).toBeNull();
+    expect(vm.deleting).toBe(false);
   });
 
   it("offers delete only to sessions that can write", () => {

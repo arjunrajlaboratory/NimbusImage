@@ -2,6 +2,7 @@ import geojs from "geojs";
 import {
   IGeoJSAnnotationLayer,
   IGeoJSFeatureLayer,
+  IGeoJSLayer,
   IGeoJSMap,
   IGeoJSOsmLayer,
 } from "@/store/model";
@@ -66,12 +67,60 @@ export function createImageTileOverlayLayer(
   params.layer.keepLower = false;
   params.layer.url = BLANK_TILE_URL;
   params.layer.visible = false;
-  const layer = map.createLayer("osm", params.layer);
+  const layer = registerImageOverlayLayer(map.createLayer("osm", params.layer));
   // Beneath the annotation outlines, which stay legible over the overlay.
   layer.zIndex(options.annotationLayer.zIndex() as number);
   layer.node().css({ "mix-blend-mode": "unset" });
   layer.opacity(options.opacity);
   return layer;
+}
+
+// Layers drawn over the image and under the annotation stack (heat maps,
+// transcript points). ImageViewer keeps them there whenever it adds image
+// layers; see orderLayersAboveImages.
+const imageOverlayLayers = new WeakSet<object>();
+
+/** Mark a layer as an overlay that must stay above every image layer. */
+export function registerImageOverlayLayer<T extends object>(layer: T): T {
+  imageOverlayLayers.add(layer);
+  return layer;
+}
+
+export function isImageOverlayLayer(layer: object): boolean {
+  return imageOverlayLayers.has(layer);
+}
+
+/**
+ * Order a viewer map's layers: the image layers (z-indices below
+ * `imageLayerCount`), then every registered overlay in its current order,
+ * then `stack` (the annotation-related layers, bottom to top).
+ *
+ * GeoJS gives a new layer the top z-index, so the image layers that
+ * `_setupTileLayers` adds for a new display layer land above everything.
+ * Raising only the annotation stack afterwards left the overlays beneath the
+ * new image layers, hidden in the Normal blend. Raising the overlays first,
+ * then the stack, restores the intended order. A no-op when the order is
+ * already right.
+ */
+export function orderLayersAboveImages(
+  map: IGeoJSMap,
+  imageLayerCount: number,
+  stack: (IGeoJSLayer | null | undefined)[],
+): void {
+  const overlays = map
+    .layers()
+    .filter(isImageOverlayLayer)
+    .sort((a, b) => (a.zIndex() as number) - (b.zIndex() as number));
+  const expected = [
+    ...overlays,
+    ...stack.filter((layer): layer is IGeoJSLayer => !!layer),
+  ];
+  if (
+    expected.every((layer, index) => layer.zIndex() === imageLayerCount + index)
+  ) {
+    return;
+  }
+  expected.forEach((layer) => layer.moveToTop());
 }
 
 /**

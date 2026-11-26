@@ -1027,15 +1027,10 @@ watch(
   { immediate: true },
 );
 
-// Same for saved scalar maps. The button stays reachable while listing
-// failed or is in flight, so a network blip never hides the feature; with no
-// maps it is not offered.
-const scalarMapsAvailable = computed(
-  () =>
-    scalarMapsStore.hasMaps ||
-    !!scalarMapsStore.error ||
-    scalarMapsStore.loading,
-);
+// Same for saved scalar maps (the rule is the store's: with maps, after a
+// failed lookup, or during this dataset's first list; never on a re-list of a
+// dataset known to have none, which would flash the button).
+const scalarMapsAvailable = computed(() => scalarMapsStore.scalarMapsAvailable);
 
 // Listed again every time a dataset is opened in the viewer (a new dataset,
 // a reload of it, or coming back to it), not once per dataset id: a worker

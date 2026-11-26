@@ -122,6 +122,32 @@ export function sliderPositionToValue(
   return low + ((high - low) * position) / SLIDER_POSITIONS;
 }
 
+/**
+ * A range slider's emitted positions kept at least one position apart.
+ * Vuetify lets the thumbs meet (never cross); a range with min == max is
+ * refused by the tile route, so the thumb that moved stops one position
+ * short of the other instead of the update being dropped (which left the
+ * thumbs together while tiles and labels kept the old range).
+ */
+export function separatedRangePositions(
+  next: readonly number[],
+  current: readonly number[],
+): [number, number] {
+  const low = Math.max(0, Math.min(SLIDER_POSITIONS, Math.round(next[0])));
+  const high = Math.max(0, Math.min(SLIDER_POSITIONS, Math.round(next[1])));
+  if (high > low) {
+    return [low, high];
+  }
+  if (low !== current[0]) {
+    // The low thumb moved up onto the high one.
+    const top = Math.max(high, 1);
+    return [top - 1, top];
+  }
+  // The high thumb moved down onto the low one.
+  const bottom = Math.min(low, SLIDER_POSITIONS - 1);
+  return [bottom, bottom + 1];
+}
+
 function clamp(value: number, low: number, high: number): number {
   return Math.min(high, Math.max(low, value));
 }
@@ -140,7 +166,10 @@ export function valueAtPercentile(
   if (last < 0) {
     return NaN;
   }
-  const position = (clamp(percentile, 0, 100) / 100) * last;
+  // Multiply before dividing: `(p / 100) * 100` is not an integer for p = 7,
+  // 14, 28, 29, 55-58, which put "bottom 7%" a hair below percentiles[7]
+  // (reported approximate, and excluding a tie run starting there).
+  const position = (clamp(percentile, 0, 100) * last) / 100;
   const low = Math.floor(position);
   const high = Math.min(last, low + 1);
   const fraction = position - low;
@@ -160,7 +189,8 @@ export function percentileBounds(
   if (last < 1 || !Number.isFinite(value)) {
     return [NaN, NaN];
   }
-  const scale = 100 / last;
+  // Index -> percent, multiplying before dividing (see valueAtPercentile).
+  const toPercent = (position: number) => (position * 100) / last;
   if (value < percentiles[0]) {
     return [0, 0];
   }
@@ -169,13 +199,13 @@ export function percentileBounds(
   }
   const first = percentiles.indexOf(value);
   if (first >= 0) {
-    return [first * scale, percentiles.lastIndexOf(value) * scale];
+    return [toPercent(first), toPercent(percentiles.lastIndexOf(value))];
   }
   for (let index = 0; index < last; index++) {
     const low = percentiles[index];
     const high = percentiles[index + 1];
     if (value > low && value < high) {
-      const percentile = (index + (value - low) / (high - low)) * scale;
+      const percentile = toPercent(index + (value - low) / (high - low));
       return [percentile, percentile];
     }
   }
@@ -222,6 +252,12 @@ export interface IThresholdShare {
 // percent -> value -> percent round trip).
 const SHARE_TOLERANCE = 1e-6;
 
+/**
+ * The share a threshold selects, as estimated from the pooled percentiles
+ * (every position of the map, interpolated between whole percentiles; not a
+ * count on the displayed plane). `tied` only when the cutoff sits on a run of
+ * equal percentiles AND that makes the selection differ from the request.
+ */
 export function thresholdShare(
   percentiles: readonly number[],
   threshold: number,
@@ -229,11 +265,14 @@ export function thresholdShare(
   requested: number | null,
 ): IThresholdShare {
   const selected = selectedTissueShare(percentiles, threshold, side);
+  const [below, atOrBelow] = percentileBounds(percentiles, threshold);
   return {
     requested,
     selected,
     tied:
-      requested !== null && Math.abs(selected - requested) > SHARE_TOLERANCE,
+      requested !== null &&
+      atOrBelow > below &&
+      Math.abs(selected - requested) > SHARE_TOLERANCE,
   };
 }
 
@@ -335,16 +374,36 @@ export function scalarMapLocationKey(
   );
 }
 
-/** Statistic and radius, as the panel's subtitle. */
+// The descriptive fields are not validated (the server leaves them free and
+// the layer does not need them), so a map may lack any of them.
+function text(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/** The map's name, or a placeholder when it has none. */
+export function scalarMapTitle(meta: IScalarMapMeta): string {
+  return text(meta.name) || "Untitled map";
+}
+
+/** Statistic, property and radius, as the panel's subtitle; parts the map
+ * does not describe are left out. */
 export function scalarMapSummary(meta: IScalarMapMeta): string {
-  const statistic =
-    meta.statistic === "Fraction above cutoff" && meta.cutoff !== null
-      ? `${meta.statistic} ${meta.cutoff}`
-      : meta.statistic;
-  const parts = [statistic];
-  if (meta.property && meta.statistic !== "Density") {
-    parts.push(meta.property);
+  const statistic = text(meta.statistic);
+  const parts: string[] = [];
+  if (statistic) {
+    parts.push(
+      statistic === "Fraction above cutoff" && isFiniteNumber(meta.cutoff)
+        ? `${statistic} ${meta.cutoff}`
+        : statistic,
+    );
   }
-  parts.push(`radius ${meta.radius} ${meta.radiusUnit}`);
+  if (text(meta.property) && statistic !== "Density") {
+    parts.push(text(meta.property));
+  }
+  if (isFiniteNumber(meta.radius)) {
+    parts.push(
+      `radius ${[meta.radius, text(meta.radiusUnit)].join(" ").trim()}`,
+    );
+  }
   return parts.join(" · ");
 }

@@ -32,7 +32,9 @@ vi.mock("@/utils/log", () => ({
 
 import scalarMapsStore, {
   DEFAULT_SCALAR_MAP_OPACITY,
+  SCALAR_MAPS_JOB_REFRESH_DELAY_MS,
   defaultScalarMapDisplay,
+  scheduleScalarMapsRefresh,
 } from "./scalarMaps";
 
 function scalarMap(
@@ -318,5 +320,70 @@ describe("scalarMaps store", () => {
       viridis: ["#000", "#fff"],
     });
     expect(mocks.getColorByPropertyOptions).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers the palette during the first list only, not on a re-list of a dataset with no maps", async () => {
+    mocks.listMaps.mockResolvedValue([]);
+    const first = deferred<any[]>();
+    mocks.listMaps.mockReturnValueOnce(first.promise);
+    const firstList = scalarMapsStore.refreshScalarMaps();
+    // The first list for this dataset: offered while it loads.
+    expect(scalarMapsStore.scalarMapsListed).toBe(false);
+    expect(scalarMapsStore.scalarMapsAvailable).toBe(true);
+    first.resolve([]);
+    await firstList;
+    expect(scalarMapsStore.scalarMapsAvailable).toBe(false);
+
+    // A forced re-list (dataset reopened, job ended) of a dataset known to
+    // have no maps: not offered while it loads, so the button never flashes.
+    const again = deferred<any[]>();
+    mocks.listMaps.mockReturnValueOnce(again.promise);
+    const reList = scalarMapsStore.refreshScalarMaps(true);
+    expect(scalarMapsStore.loading).toBe(true);
+    expect(scalarMapsStore.scalarMapsAvailable).toBe(false);
+    again.resolve([]);
+    await reList;
+    expect(scalarMapsStore.scalarMapsAvailable).toBe(false);
+  });
+
+  it("keeps the last good list and stays offered while a failed re-list is retried", async () => {
+    await scalarMapsStore.refreshScalarMaps();
+    mocks.listMaps.mockRejectedValueOnce(new Error("offline"));
+    await scalarMapsStore.refreshScalarMaps(true);
+    // A network blip does not wipe what was listed.
+    expect(ids()).toEqual(["a"]);
+    expect(scalarMapsStore.error).not.toBeNull();
+
+    // Same with no maps listed: the error keeps the palette offered through
+    // the retry, until the retry's answer lands.
+    mocks.listMaps.mockResolvedValueOnce([]);
+    await scalarMapsStore.refreshScalarMaps(true);
+    mocks.listMaps.mockRejectedValueOnce(new Error("offline"));
+    await scalarMapsStore.refreshScalarMaps(true);
+    const retry = deferred<any[]>();
+    mocks.listMaps.mockReturnValueOnce(retry.promise);
+    const retrying = scalarMapsStore.refreshScalarMaps(true);
+    expect(scalarMapsStore.scalarMapsAvailable).toBe(true);
+    retry.resolve([]);
+    await retrying;
+    expect(scalarMapsStore.error).toBeNull();
+    expect(scalarMapsStore.scalarMapsAvailable).toBe(false);
+  });
+
+  it("lists once for a burst of finished jobs", async () => {
+    vi.useFakeTimers();
+    try {
+      await scalarMapsStore.refreshScalarMaps();
+      mocks.listMaps.mockClear();
+      for (let job = 0; job < 5; job++) {
+        scheduleScalarMapsRefresh();
+        await vi.advanceTimersByTimeAsync(SCALAR_MAPS_JOB_REFRESH_DELAY_MS / 4);
+      }
+      expect(mocks.listMaps).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(SCALAR_MAPS_JOB_REFRESH_DELAY_MS);
+      expect(mocks.listMaps).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

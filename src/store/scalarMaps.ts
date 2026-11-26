@@ -5,6 +5,7 @@ import {
   VuexModule,
   getModule,
 } from "vuex-module-decorators";
+import { debounce } from "lodash";
 import store from "./root";
 import main from "./index";
 import {
@@ -74,9 +75,10 @@ export function defaultScalarMapDisplay(map: IScalarMap): IScalarMapDisplay {
  * the feature.
  *
  * The list is read again whenever a dataset is opened, when the palette is
- * shown, after a worker job for the dataset succeeds (jobs.ts), and from the
- * palette's Refresh button, so a map a worker saved or replaced appears (and
- * a replaced item id disappears) without a reload.
+ * shown, shortly after any job on the dataset ends (jobs.ts, debounced), and
+ * from the palette's Refresh button, so a map a worker saved or replaced
+ * appears (and a replaced item id disappears) without a reload. A failed
+ * re-list keeps the last good list.
  */
 @Module({ dynamic: true, store, name: "scalarMaps" })
 export class ScalarMaps extends VuexModule {
@@ -100,6 +102,29 @@ export class ScalarMaps extends VuexModule {
 
   get hasMaps(): boolean {
     return this.currentMaps.length > 0;
+  }
+
+  /** Whether a list for the open dataset has landed (empty or not). */
+  get scalarMapsListed(): boolean {
+    return (
+      this.mapsDatasetId !== null &&
+      this.mapsDatasetId === (main.dataset?.id ?? null)
+    );
+  }
+
+  /**
+   * Whether to offer the Map Layers palette (app-bar button and command):
+   * with maps, after a failed lookup (so a network blip does not hide the
+   * feature), and while the FIRST list for this dataset loads. A re-list of
+   * a dataset already known to have no maps does not count, or the button
+   * would appear and vanish on every dataset open and finished job.
+   */
+  get scalarMapsAvailable(): boolean {
+    return (
+      this.hasMaps ||
+      this.error !== null ||
+      (this.loading && !this.scalarMapsListed)
+    );
   }
 
   /**
@@ -302,7 +327,13 @@ export class ScalarMaps extends VuexModule {
       return;
     }
     this.setScalarMapsLoading(true);
-    this.setScalarMapsError(null);
+    // A retry for a dataset already listed keeps its error until the answer
+    // lands, so the palette stays offered meanwhile (a dataset listed with no
+    // maps does not count `loading` as available). Another dataset's error
+    // never applies here.
+    if (datasetId !== this.mapsDatasetId) {
+      this.setScalarMapsError(null);
+    }
     const stillCurrent = () =>
       generation === listRequestGeneration && main.dataset?.id === datasetId;
     const promise = (async () => {
@@ -310,6 +341,7 @@ export class ScalarMaps extends VuexModule {
         const maps = await main.scalarMapAPI.listMaps(datasetId);
         if (stillCurrent()) {
           this.setScalarMaps({ datasetId, maps });
+          this.setScalarMapsError(null);
         }
       } catch (error) {
         logError("Failed to list the dataset's scalar maps:", error);
@@ -344,4 +376,23 @@ export class ScalarMaps extends VuexModule {
   }
 }
 
-export default getModule(ScalarMaps);
+const scalarMapsStore = getModule(ScalarMaps);
+export default scalarMapsStore;
+
+// A burst of jobs (a batch run) finishing together is one list request.
+export const SCALAR_MAPS_JOB_REFRESH_DELAY_MS = 1000;
+
+const refreshAfterJobs = debounce(() => {
+  void scalarMapsStore.refreshScalarMaps(true);
+}, SCALAR_MAPS_JOB_REFRESH_DELAY_MS);
+
+/**
+ * List the maps again shortly after a job on the open dataset ends, in ANY
+ * terminal state: the worker deletes the previous map before uploading the
+ * new one, so a job that fails or is canceled in between has still removed a
+ * listed map. Called by jobs.ts. A plain function, not an action: it needs
+ * no store name, and a debounce cannot live in the module state.
+ */
+export function scheduleScalarMapsRefresh(): void {
+  refreshAfterJobs();
+}

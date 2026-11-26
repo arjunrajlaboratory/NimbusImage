@@ -9,7 +9,9 @@ import {
   percentileBounds,
   scalarMapLocationKey,
   scalarMapSummary,
+  scalarMapTitle,
   selectedTissueShare,
+  separatedRangePositions,
   sliderPositionToValue,
   thresholdForTissueShare,
   thresholdShare,
@@ -245,5 +247,85 @@ describe("scalarMap display helpers", () => {
     expect(
       scalarMapSummary(meta({ statistic: "Fraction above cutoff", cutoff: 2 })),
     ).toBe("Fraction above cutoff 2 · Blob metrics/Area · radius 50 µm");
+  });
+
+  it("falls back for a map missing its descriptive fields", () => {
+    const bare = meta({
+      name: undefined as any,
+      statistic: undefined as any,
+      property: undefined as any,
+      radius: undefined as any,
+      radiusUnit: undefined as any,
+    });
+    expect(scalarMapTitle(bare)).toBe("Untitled map");
+    expect(scalarMapSummary(bare)).toBe("");
+    expect(scalarMapSummary({ ...bare, radius: 30 })).toBe("radius 30");
+    expect(scalarMapTitle(meta({ name: "  " }))).toBe("Untitled map");
+    expect(scalarMapTitle(meta())).toBe("Blob metrics/Area mean, 50 µm");
+  });
+});
+
+describe("scalarMap whole percentiles", () => {
+  // Uneven, strictly increasing, with no float-friendly spacing.
+  const UNEVEN = Array.from({ length: 101 }, (_, i) => i * 1.37 + i * i * 0.01);
+
+  it("maps every whole percent to exactly its stored percentile, reported exact", () => {
+    for (let percent = 0; percent <= 100; percent++) {
+      expect(thresholdForTissueShare(UNEVEN, percent, "below")).toBe(
+        UNEVEN[percent],
+      );
+      expect(thresholdForTissueShare(UNEVEN, percent, "above")).toBe(
+        UNEVEN[100 - percent],
+      );
+      for (const side of ["above", "below"] as const) {
+        const cutoff = thresholdForTissueShare(UNEVEN, percent, side);
+        expect(workerThresholdForms(UNEVEN, cutoff, side, percent)[0]).toEqual({
+          type:
+            side === "above"
+              ? "Top percent of tissue"
+              : "Bottom percent of tissue",
+          threshold: percent.toString(),
+          approximate: false,
+        });
+        expect(selectedTissueShare(UNEVEN, cutoff, side)).toBe(percent);
+      }
+    }
+  });
+
+  it("includes a tie run that starts at a whole percentile", () => {
+    // percentiles[29..40] are equal: bottom 29% must select the whole run.
+    // (29 is one of the percents `(p / 100) * 100` put a hair BELOW p.)
+    const run = LINEAR.map((value, i) => (i >= 29 && i <= 40 ? 58 : value));
+    const cutoff = thresholdForTissueShare(run, 29, "below");
+    expect(cutoff).toBe(58);
+    expect(selectedTissueShare(run, cutoff, "below")).toBe(40);
+  });
+});
+
+describe("scalarMap share estimates", () => {
+  it("calls a difference a tie only when the cutoff sits on a run of equal percentiles", () => {
+    // Two cells valued 0 and 1: the pooled percentiles interpolate between
+    // them, so top 20% is the cutoff 0.8 with no tie, even though it selects
+    // one of the two cells.
+    const twoCells = Array.from({ length: 101 }, (_, i) => i / 100);
+    const cutoff = thresholdForTissueShare(twoCells, 20, "above");
+    expect(cutoff).toBeCloseTo(0.8);
+    expect(thresholdShare(twoCells, cutoff, "above", 20).tied).toBe(false);
+    // On a real tie run it is a tie.
+    expect(thresholdShare(TIED, 0, "below", 50).tied).toBe(true);
+  });
+});
+
+describe("scalarMap range positions", () => {
+  it("keeps the range thumbs at least one position apart instead of dropping the update", () => {
+    expect(separatedRangePositions([100, 900], [0, 1000])).toEqual([100, 900]);
+    // The low thumb moved onto the high one.
+    expect(separatedRangePositions([500, 500], [499, 500])).toEqual([499, 500]);
+    expect(separatedRangePositions([1000, 1000], [10, 1000])).toEqual([
+      999, 1000,
+    ]);
+    // The high thumb moved onto the low one.
+    expect(separatedRangePositions([300, 300], [300, 600])).toEqual([300, 301]);
+    expect(separatedRangePositions([0, 0], [0, 50])).toEqual([0, 1]);
   });
 });

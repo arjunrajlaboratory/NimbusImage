@@ -32,6 +32,7 @@ import {
 import {
   createImageTileOverlayLayer,
   deleteLayerIfHeld,
+  registerImageOverlayLayer,
 } from "@/utils/imageTileOverlayLayer";
 
 /**
@@ -91,7 +92,11 @@ function ensurePointLayer(): IGeoJSPointFeature {
   if (pointFeature) {
     return pointFeature;
   }
-  pointLayer = props.map.createLayer("feature", { features: ["point"] });
+  // An overlay like the heat maps: ImageViewer keeps it above image layers
+  // added later (orderLayersAboveImages).
+  pointLayer = registerImageOverlayLayer(
+    props.map.createLayer("feature", { features: ["point"] }),
+  );
   pointFeature = pointLayer.createFeature("point", {
     style: {
       stroke: false,
