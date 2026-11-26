@@ -196,6 +196,15 @@ Inside an `@Action`, `this` is the module accessor built by `getModule`: it carr
 - A test that mocks `@/store` cannot see this. Dispatch the real action (`src/store/notLoggedIn.test.ts`, `src/store/colorByProperty.test.ts`).
 - Guard branches are the usual hiding place: the logged-out or no-dataset path is the one nobody runs by hand.
 
+### Logged-Out Users: Refuse and Warn, or Apply and Stay Silent
+
+`syncConfiguration` warns "Authentication Required" when nobody is logged in. An action has two honest choices for a guest, and mixing them tells the user an action failed when it worked:
+
+- **Refuse**: return before changing anything and call `createNotLoggedInNotification()` (`addLayer`, `deleteDataset`). Resolve to a value the caller can check (`false`/`null`); callers must not run their success path (navigate, close a dialog, emit) on it.
+- **Apply for the session**: make the local change and wrap the save in `if (this.isLoggedIn)` (`toggleLayerVisibility`, `saveVisibilityConfig`, `setConfigurationLayers`). View state belongs here.
+
+Calling `syncConfiguration` unguarded after a local change is the mixed case. Notifications render from `ProgressBarGroup`, mounted once in `App.vue`, so they show on every page.
+
 ### Actions That Throw Need `@Action({ rawError: true })`
 
 `vuex-module-decorators` wraps **any** error thrown from a bare `@Action` in a generic `Error("ERR_ACTION_ACCESS_UNDEFINED: Are you trying to access this.someMutation()...")`, discarding the original message — unless the action is declared `@Action({ rawError: true })`. This is a library-wide behavior, not specific to one module.

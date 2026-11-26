@@ -128,6 +128,23 @@ function mountComponent(
   });
 }
 
+// Store actions raise notifications from every page, so the component that
+// renders them has to live in the app shell. It used to be mounted inside the
+// image viewer only, which hid every notification raised on the dataset,
+// collection and home pages and in the 3D view.
+describe("notifications are rendered by the app shell", () => {
+  it("mounts the notification group outside the router view", () => {
+    // On the home route, where no image viewer exists.
+    const wrapper = mountComponent(
+      {},
+      { VApp: { template: "<div><slot /></div>" } },
+    );
+    expect(wrapper.findComponent({ name: "ProgressBarGroup" }).exists()).toBe(
+      true,
+    );
+  });
+});
+
 // shallowMount stubs every Vuetify component, so App.vue's own app-bar markup
 // never renders. These pass-through stubs open up just the chain down to the
 // palette buttons (v-app > v-app-bar > v-tooltip activator slot) so the

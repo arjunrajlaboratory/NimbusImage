@@ -3441,7 +3441,11 @@ export class Main extends VuexModule {
       return;
     }
     this.setConfigurationVisibilityConfig(config);
-    await this.syncConfiguration("visibilityConfig");
+    // A guest keeps this change for the session; only a logged-in user saves
+    // it. Unguarded, syncConfiguration would warn about a change that worked.
+    if (this.isLoggedIn) {
+      await this.syncConfiguration("visibilityConfig");
+    }
   }
 
   @Action
@@ -3450,7 +3454,11 @@ export class Main extends VuexModule {
       return;
     }
     this.setConfigurationOverviewConfig(config);
-    await this.syncConfiguration("overviewConfig");
+    // A guest keeps this change for the session; only a logged-in user saves
+    // it. Unguarded, syncConfiguration would warn about a change that worked.
+    if (this.isLoggedIn) {
+      await this.syncConfiguration("overviewConfig");
+    }
   }
 
   // Debounced entry point called by the properties/filters stores whenever
@@ -3621,7 +3629,11 @@ export class Main extends VuexModule {
         // reusable across datasets, so "same configuration" does not imply
         // the captured dataset is still the one open.
         this.setConfigurationColorByProperty({ datasetId, state });
-        await this.syncConfiguration("colorByProperty");
+        // A guest keeps the legend change for the session; only a logged-in
+        // user saves it (see saveVisibilityConfig).
+        if (this.isLoggedIn) {
+          await this.syncConfiguration("colorByProperty");
+        }
         return;
       }
       // The recolor outlived a configuration switch, so there is no live
@@ -4514,7 +4526,11 @@ export class Main extends VuexModule {
     }
     this.configuration.layers = [];
     layers.forEach(this.pushLayer);
-    await this.syncConfiguration("layers");
+    // A guest keeps this change for the session; only a logged-in user saves
+    // it. Unguarded, syncConfiguration would warn about a change that worked.
+    if (this.isLoggedIn) {
+      await this.syncConfiguration("layers");
+    }
   }
 
   @Mutation
@@ -4555,7 +4571,11 @@ export class Main extends VuexModule {
         sync: false,
       });
     }
-    await this.syncConfiguration("layers");
+    // A guest keeps this change for the session; only a logged-in user saves
+    // it. Unguarded, syncConfiguration would warn about a change that worked.
+    if (this.isLoggedIn) {
+      await this.syncConfiguration("layers");
+    }
   }
 
   @Action

@@ -183,7 +183,10 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
 
 <style lang="scss" scoped>
 .progress-container {
-  position: absolute;
+  // Fixed to the viewport: this is mounted once in App.vue so it shows on
+  // every page. In the viewer the image fills the window, so the offsets below
+  // still place it relative to the image's bottom-left corner.
+  position: fixed;
   // Sit just above the bottom-left button cluster (palette / lock / fit-to-window
   // at bottom:10px in ImageViewer) and align to its left edge, so progress bars
   // and notifications never land on top of the left palette stack (Tools panel).

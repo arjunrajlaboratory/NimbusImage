@@ -150,3 +150,94 @@ describe("actions refused while logged out", () => {
     }
   });
 });
+
+// A guest may change how the image is shown; the change lasts for the session
+// and is not saved. These actions apply it locally, so warning that the user
+// "must be logged in to perform this action" would be wrong, and loading a
+// snapshot would warn twice. Same rule as toggleLayerVisibility.
+describe("view changes kept for the session while logged out", () => {
+  let createNotification: ReturnType<typeof vi.spyOn>;
+  let updateConfigurationKey: ReturnType<typeof vi.spyOn>;
+  const layer = (id: string, visible: boolean) =>
+    ({ id, name: id, visible, channel: 0 }) as any;
+
+  beforeEach(() => {
+    const state = (store.state as any).main;
+    state.girderUser = null;
+    state.configuration = {
+      id: "config1",
+      name: "config",
+      description: "",
+      ...exampleConfigurationBase(),
+      layers: [layer("l1", true), layer("l2", true)],
+    };
+    state.dataset = { id: "ds1" };
+    createNotification = vi
+      .spyOn(progress, "createNotification")
+      .mockResolvedValue(undefined as any);
+    updateConfigurationKey = vi
+      .spyOn(main.api as any, "updateConfigurationKey")
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    const state = (store.state as any).main;
+    state.configuration = null;
+    state.dataset = null;
+    vi.restoreAllMocks();
+  });
+
+  function expectSilentAndUnsaved() {
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(updateConfigurationKey).not.toHaveBeenCalled();
+  }
+
+  it("saveVisibilityConfig applies the settings without warning or saving", async () => {
+    const config = { marker: "visibility" } as any;
+    await main.saveVisibilityConfig(config);
+    expect((store.state as any).main.configuration.visibilityConfig).toEqual(
+      config,
+    );
+    expectSilentAndUnsaved();
+  });
+
+  it("saveOverviewConfig applies the settings without warning or saving", async () => {
+    const config = { marker: "overview" } as any;
+    await main.saveOverviewConfig(config);
+    expect((store.state as any).main.configuration.overviewConfig).toEqual(
+      config,
+    );
+    expectSilentAndUnsaved();
+  });
+
+  it("setConfigurationLayers replaces the layers without warning or saving", async () => {
+    await main.setConfigurationLayers([layer("l2", true), layer("l1", true)]);
+    expect(main.layers.map((l) => l.id)).toEqual(["l2", "l1"]);
+    expectSilentAndUnsaved();
+  });
+
+  it("loadLayersVisibilityInConfiguration applies visibility without warning or saving", async () => {
+    await main.loadLayersVisibilityInConfiguration([
+      layer("l1", false),
+      layer("l2", true),
+    ]);
+    expect(main.layers.map((l) => l.visible)).toEqual([false, true]);
+    expectSilentAndUnsaved();
+  });
+
+  it("saveColorByProperty applies the legend without warning or saving", async () => {
+    const legend = {
+      type: "continuous",
+      propertyPath: ["prop1"],
+      propertyName: "Prop 1",
+      colormap: "viridis",
+      stops: ["#440154", "#fde725"],
+      min: 0,
+      max: 10,
+      showLegend: false,
+    } as any;
+    await main.saveColorByProperty(legend);
+    expect(main.colorByPropertyForCurrentDataset).toEqual(legend);
+    expectSilentAndUnsaved();
+  });
+});

@@ -520,6 +520,11 @@
       <router-view />
     </v-main>
 
+    <!-- App level, not inside the image viewer: store actions raise
+         notifications from every page (dataset, collection, home) and from
+         the 3D view, where the image viewer is not mounted. -->
+    <progress-bar-group />
+
     <v-navigation-drawer
       v-model="analyzePanel"
       location="right"
@@ -665,6 +670,7 @@ import { useRoute, useRouter } from "vue-router";
 import axios from "axios";
 import UserMenu from "./layout/UserMenu.vue";
 import ServerStatus from "./components/ServerStatus.vue";
+import ProgressBarGroup from "./components/ProgressBarGroup.vue";
 import AnalyzeAnnotations from "./components/AnalyzePanel.vue";
 import AnnotationsSettings from "./components/SettingsPanel.vue";
 import Snapshots from "./components/Snapshots.vue";

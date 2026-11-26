@@ -941,7 +941,7 @@ query (with no per-query feedback).
 - **B4 — Render-coverage indicator (DONE 2026-06-21).** In lazy mode the canvas renders only
   a budgeted subset (`maxVisible`, default 50,000) of the loaded stubs, with no on-screen cue
   that more exist. A small top-center HUD (`RenderCoverageIndicator.vue`, mounted in
-  `ImageViewer.vue` alongside `ProgressBarGroup`) now shows `displayed / loaded rendered`
+  `ImageViewer.vue`) now shows `displayed / loaded rendered`
   (e.g. `50,000 / 708,983`) with a thin fraction bar. It appears **only while the budget is
   actively downsampling** — the show signal is budget saturation (`displayed >= maxVisible`),
   not `displayed < loaded`, so a dataset that fits under the budget (or one with all-but-a-few
