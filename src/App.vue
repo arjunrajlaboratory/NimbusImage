@@ -10,7 +10,8 @@
       // slide to when a left palette is open, so they move to the top-right
       // while it is up. How far in they sit is `--nimbus-right-edge-clear-x`
       // below, not a second class.
-      'timelapse-palette-open': isDatasetView && !embedMode && timelapsePanel,
+      'timelapse-palette-open':
+        isDatasetView && !embedMode && timelapsePaletteShown,
       // The montage covers the canvas; the selection action panel lifts
       // above it (see AnnotationActionPanel).
       'montage-open': isDatasetView && isMontageOpen,
@@ -115,53 +116,6 @@
       <bread-crumbs />
       <template v-if="store.dataset && routeName === 'datasetview'">
         <div class="palette-cluster">
-          <v-tooltip
-            text="Navigator: XY / Z / Time and the timelapse mode toggle"
-          >
-            <template v-slot:activator="{ props: activatorProps }">
-              <button
-                v-bind="activatorProps"
-                type="button"
-                class="palette-ibtn"
-                :class="{ active: navigatorPanel }"
-                aria-label="Navigator"
-                data-command-id="panel.toggle.navigatorPanel"
-                @click.stop="togglePalette('navigatorPanel')"
-              >
-                <v-icon size="18">{{ PANEL_BY_ID.navigatorPanel.icon }}</v-icon>
-              </button>
-            </template>
-          </v-tooltip>
-          <v-tooltip text="Layers: channels, blending and layer mode">
-            <template v-slot:activator="{ props: activatorProps }">
-              <button
-                v-bind="activatorProps"
-                type="button"
-                class="palette-ibtn"
-                :class="{ active: layersPanel }"
-                aria-label="Layers"
-                data-command-id="panel.toggle.layersPanel"
-                @click.stop="togglePalette('layersPanel')"
-              >
-                <v-icon size="18">{{ PANEL_BY_ID.layersPanel.icon }}</v-icon>
-              </button>
-            </template>
-          </v-tooltip>
-          <v-tooltip text="Tools: create and configure annotation tools">
-            <template v-slot:activator="{ props: activatorProps }">
-              <button
-                v-bind="activatorProps"
-                type="button"
-                class="palette-ibtn"
-                :class="{ active: toolsPanel }"
-                aria-label="Tools"
-                data-command-id="panel.toggle.toolsPanel"
-                @click.stop="togglePalette('toolsPanel')"
-              >
-                <v-icon size="18">{{ PANEL_BY_ID.toolsPanel.icon }}</v-icon>
-              </button>
-            </template>
-          </v-tooltip>
           <v-tooltip text="3D volume view (toggle 2D / 3D)">
             <template v-slot:activator="{ props: activatorProps }">
               <button
@@ -216,140 +170,6 @@
       <v-divider class="ml-1" vertical />
       <template v-if="store.dataset && routeName === 'datasetview'">
         <undo-redo-buttons class="mr-1" />
-        <div class="palette-cluster">
-          <v-tooltip
-            text="List of all objects in the dataset, including their properties, and various actions on them"
-          >
-            <template v-slot:activator="{ props: activatorProps }">
-              <button
-                v-bind="activatorProps"
-                :data-tour="TOUR_ANCHORS.objectListButton"
-                v-tour-trigger="TOUR_TRIGGERS.objectListButton"
-                type="button"
-                class="palette-ibtn"
-                :class="{ active: annotationPanel }"
-                aria-label="Object list"
-                data-command-id="panel.toggle.annotationPanel"
-                @click.stop="togglePalette('annotationPanel')"
-              >
-                <v-icon size="18">{{
-                  PANEL_BY_ID.annotationPanel.icon
-                }}</v-icon>
-              </button>
-            </template>
-          </v-tooltip>
-          <v-tooltip :text="filtersTooltip">
-            <template v-slot:activator="{ props: activatorProps }">
-              <button
-                v-bind="activatorProps"
-                :data-tour="TOUR_ANCHORS.filtersButton"
-                v-tour-trigger="TOUR_TRIGGERS.filtersButton"
-                type="button"
-                class="palette-ibtn"
-                :class="{ active: filtersPanel }"
-                :aria-label="filtersAriaLabel"
-                data-command-id="panel.toggle.filtersPanel"
-                @click.stop="togglePalette('filtersPanel')"
-              >
-                <v-icon size="18">{{ PANEL_BY_ID.filtersPanel.icon }}</v-icon>
-                <!-- Count of active filters, so the user can tell filters are
-                     narrowing the object set even with the panel closed. -->
-                <span v-if="activeFilterCount > 0" class="palette-ibtn-badge">
-                  {{ activeFilterCount > 9 ? "9+" : activeFilterCount }}
-                </span>
-              </button>
-            </template>
-          </v-tooltip>
-          <v-tooltip :text="analysisTooltip">
-            <template v-slot:activator="{ props: activatorProps }">
-              <button
-                v-bind="activatorProps"
-                type="button"
-                class="palette-ibtn"
-                :class="{ active: analysisPanel }"
-                :aria-label="analysisAriaLabel"
-                data-command-id="panel.toggle.analysisPanel"
-                @click.stop="togglePalette('analysisPanel')"
-              >
-                <v-icon size="18">{{ PANEL_BY_ID.analysisPanel.icon }}</v-icon>
-                <!-- Count of gates narrowing the object set. Gates apply with
-                     the palette closed and are restored from the saved
-                     configuration, so without this a dataset could open
-                     already filtered with nothing on screen to say why. The
-                     Filters badge cannot cover it: each badge counts only what
-                     its own panel can show. -->
-                <span
-                  v-if="activeAnalysisGateCount > 0"
-                  class="palette-ibtn-badge"
-                >
-                  {{
-                    activeAnalysisGateCount > 9 ? "9+" : activeAnalysisGateCount
-                  }}
-                </span>
-              </button>
-            </template>
-          </v-tooltip>
-          <v-tooltip
-            v-if="
-              transcriptsStore.hasTranscripts ||
-              transcriptsStore.error ||
-              transcriptsStore.loading
-            "
-            text="Transcripts"
-          >
-            <template v-slot:activator="{ props: activatorProps }">
-              <button
-                v-bind="activatorProps"
-                type="button"
-                class="palette-ibtn"
-                :class="{ active: transcriptsPanel }"
-                aria-label="Transcripts"
-                data-command-id="panel.toggle.transcriptsPanel"
-                @click.stop="togglePalette('transcriptsPanel')"
-              >
-                <v-icon size="18">{{
-                  PANEL_BY_ID.transcriptsPanel.icon
-                }}</v-icon>
-              </button>
-            </template>
-          </v-tooltip>
-          <v-tooltip
-            text="Snapshots for bookmarking and downloading cropped regions in your dataset"
-          >
-            <template v-slot:activator="{ props: activatorProps }">
-              <button
-                v-bind="activatorProps"
-                :data-tour="TOUR_ANCHORS.snapshotsButton"
-                v-tour-trigger="TOUR_TRIGGERS.snapshotsButton"
-                type="button"
-                class="palette-ibtn"
-                :class="{ active: snapshotPanel }"
-                aria-label="Snapshots"
-                data-command-id="panel.toggle.snapshotPanel"
-                @click.stop="togglePalette('snapshotPanel')"
-              >
-                <v-icon size="18">{{ PANEL_BY_ID.snapshotPanel.icon }}</v-icon>
-              </button>
-            </template>
-          </v-tooltip>
-          <v-tooltip text="Image and object display settings">
-            <template v-slot:activator="{ props: activatorProps }">
-              <button
-                v-bind="activatorProps"
-                :data-tour="TOUR_ANCHORS.settingsButton"
-                v-tour-trigger="TOUR_TRIGGERS.settingsButton"
-                type="button"
-                class="palette-ibtn"
-                :class="{ active: settingsPanel }"
-                aria-label="Settings"
-                data-command-id="panel.toggle.settingsPanel"
-                @click.stop="togglePalette('settingsPanel')"
-              >
-                <v-icon size="18">{{ PANEL_BY_ID.settingsPanel.icon }}</v-icon>
-              </button>
-            </template>
-          </v-tooltip>
-        </div>
         <v-tooltip
           text="Measure objects: configure and run property computations"
         >
@@ -511,8 +331,11 @@
       </div>
     </v-app-bar>
 
+    <!-- v-show, not v-if, for "hide all panels": the panel keeps its state
+         and comes back as it was. -->
     <ai-panel
       v-if="aiPanelOpen && canUseAiPanel"
+      v-show="!panelsHidden"
       @close="aiPanelOpen = false"
     />
 
@@ -521,35 +344,99 @@
     </v-main>
 
     <v-navigation-drawer
-      v-model="analyzePanel"
+      :model-value="analyzePanel && !panelsHidden"
+      @update:model-value="analyzePanel = $event"
       location="right"
       :scrim="false"
       :width="RIGHT_PALETTE_WIDTHS.analyze"
       :mobile="false"
     >
-      <analyze-annotations :visible="analyzePanel" />
+      <analyze-annotations :visible="analyzePanel && !panelsHidden" />
     </v-navigation-drawer>
+
+    <!-- Each closed panel is a labeled chip in a row at the top of its zone,
+         next to where it opens; the zone's palettes start below the row.
+         Under "hide all panels" the left row holds only the chip that undoes
+         it, so a hidden interface always shows the way back. -->
+    <div
+      v-for="zone in PANEL_ZONES"
+      v-show="chipRowOccupied[zone]"
+      :key="zone"
+      :ref="observeChipRow"
+      :data-zone="zone"
+      class="palette-chips"
+      :class="`zone-${zone}`"
+      :style="chipRowStyles[zone]"
+    >
+      <button
+        v-if="zone === 'left' && panelsHidden"
+        type="button"
+        class="palette-chip"
+        aria-label="Show all panels"
+        @click.stop="panelLayout.toggleChromeHidden()"
+      >
+        <v-icon size="14">mdi-eye-outline</v-icon>
+        <span>Show panels</span>
+      </button>
+      <v-tooltip
+        v-for="chip in panelChips[zone]"
+        :key="chip.id"
+        :text="chip.tooltip"
+        location="bottom"
+        :open-delay="500"
+      >
+        <template v-slot:activator="{ props: activatorProps }">
+          <button
+            v-bind="activatorProps"
+            v-tour-trigger="chip.tourTrigger"
+            type="button"
+            class="palette-chip"
+            :class="{ relevant: chip.relevant }"
+            :aria-label="chip.label"
+            :data-command-id="`panel.toggle.${chip.id}`"
+            :data-tour="chip.tourAnchor"
+            @click.stop="openPalette(chip.id)"
+          >
+            <v-icon size="14">{{ chip.icon }}</v-icon>
+            <span>{{ chip.title }}</span>
+            <span v-if="chip.badge" class="palette-chip-badge">
+              {{ chip.badge }}
+            </span>
+          </button>
+        </template>
+      </v-tooltip>
+    </div>
 
     <floating-palette
       v-model="settingsPanel"
+      v-bind="paletteChrome.settingsPanel"
+      :resize-range="zoneResizeRange.right"
       :title="PANEL_BY_ID.settingsPanel.title"
-      :width="RIGHT_PALETTE_WIDTHS.settings"
+      :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.settings)"
+      :top="rightColumnTop"
+      :max-height="rightColumnMaxHeight"
     >
       <annotations-settings />
     </floating-palette>
 
     <floating-palette
       v-model="snapshotPanel"
+      v-bind="paletteChrome.snapshotPanel"
+      :resize-range="zoneResizeRange.right"
       :title="PANEL_BY_ID.snapshotPanel.title"
-      :width="RIGHT_PALETTE_WIDTHS.snapshots"
+      :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.snapshots)"
+      :top="rightColumnTop"
+      :max-height="rightColumnMaxHeight"
     >
       <snapshots :snapshotVisible="snapshotPanel" />
     </floating-palette>
 
     <floating-palette
       v-model="annotationPanel"
+      v-bind="paletteChrome.annotationPanel"
+      :resize-range="zoneResizeRange.right"
       :title="PANEL_BY_ID.annotationPanel.title"
-      :width="RIGHT_PALETTE_WIDTHS.objectBrowser"
+      :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.objectBrowser)"
       :top="stackedHostTop"
       :max-height="stackedHostMaxHeight"
     >
@@ -559,8 +446,11 @@
     <floating-palette
       ref="filtersPaletteRef"
       v-model="filtersPanel"
+      v-bind="paletteChrome.filtersPanel"
+      :resize-range="zoneResizeRange.right"
       :title="PANEL_BY_ID.filtersPanel.title"
-      :width="RIGHT_PALETTE_WIDTHS.filters"
+      :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.filters)"
+      :top="rightColumnTop"
       :max-height="filtersMaxHeight"
     >
       <filters-panel :visible="filtersPanel" />
@@ -568,8 +458,10 @@
 
     <floating-palette
       v-model="analysisPanel"
+      v-bind="paletteChrome.analysisPanel"
+      :resize-range="zoneResizeRange.right"
       :title="PANEL_BY_ID.analysisPanel.title"
-      :width="RIGHT_PALETTE_WIDTHS.analysis"
+      :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.analysis)"
       :top="stackedHostTop"
       :max-height="stackedHostMaxHeight"
     >
@@ -582,8 +474,12 @@
 
     <floating-palette
       v-model="transcriptsPanel"
+      v-bind="paletteChrome.transcriptsPanel"
+      :resize-range="zoneResizeRange.right"
       :title="PANEL_BY_ID.transcriptsPanel.title"
-      :width="RIGHT_PALETTE_WIDTHS.transcripts"
+      :width="rightPaletteWidth(RIGHT_PALETTE_WIDTHS.transcripts)"
+      :top="rightColumnTop"
+      :max-height="rightColumnMaxHeight"
     >
       <transcripts-panel :visible="transcriptsPanel" />
     </floating-palette>
@@ -592,9 +488,14 @@
       <floating-palette
         ref="navigatorPaletteRef"
         v-model="navigatorPanel"
+        v-bind="paletteChrome.navigatorPanel"
+        :resize-range="zoneResizeRange.left"
+        :stack-position="leftStackPositions.navigatorPanel"
         :title="PANEL_BY_ID.navigatorPanel.title"
         :left="PALETTE_INSET"
-        :width="LEFT_COLUMN_PALETTE_WIDTHS.navigator"
+        :width="leftPaletteWidth(LEFT_COLUMN_PALETTE_WIDTHS.navigator)"
+        :top="leftStack.navigatorPanel.top"
+        :max-height="leftStack.navigatorPanel.maxHeight"
       >
         <navigator-panel />
       </floating-palette>
@@ -605,9 +506,11 @@
            only the chrome-less embed hides the panel while retaining mode. -->
       <floating-palette
         ref="timelapsePaletteRef"
-        v-model="timelapsePanel"
+        v-model="timelapsePaletteShown"
         title="Time Lapse"
-        :left="RIGHT_OF_LEFT_COLUMN"
+        :left="rightOfLeftColumn(leftColumn)"
+        :top="belowChipRows"
+        :max-height="maxHeightBelow(belowChipRows)"
         :width="TIMELAPSE_PALETTE_WIDTH"
       >
         <timelapse-panel />
@@ -616,22 +519,29 @@
       <floating-palette
         ref="layersPaletteRef"
         v-model="layersPanel"
+        v-bind="paletteChrome.layersPanel"
+        :resize-range="zoneResizeRange.left"
+        :stack-position="leftStackPositions.layersPanel"
         :title="PANEL_BY_ID.layersPanel.title"
         :left="PALETTE_INSET"
-        :width="LEFT_COLUMN_PALETTE_WIDTHS.layers"
-        :top="layersPanelTop"
-        :max-height="layersPanelMaxHeight"
+        :width="leftPaletteWidth(LEFT_COLUMN_PALETTE_WIDTHS.layers)"
+        :top="leftStack.layersPanel.top"
+        :max-height="leftStack.layersPanel.maxHeight"
       >
-        <layers-panel />
+        <layers-panel :visible="layersPanel" />
       </floating-palette>
 
       <floating-palette
+        ref="toolsPaletteRef"
         v-model="toolsPanel"
+        v-bind="paletteChrome.toolsPanel"
+        :resize-range="zoneResizeRange.left"
+        :stack-position="leftStackPositions.toolsPanel"
         :title="PANEL_BY_ID.toolsPanel.title"
         :left="PALETTE_INSET"
-        :width="LEFT_COLUMN_PALETTE_WIDTHS.tools"
-        :top="toolsPanelTop"
-        :max-height="toolsPanelMaxHeight"
+        :width="leftPaletteWidth(LEFT_COLUMN_PALETTE_WIDTHS.tools)"
+        :top="leftStack.toolsPanel.top"
+        :max-height="leftStack.toolsPanel.maxHeight"
       >
         <toolset />
       </floating-palette>
@@ -700,32 +610,55 @@ import {
   ACTION_PANEL_TOP,
   AI_PANEL_WIDTH,
   LEFT_COLUMN_PALETTE_WIDTHS,
-  LEFT_PALETTE_CLEAR_X,
+  PALETTE_CHIP_HEIGHT,
   PALETTE_GAP,
   PALETTE_INSET,
   RIGHT_EDGE_OVERLAY_INSETS,
-  RIGHT_OF_LEFT_COLUMN,
   RIGHT_PALETTE_WIDTHS,
   STACKED_ACTION_PANEL_OFFSET,
   TIMELAPSE_PALETTE_WIDTH,
+  TPaletteZone,
+  ZONE_MIN_WIDTH,
   actionPanelClearsTimelapsePalette,
+  clampZoneWidth,
+  leftColumnWidth,
+  leftPaletteClearX,
+  paletteWidth,
   rightEdgeClearX,
+  rightOfLeftColumn,
 } from "@/utils/paletteGeometry";
 import AiPanel from "@/components/AiPanel.vue";
 import FloatingPalette from "@/components/FloatingPalette.vue";
+import { TOUR_REVEAL_PANEL_EVENT, tourBus } from "@/plugins/tourBus";
+import { usePanelLayout } from "@/utils/usePanelLayout";
+import { registerPanelLayoutController } from "@/utils/panelLayoutController";
+import { setUiStateScope } from "@/utils/uiState";
 import { IGirderFolder } from "@/girder";
 import { ITourMetadata } from "./store/model";
 import { useTour } from "@/utils/useTour";
 import { TOUR_ANCHORS, TOUR_TRIGGERS } from "@/tours/anchors";
 import {
+  IPanelContext,
   PANELS,
   PANEL_BY_ID,
   PANEL_IDS,
   PanelId,
-  applyOpen,
+  isPanelAvailable as panelIsAvailable,
+  isPanelId,
+  isPanelRelevant,
+  panelBadge,
 } from "@/utils/panelRegistry";
+import {
+  layoutWithOpenSet,
+  leftOrderAfterDrop,
+  leftOrderAfterStep,
+} from "@/utils/panelLayout";
 import { useCommand, useCommandProvider } from "@/commands/registry";
-import { panelCommands, tourCommands } from "@/commands/providers";
+import {
+  layoutCommands,
+  panelCommands,
+  tourCommands,
+} from "@/commands/providers";
 import { aiPromptRequest } from "@/commands/requests";
 import { isTourAvailableOnRoute, useViewerContext } from "@/commands/context";
 import { boundHotkey, formatHotkey } from "@/commands/hotkeys";
@@ -760,13 +693,174 @@ const { startTour, loadAllTours: loadAllToursFromManager } = useTour();
 const tourSearch = ref("");
 const availableTours = ref<Record<string, ITourMetadata>>({});
 
-const snapshotPanel = ref(false);
+const routeName = computed(() =>
+  route.name === "shared" || route.name === "embed"
+    ? "datasetview"
+    : route.name,
+);
+const embedMode = computed(
+  () => route.name === "embed" || route.query.embed === "1",
+);
+
+const isDatasetView = computed(() => routeName.value === "datasetview");
+
+// --- Palette layout ---------------------------------------------------------
+//
+// Which palettes exist, which edge each lives on and how they evict each other
+// are defined in `@/utils/panelRegistry`. Which are open or hidden,
+// and remembering that between visits, is `usePanelLayout`. App.vue binds the
+// template and the stacking observers to the refs it returns.
+
+// Remembered UI state is kept per user. Sync and before `usePanelLayout`,
+// which reads that state as it is created.
+watch(
+  () => store.girderUser?._id ?? null,
+  (userId) => setUiStateScope(userId),
+  { immediate: true, flush: "sync" },
+);
+
+// What the registry's per-panel `badge` and `available` rules are asked
+// about. One place gathers it, so a chip, its command and its palette
+// cannot disagree.
+const panelContext = computed<IPanelContext>(() => ({
+  activeFilterCount: filterStore.activeFilterCount,
+  activeAnalysisGateCount: filterStore.activeAnalysisGateCount,
+  transcriptsReachable:
+    transcriptsStore.hasTranscripts ||
+    !!transcriptsStore.error ||
+    transcriptsStore.loading,
+  hasUnseenJobResults: store.annotationPanelBadge,
+}));
+
+function isPanelAvailable(id: PanelId): boolean {
+  return panelIsAvailable(id, panelContext.value);
+}
+
+// The panels that hold something new and are not on screen: their chip
+// carries an accent (the registry's `relevant` rules).
+const panelAccents = computed(
+  () =>
+    Object.fromEntries(
+      PANEL_IDS.map((id) => [
+        id,
+        isPanelRelevant(id, panelContext.value) &&
+          !panelLayout.isVisible(id) &&
+          isPanelAvailable(id),
+      ]),
+    ) as Record<PanelId, boolean>,
+);
+
+const panelBadges = computed(
+  () =>
+    Object.fromEntries(
+      PANEL_IDS.map((id) => [id, panelBadge(id, panelContext.value)]),
+    ) as Record<PanelId, string | null>,
+);
+
+// The collection of the dataset view on screen, or null until it has loaded.
+// Not simply `store.configuration`: that keeps the previous collection while
+// the next one loads (and while the user is on another page), so reading it
+// alone would restore and save the layout of a collection that is no longer
+// the one being opened. The route names the view first, the store then loads
+// the view, and the view names its collection.
+const viewedConfiguration = computed(() => {
+  const view = store.datasetView;
+  const configuration = store.configuration;
+  const routeViewId = route.params?.datasetViewId;
+  if (
+    !view ||
+    !configuration ||
+    view.configurationId !== configuration.id ||
+    // Routes that carry no view id (a share link) have only the store's.
+    (typeof routeViewId === "string" && routeViewId !== view.id)
+  ) {
+    return null;
+  }
+  return configuration;
+});
+
+const panelLayout = usePanelLayout({
+  // The embed route (a share link in an iframe) shows only the canvas.
+  inViewer: () => isDatasetView.value && !embedMode.value,
+  configurationId: () => viewedConfiguration.value?.id ?? null,
+  collectionDefault: () => viewedConfiguration.value?.defaultPanelLayout,
+  isAvailable: isPanelAvailable,
+});
+// True while the palette is on screen; see `usePanelLayout`'s `visible`.
+const {
+  snapshotPanel,
+  annotationPanel,
+  settingsPanel,
+  filtersPanel,
+  analysisPanel,
+  transcriptsPanel,
+  navigatorPanel,
+  toolsPanel,
+  layersPanel,
+} = panelLayout.visible;
+const openPalette = panelLayout.open;
+const togglePalette = panelLayout.toggle;
+
+// "Unseen job results" ends when the Object Browser is shown, and does not
+// follow the user to another dataset. (jobs.ts raises it.) The flag itself
+// is watched too: raised while the browser is showing, it is not unseen.
+// jobs.ts asks the store's mirror of the browser's visibility, and this does
+// not rely on that mirror being right at that moment.
+watch(
+  [
+    () => panelLayout.isVisible("annotationPanel"),
+    () => store.dataset?.id,
+    () => store.annotationPanelBadge,
+  ],
+  ([browserShown, datasetId, raised], [, previousDatasetId]) => {
+    if (raised && (browserShown || datasetId !== previousDatasetId)) {
+      store.setAnnotationPanelBadge(false);
+    }
+  },
+);
+
+// The AI agent's tools reach the layout through this (they run outside any
+// component). Same functions as the buttons, so the same rules and saving.
+const unregisterPanelLayoutController = registerPanelLayoutController({
+  inViewer: () => isDatasetView.value && !embedMode.value,
+  openPanels: () => [...panelLayout.layout.value.open],
+  allHidden: () => panelLayout.chromeHidden.value,
+  isAvailable: isPanelAvailable,
+  open: panelLayout.open,
+  close: panelLayout.close,
+  applyOpenSet: panelLayout.applyOpenSet,
+  // With whether everything was hidden: a turn made under "hide all panels"
+  // that opened something ended it, and putting the layout back without
+  // that would leave the panels showing.
+  layoutSnapshot: () => ({
+    layout: panelLayout.layout.value,
+    allHidden: panelLayout.chromeHidden.value,
+  }),
+  restoreLayout: (snapshot) => {
+    const saved = snapshot as { layout?: unknown; allHidden?: unknown } | null;
+    panelLayout.applyLayout(saved?.layout);
+    if (
+      typeof saved?.allHidden === "boolean" &&
+      saved.allHidden !== panelLayout.chromeHidden.value
+    ) {
+      panelLayout.toggleChromeHidden();
+    }
+  },
+});
+// "Hide all panels" is on. It covers every panel that floats over or beside
+// the canvas, not only the registry's: the Timelapse palette, the AI panel
+// and the Analyze drawer are masked by it too (below), each keeping its own
+// open state for when the panels come back.
+const panelsHidden = panelLayout.chromeHidden;
+
+/** End "hide all panels", if it is on. */
+function showPanels() {
+  if (panelsHidden.value) {
+    panelLayout.toggleChromeHidden();
+  }
+}
+
 const snapshotPanelFull = ref(false);
-const annotationPanel = ref(false);
-const settingsPanel = ref(false);
-const filtersPanel = ref(false);
-const analysisPanel = ref(false);
-const transcriptsPanel = ref(false);
 const analyzePanel = ref(false);
 const aiPanelOpen = ref(false);
 
@@ -777,6 +871,27 @@ const aiPanelOpen = ref(false);
 const timelapsePanel = computed({
   get: () => timelapseStore.showMode,
   set: (value: boolean) => timelapseStore.setShowMode(value),
+});
+// Opening any of the panels "hide all panels" masks ends it, as opening a
+// registry palette does: something the user just asked for must not stay
+// invisible. (These three are not in the panel registry; see `panelsHidden`.)
+watch(
+  [aiPanelOpen, timelapsePanel, analyzePanel],
+  (open, wasOpen) => {
+    if (open.some((isOpen, index) => isOpen && !wasOpen[index])) {
+      showPanels();
+    }
+  },
+  { flush: "sync" },
+);
+
+// What the palette's v-model and the geometry read: the mode, unless "hide all
+// panels" is masking it. Closing the palette still turns the mode off.
+const timelapsePaletteShown = computed({
+  get: () => timelapsePanel.value && !panelsHidden.value,
+  set: (value: boolean) => {
+    timelapsePanel.value = value;
+  },
 });
 
 /**
@@ -815,17 +930,32 @@ const canUseAiPanel = computed(
 // at 444–744, i.e. straight back into the bug this whole mechanism fixes.
 const rightEdgeClearance = computed(() =>
   rightEdgeClearX([
-    { open: annotationPanel.value, width: RIGHT_PALETTE_WIDTHS.objectBrowser },
-    { open: filtersPanel.value, width: RIGHT_PALETTE_WIDTHS.filters },
-    { open: analysisPanel.value, width: RIGHT_PALETTE_WIDTHS.analysis },
+    {
+      open: annotationPanel.value,
+      width: rightPaletteWidth(RIGHT_PALETTE_WIDTHS.objectBrowser),
+    },
+    {
+      open: filtersPanel.value,
+      width: rightPaletteWidth(RIGHT_PALETTE_WIDTHS.filters),
+    },
+    {
+      open: analysisPanel.value,
+      width: rightPaletteWidth(RIGHT_PALETTE_WIDTHS.analysis),
+    },
     {
       open: transcriptsPanel.value,
-      width: RIGHT_PALETTE_WIDTHS.transcripts,
+      width: rightPaletteWidth(RIGHT_PALETTE_WIDTHS.transcripts),
     },
-    { open: settingsPanel.value, width: RIGHT_PALETTE_WIDTHS.settings },
-    { open: snapshotPanel.value, width: RIGHT_PALETTE_WIDTHS.snapshots },
     {
-      open: aiPanelOpen.value && canUseAiPanel.value,
+      open: settingsPanel.value,
+      width: rightPaletteWidth(RIGHT_PALETTE_WIDTHS.settings),
+    },
+    {
+      open: snapshotPanel.value,
+      width: rightPaletteWidth(RIGHT_PALETTE_WIDTHS.snapshots),
+    },
+    {
+      open: aiPanelOpen.value && canUseAiPanel.value && !panelsHidden.value,
       width: AI_PANEL_WIDTH,
       inset: RIGHT_EDGE_OVERLAY_INSETS.aiPanel,
     },
@@ -844,19 +974,20 @@ const rightEdgeClearance = computed(() =>
  * palette, using its measured height so the offset tracks its real content.
  */
 const actionPanelTop = computed(() => {
-  if (!timelapsePanel.value || !isDatasetView.value || embedMode.value) {
-    return ACTION_PANEL_TOP;
+  if (!timelapsePaletteShown.value || !isDatasetView.value || embedMode.value) {
+    return belowChipRows.value;
   }
   if (
     actionPanelClearsTimelapsePalette(
       windowWidth.value,
       rightEdgeClearance.value,
+      rightOfLeftColumn(leftColumn.value) + TIMELAPSE_PALETTE_WIDTH,
     )
   ) {
-    return ACTION_PANEL_TOP;
+    return belowChipRows.value;
   }
   return (
-    PALETTE_TOP +
+    belowChipRows.value +
     (timelapsePaletteHeight.value
       ? timelapsePaletteHeight.value + STACK_GAP
       : 0)
@@ -864,7 +995,12 @@ const actionPanelTop = computed(() => {
 });
 
 const paletteGeometryVars = computed(() => ({
-  "--nimbus-left-palette-clear-x": `${LEFT_PALETTE_CLEAR_X}px`,
+  "--nimbus-left-palette-clear-x": `${leftPaletteClearX(leftColumn.value)}px`,
+  // The band at the top of the canvas that the rows of panel chips occupy
+  // ends here. Surfaces that start at the top of the canvas (the selection
+  // panels, the montage, the Timelapse palette) start below it, and the AI
+  // panel stops short of it, so no chip is ever under one of them.
+  "--nimbus-below-chip-rows": `${belowChipRows.value}px`,
   "--nimbus-right-edge-clear-x": `${rightEdgeClearance.value}px`,
   "--nimbus-action-panel-top": `${actionPanelTop.value}px`,
   // The connection panel stacks a fixed distance below the object panel, so it
@@ -872,10 +1008,19 @@ const paletteGeometryVars = computed(() => ({
   "--nimbus-stacked-action-panel-top": `${
     actionPanelTop.value + STACKED_ACTION_PANEL_OFFSET
   }px`,
+  // The image overview's default corner is the top right, under the right
+  // chip row; it starts below the row as the right column's palettes do.
+  "--nimbus-overview-top": `${rightColumnTop.value}px`,
 }));
 
 function toggleAiPanel() {
   if (!canUseAiPanel.value) {
+    return;
+  }
+  // Under "hide all panels" an open AI panel is masked, so the button's job
+  // is to show it, not to close what cannot be seen.
+  if (aiPanelOpen.value && panelsHidden.value) {
+    showPanels();
     return;
   }
   aiPanelOpen.value = !aiPanelOpen.value;
@@ -900,6 +1045,9 @@ watch(aiPromptRequest, (prompt) => {
   }
   if (canUseAiPanel.value) {
     aiPanelOpen.value = true;
+    // The panel may already be open but masked; the watcher below only sees
+    // it opening.
+    showPanels();
   } else {
     // Drop it rather than leave it for the next time the panel mounts.
     aiPromptRequest.value = null;
@@ -912,11 +1060,6 @@ watch(canUseAiPanel, (usable) => {
     aiPanelOpen.value = false;
   }
 });
-
-// Left-zone palettes (dissolved left sidebar). Open by default.
-const navigatorPanel = ref(true);
-const toolsPanel = ref(true);
-const layersPanel = ref(true);
 
 // When the whole left stack is open it reaches the bottom-left corner and
 // would cover the canvas's palette/lock/reset buttons; ImageViewer shifts
@@ -961,24 +1104,9 @@ const commandPaletteOpen = ref(false);
 
 const DOCUMENTATION_URL = "https://docs.nimbusimage.com";
 const COMMAND_PALETTE_BINDING = "mod+k";
+const HIDE_PANELS_BINDING = "mod+.";
+const HIDE_PANELS_DESCRIPTION = "Hide or show all panels";
 const commandPaletteHotkey = formatHotkey(COMMAND_PALETTE_BINDING);
-
-// --- Palette layout ---------------------------------------------------------
-//
-// Which palettes exist, which edge each lives on and how they evict each other
-// are defined in `@/utils/panelRegistry`; App.vue only owns the open/closed
-// refs, because the template and the stacking observers below bind to them.
-const paletteOpen: Record<PanelId, Ref<boolean>> = {
-  annotationPanel,
-  filtersPanel,
-  analysisPanel,
-  transcriptsPanel,
-  snapshotPanel,
-  settingsPanel,
-  navigatorPanel,
-  toolsPanel,
-  layersPanel,
-};
 
 // The Transcripts button and the viewer's overlay only appear for a dataset
 // with a registered transcript store, so the registration is looked up as
@@ -993,28 +1121,6 @@ watch(
   { immediate: true },
 );
 
-function openPaletteSet(): Set<PanelId> {
-  return new Set(PANEL_IDS.filter((id) => paletteOpen[id].value));
-}
-
-function openPalette(id: PanelId) {
-  if (embedMode.value) {
-    return;
-  }
-  const next = applyOpen(openPaletteSet(), id);
-  for (const panelId of PANEL_IDS) {
-    paletteOpen[panelId].value = next.has(panelId);
-  }
-}
-
-function togglePalette(id: PanelId) {
-  if (paletteOpen[id].value) {
-    paletteOpen[id].value = false;
-  } else {
-    openPalette(id);
-  }
-}
-
 const is3DView = computed(() => volumeViewStore.viewMode === "3d");
 function toggle3DView() {
   volumeViewStore.setViewMode(is3DView.value ? "2d" : "3d");
@@ -1023,12 +1129,6 @@ function toggle3DView() {
 const isMontageOpen = computed(() => montageStore.isOpen);
 function toggleMontage() {
   montageStore.setIsOpen(!montageStore.isOpen);
-}
-
-function closeAllPalettes() {
-  for (const id of PANEL_IDS) {
-    paletteOpen[id].value = false;
-  }
 }
 
 // --- Stacked positioning ----------------------------------------------------
@@ -1048,7 +1148,7 @@ type PaletteRefEl = ComponentPublicInstance & { rootEl?: HTMLElement };
 // non-DOM test environments. Returns a disconnect-able observer (or null).
 function observePaletteHeight(
   paletteRef: Ref<PaletteRefEl | undefined>,
-  heightRef: Ref<number>,
+  setHeight: (height: number) => void,
 ): ResizeObserver | null {
   if (typeof ResizeObserver === "undefined") {
     return null;
@@ -1064,7 +1164,7 @@ function observePaletteHeight(
     if (store.isLayerDragging) {
       return;
     }
-    heightRef.value = el.offsetHeight;
+    setHeight(el.offsetHeight);
   });
   observer.observe(el);
   return observer;
@@ -1089,8 +1189,8 @@ const filtersStacked = computed(
 // Top edge of whichever primary Filters is currently stacked above.
 const stackedHostTop = computed(() =>
   filtersStacked.value
-    ? PALETTE_TOP + filtersHeight.value + STACK_GAP
-    : PALETTE_TOP,
+    ? rightColumnTop.value + filtersHeight.value + STACK_GAP
+    : rightColumnTop.value,
 );
 
 const stackedHostMaxHeight = computed(
@@ -1101,17 +1201,30 @@ const stackedHostMaxHeight = computed(
 const filtersMaxHeight = computed(() =>
   filtersStacked.value
     ? `calc(100vh - ${
-        PALETTE_TOP + COLUMN_BOTTOM_INSET + MIN_BROWSER_HEIGHT + STACK_GAP
+        rightColumnTop.value +
+        COLUMN_BOTTOM_INSET +
+        MIN_BROWSER_HEIGHT +
+        STACK_GAP
       }px)`
-    : `calc(100vh - ${PALETTE_TOP + COLUMN_BOTTOM_INSET}px)`,
+    : rightColumnMaxHeight.value,
 );
 
-// Left zone: Navigator (top) -> Layers -> Tools stack, each flowing beneath
-// the open palettes above it. Navigator uses FloatingPalette defaults.
+// Left zone: Navigator, Layers and Tools stack in the user's order
+// (`arrangement.leftOrder`), each flowing beneath the shown palettes above it.
+const LEFT_PANEL_IDS = PANELS.filter((panel) => panel.zone === "left").map(
+  (panel) => panel.id,
+);
 const navigatorPaletteRef = ref<PaletteRefEl>();
 const layersPaletteRef = ref<PaletteRefEl>();
-const navigatorHeight = ref(0);
-const layersHeight = ref(0);
+const toolsPaletteRef = ref<PaletteRefEl>();
+const leftPaletteRefs: Partial<Record<PanelId, Ref<PaletteRefEl | undefined>>> =
+  {
+    navigatorPanel: navigatorPaletteRef,
+    layersPanel: layersPaletteRef,
+    toolsPanel: toolsPaletteRef,
+  };
+// Rendered height of each left palette, 0 until measured.
+const leftPaletteHeights = ref<Partial<Record<PanelId, number>>>({});
 // The Timelapse palette is not in the left stack, but its height is needed to
 // drop the selection action panels below it on a narrow viewport.
 const timelapsePaletteRef = ref<PaletteRefEl>();
@@ -1123,33 +1236,383 @@ const windowWidth = ref(typeof window === "undefined" ? 0 : window.innerWidth);
 function updateWindowWidth() {
   windowWidth.value = window.innerWidth;
 }
-let navigatorResizeObserver: ResizeObserver | null = null;
-let layersResizeObserver: ResizeObserver | null = null;
+let leftResizeObservers: ResizeObserver[] = [];
 let timelapseResizeObserver: ResizeObserver | null = null;
 
-const layersPanelTop = computed(
-  () =>
-    PALETTE_TOP +
-    (navigatorPanel.value && navigatorHeight.value
-      ? navigatorHeight.value + STACK_GAP
-      : 0),
+// --- Panel chips -------------------------------------------------------------
+//
+// A panel's one control is a labeled chip, shown while the panel is closed,
+// in a row at the top of its zone: next to where the panel opens, which the
+// app-bar icons it replaced were not. The rows wrap, and the zone's palettes
+// start below the row's measured height.
+const PANEL_ZONES: readonly TPaletteZone[] = ["left", "right"];
+
+// The chips the tours point at. A tour step that says "click here to open
+// it" is already done when the panel is open and the chip is gone, so the
+// palette carries the same name as `data-tour-done` (plugins/tour.ts).
+const PANEL_TOUR_HOOKS: Partial<
+  Record<PanelId, { anchor: string; trigger: string }>
+> = {
+  annotationPanel: {
+    anchor: TOUR_ANCHORS.objectListButton,
+    trigger: TOUR_TRIGGERS.objectListButton,
+  },
+  filtersPanel: {
+    anchor: TOUR_ANCHORS.filtersButton,
+    trigger: TOUR_TRIGGERS.filtersButton,
+  },
+  snapshotPanel: {
+    anchor: TOUR_ANCHORS.snapshotsButton,
+    trigger: TOUR_TRIGGERS.snapshotsButton,
+  },
+  settingsPanel: {
+    anchor: TOUR_ANCHORS.settingsButton,
+    trigger: TOUR_TRIGGERS.settingsButton,
+  },
+};
+
+interface IPanelChip {
+  id: PanelId;
+  title: string;
+  icon: string;
+  // Replaces the chip's text for assistive tech, so it carries the badge's
+  // meaning and the accent too, or they are there only for people who see.
+  label: string;
+  tooltip: string;
+  badge: string | null;
+  relevant: boolean;
+  tourAnchor?: string;
+  tourTrigger?: string;
+}
+
+function panelChip(id: PanelId): IPanelChip {
+  const panel = PANEL_BY_ID[id];
+  // Filters and Analysis say what their count means.
+  const label =
+    id === "filtersPanel"
+      ? filtersAriaLabel.value
+      : id === "analysisPanel"
+        ? analysisAriaLabel.value
+        : panel.title;
+  return {
+    id,
+    title: panel.title,
+    icon: panel.icon,
+    label: panelAccents.value[id] ? `${label} (new results)` : label,
+    tooltip:
+      id === "filtersPanel"
+        ? filtersTooltip.value
+        : id === "analysisPanel"
+          ? analysisTooltip.value
+          : panel.description,
+    badge: panelBadges.value[id],
+    relevant: panelAccents.value[id],
+    tourAnchor: PANEL_TOUR_HOOKS[id]?.anchor,
+    tourTrigger: PANEL_TOUR_HOOKS[id]?.trigger,
+  };
+}
+
+// Every available panel that is not on screen, left in the user's stack
+// order and right in registry order. None outside the viewer, and none
+// under "hide all panels", whose own chip stands for all of them.
+const panelChips = computed<Record<TPaletteZone, IPanelChip[]>>(() => {
+  if (!leftPalettesMounted.value || panelsHidden.value) {
+    return { left: [], right: [] };
+  }
+  const closed = (id: PanelId) =>
+    !panelLayout.isVisible(id) &&
+    isPanelAvailable(id) &&
+    (id !== "transcriptsPanel" || transcriptsChipOffered.value);
+  return {
+    left: panelLayout.arrangement.value.leftOrder.filter(closed).map(panelChip),
+    right: PANELS.filter((panel) => panel.zone === "right")
+      .map((panel) => panel.id)
+      .filter(closed)
+      .map(panelChip),
+  };
+});
+
+// Whether the Transcripts chip is offered. Not during a dataset's first
+// lookup: most datasets have no transcripts, and a chip that came and went
+// on every dataset load would shift the others in its row. Once the lookup
+// has answered with a store or an error it stays through a retry, so the
+// panel can be reopened while one is running.
+const transcriptsChipOffered = ref(false);
+watch(
+  [
+    () => store.dataset?.id,
+    () => transcriptsStore.hasTranscripts || !!transcriptsStore.error,
+    () => transcriptsStore.loading,
+  ],
+  ([datasetId, answered, loading], [previousDatasetId]) => {
+    if (answered) {
+      transcriptsChipOffered.value = true;
+    } else if (!loading || datasetId !== previousDatasetId) {
+      transcriptsChipOffered.value = false;
+    }
+  },
+  { immediate: true },
 );
 
-const toolsPanelTop = computed(
-  () =>
-    layersPanelTop.value +
-    (layersPanel.value && layersHeight.value
-      ? layersHeight.value + STACK_GAP
-      : 0),
+// Wide enough for the right zone's six chips with their badges on one line,
+// so a count appearing (or the Transcripts chip) does not wrap the row and
+// move the column.
+const RIGHT_CHIP_ROW_MAX_WIDTH = 640;
+
+const chipRowOccupied = computed<Record<TPaletteZone, boolean>>(() => ({
+  left: panelChips.value.left.length > 0 || panelsHidden.value,
+  right: panelChips.value.right.length > 0,
+}));
+
+// Rendered height of each row: how many lines it wraps to is not known ahead
+// of time.
+const chipRowHeights = ref<Record<TPaletteZone, number>>({ left: 0, right: 0 });
+const chipRowObserver =
+  typeof ResizeObserver === "undefined"
+    ? null
+    : new ResizeObserver((entries) => {
+        const heights = { ...chipRowHeights.value };
+        for (const entry of entries) {
+          const row = entry.target as HTMLElement;
+          heights[row.dataset.zone as TPaletteZone] = row.offsetHeight;
+        }
+        chipRowHeights.value = heights;
+      });
+// A template ref function: called with each row's element (observing one
+// twice is a no-op) and with null when it goes away.
+function observeChipRow(row: unknown) {
+  if (row instanceof HTMLElement) {
+    chipRowObserver?.observe(row);
+  }
+}
+
+// The height kept for a zone's row. A row with no chips keeps one line's
+// worth, so opening or closing a panel never moves the others and the two
+// columns start at the same height; so does a row not yet measured (or one
+// nothing can measure).
+function chipRowHeight(zone: TPaletteZone): number {
+  return (
+    (chipRowOccupied.value[zone] && chipRowHeights.value[zone]) ||
+    PALETTE_CHIP_HEIGHT
+  );
+}
+
+// Wrapped, not run across the canvas: the left row as wide as the column it
+// sits over, the right as wide as the space beside the left column allows,
+// up to a width that holds all its chips on one line.
+const chipRowStyles = computed(() => ({
+  left: {
+    top: `${PALETTE_TOP}px`,
+    left: `${PALETTE_INSET}px`,
+    maxWidth: `${leftColumn.value}px`,
+  },
+  right: {
+    top: `${PALETTE_TOP}px`,
+    right: `${PALETTE_INSET}px`,
+    maxWidth: `${Math.max(
+      ZONE_MIN_WIDTH.right,
+      Math.min(
+        RIGHT_CHIP_ROW_MAX_WIDTH,
+        windowWidth.value - rightOfLeftColumn(leftColumn.value) - PALETTE_INSET,
+      ),
+    )}px`,
+  },
+}));
+
+// Where a zone's palettes start: below its row of chips, whether or not the
+// row has any just now.
+function columnTop(zone: TPaletteZone): number {
+  return PALETTE_TOP + chipRowHeight(zone) + STACK_GAP;
+}
+
+// Where the band the chip rows occupy ends: below whichever row is taller.
+// Everything that starts at the top of the canvas between or under the rows
+// (the Timelapse palette, the selection panels, the montage) starts here,
+// because on a narrow window either row can reach over it.
+const belowChipRows = computed(() =>
+  Math.max(columnTop("left"), columnTop("right")),
 );
 
-const layersPanelMaxHeight = computed(
-  () => `calc(100vh - ${layersPanelTop.value + COLUMN_BOTTOM_INSET}px)`,
+function maxHeightBelow(top: number): string {
+  return `calc(100vh - ${top + COLUMN_BOTTOM_INSET}px)`;
+}
+
+const rightColumnTop = computed(() => columnTop("right"));
+const rightColumnMaxHeight = computed(() =>
+  maxHeightBelow(rightColumnTop.value),
 );
 
-const toolsPanelMaxHeight = computed(
-  () => `calc(100vh - ${toolsPanelTop.value + COLUMN_BOTTOM_INSET}px)`,
+// Where each left palette sits: below the chip row and the shown palettes
+// that come before it in the user's order.
+const leftStack = computed(() => {
+  const stack = {} as Record<PanelId, { top: number; maxHeight: string }>;
+  let top = columnTop("left");
+  for (const id of panelLayout.arrangement.value.leftOrder) {
+    stack[id] = { top, maxHeight: maxHeightBelow(top) };
+    const height = leftPaletteHeights.value[id];
+    if (panelLayout.isVisible(id) && height) {
+      top += height + STACK_GAP;
+    }
+  }
+  return stack;
+});
+
+// Dropping a dragged left palette: it takes the place its center was carried
+// to among the palettes that are showing.
+function onLeftPaletteDrop(draggedId: PanelId, offsetY: number) {
+  const center = (id: PanelId) =>
+    leftStack.value[id].top + (leftPaletteHeights.value[id] ?? 0) / 2;
+  panelLayout.setLeftOrder(
+    leftOrderAfterDrop(
+      panelLayout.arrangement.value.leftOrder,
+      draggedId,
+      center(draggedId) + offsetY,
+      LEFT_PANEL_IDS.filter((id) => panelLayout.isVisible(id)).map((id) => ({
+        id,
+        center: center(id),
+      })),
+    ),
+  );
+}
+
+// --- Zone widths -------------------------------------------------------------
+//
+// Dragging a zone's inner edge resizes every palette in it. The width in the
+// arrangement is the remembered one; `draggedZoneWidths` is the drag in
+// progress, shown but not stored until the drop, so cancelling leaves no
+// trace. Both are clamped to the viewport where they are used.
+const draggedZoneWidths = ref<Partial<Record<TPaletteZone, number>>>({});
+
+function zoneWidth(zone: TPaletteZone): number | undefined {
+  return (
+    draggedZoneWidths.value[zone] ?? panelLayout.arrangement.value.widths[zone]
+  );
+}
+
+function leftPaletteWidth(defaultWidth: number): number {
+  return paletteWidth(
+    "left",
+    defaultWidth,
+    zoneWidth("left"),
+    windowWidth.value,
+  );
+}
+
+function rightPaletteWidth(defaultWidth: number): number {
+  return paletteWidth(
+    "right",
+    defaultWidth,
+    zoneWidth("right"),
+    windowWidth.value,
+  );
+}
+
+const leftColumn = computed(() =>
+  leftColumnWidth(zoneWidth("left"), windowWidth.value),
 );
+
+// Each registry palette's default width, for the width of an unresized zone.
+const PALETTE_DEFAULT_WIDTHS: Record<PanelId, number> = {
+  navigatorPanel: LEFT_COLUMN_PALETTE_WIDTHS.navigator,
+  layersPanel: LEFT_COLUMN_PALETTE_WIDTHS.layers,
+  toolsPanel: LEFT_COLUMN_PALETTE_WIDTHS.tools,
+  annotationPanel: RIGHT_PALETTE_WIDTHS.objectBrowser,
+  filtersPanel: RIGHT_PALETTE_WIDTHS.filters,
+  analysisPanel: RIGHT_PALETTE_WIDTHS.analysis,
+  transcriptsPanel: RIGHT_PALETTE_WIDTHS.transcripts,
+  snapshotPanel: RIGHT_PALETTE_WIDTHS.snapshots,
+  settingsPanel: RIGHT_PALETTE_WIDTHS.settings,
+};
+
+// What a resize of each zone starts from and may reach. The start is the
+// zone's width: its remembered one, or while it is unresized the widest
+// palette showing in it, so the first step toward "wider" never makes a
+// wider palette narrower.
+const zoneResizeRange = computed(() => {
+  const range = (zone: TPaletteZone) => {
+    const min = ZONE_MIN_WIDTH[zone];
+    const max = clampZoneWidth(zone, Infinity, windowWidth.value);
+    const stored = panelLayout.arrangement.value.widths[zone];
+    const showing = PANELS.filter(
+      (panel) => panel.zone === zone && panelLayout.isVisible(panel.id),
+    ).map((panel) => PALETTE_DEFAULT_WIDTHS[panel.id]);
+    return {
+      base:
+        stored === undefined
+          ? Math.max(min, ...showing)
+          : clampZoneWidth(zone, stored, windowWidth.value),
+      min,
+      max,
+    };
+  };
+  return { left: range("left"), right: range("right") };
+});
+
+// Each left palette's place among those showing, for its grip.
+const leftStackPositions = computed(() => {
+  const showing = panelLayout.arrangement.value.leftOrder.filter((id) =>
+    panelLayout.isVisible(id),
+  );
+  return Object.fromEntries(
+    LEFT_PANEL_IDS.map((id) => [
+      id,
+      { position: showing.indexOf(id) + 1, count: showing.length },
+    ]),
+  ) as Record<PanelId, { position: number; count: number }>;
+});
+
+function endZoneDrag(zone: TPaletteZone) {
+  const widths = { ...draggedZoneWidths.value };
+  delete widths[zone];
+  draggedZoneWidths.value = widths;
+}
+
+// The props and listeners every registry palette takes for
+// resizing its zone and (on the left) reordering. Built once: an object made
+// in the template would be new on every render and re-render each palette.
+function paletteChromeFor(id: PanelId) {
+  const zone = PANEL_BY_ID[id].zone;
+  // The edge facing the canvas.
+  const resizeEdge: "left" | "right" = zone === "left" ? "right" : "left";
+  return {
+    panelId: id,
+    tourDoneAnchor: PANEL_TOUR_HOOKS[id]?.anchor,
+    resizeEdge,
+    reorderable: zone === "left",
+    onResize: (width: number) => {
+      draggedZoneWidths.value = {
+        ...draggedZoneWidths.value,
+        [zone]: clampZoneWidth(zone, width, windowWidth.value),
+      };
+    },
+    onResizeEnd: (width: number) => {
+      panelLayout.setZoneWidth(
+        zone,
+        clampZoneWidth(zone, width, windowWidth.value),
+      );
+      endZoneDrag(zone);
+    },
+    onResizeCancel: () => endZoneDrag(zone),
+    onResizeReset: () => panelLayout.setZoneWidth(zone, null),
+    onReorderEnd: (offsetY: number) => onLeftPaletteDrop(id, offsetY),
+    onReorderStep: (direction: -1 | 1) =>
+      panelLayout.setLeftOrder(
+        leftOrderAfterStep(
+          panelLayout.arrangement.value.leftOrder,
+          id,
+          direction,
+          LEFT_PANEL_IDS.filter((other) => panelLayout.isVisible(other)),
+        ),
+      ),
+  };
+}
+const paletteChrome = {} as Record<
+  PanelId,
+  ReturnType<typeof paletteChromeFor>
+>;
+for (const id of PANEL_IDS) {
+  paletteChrome[id] = paletteChromeFor(id);
+}
 
 // The left palettes live inside a v-if, so attach their observers once they
 // mount (and tear down when leaving the dataset view).
@@ -1158,30 +1621,41 @@ const leftPalettesMounted = computed(
     !!store.dataset && routeName.value === "datasetview" && !embedMode.value,
 );
 
+function setLeftPaletteHeight(id: PanelId, height: number) {
+  leftPaletteHeights.value = { ...leftPaletteHeights.value, [id]: height };
+}
+
+function disconnectLeftPaletteObservers() {
+  for (const observer of leftResizeObservers) {
+    observer.disconnect();
+  }
+  leftResizeObservers = [];
+  timelapseResizeObserver?.disconnect();
+  timelapseResizeObserver = null;
+}
+
 function setupLeftPaletteObservers() {
-  navigatorResizeObserver?.disconnect();
-  layersResizeObserver?.disconnect();
-  navigatorResizeObserver = observePaletteHeight(
-    navigatorPaletteRef,
-    navigatorHeight,
-  );
-  layersResizeObserver = observePaletteHeight(layersPaletteRef, layersHeight);
+  disconnectLeftPaletteObservers();
+  for (const id of LEFT_PANEL_IDS) {
+    const observer = observePaletteHeight(leftPaletteRefs[id]!, (height) =>
+      setLeftPaletteHeight(id, height),
+    );
+    if (observer) {
+      leftResizeObservers.push(observer);
+    }
+  }
   timelapseResizeObserver = observePaletteHeight(
     timelapsePaletteRef,
-    timelapsePaletteHeight,
+    (height) => {
+      timelapsePaletteHeight.value = height;
+    },
   );
 }
 
 function teardownLeftPaletteObservers() {
-  navigatorResizeObserver?.disconnect();
-  layersResizeObserver?.disconnect();
-  timelapseResizeObserver?.disconnect();
-  navigatorResizeObserver = null;
-  layersResizeObserver = null;
-  timelapseResizeObserver = null;
+  disconnectLeftPaletteObservers();
   timelapsePaletteHeight.value = 0;
-  navigatorHeight.value = 0;
-  layersHeight.value = 0;
+  leftPaletteHeights.value = {};
 }
 
 function toggleHelpDialogUsingHotkey() {
@@ -1213,6 +1687,17 @@ const appHotkeys: IHotkey[] = [
       description: "Command palette: search every command",
     },
   },
+  {
+    bind: HIDE_PANELS_BINDING,
+    handler: (_el: HTMLElement, event?: KeyboardEvent) => {
+      event?.preventDefault();
+      panelLayout.toggleChromeHidden();
+    },
+    data: {
+      section: "Global",
+      description: HIDE_PANELS_DESCRIPTION,
+    },
+  },
 ];
 
 function fetchConfig() {
@@ -1241,21 +1726,10 @@ function onShowInList() {
   }
 }
 
-const routeName = computed(() =>
-  route.name === "shared" || route.name === "embed"
-    ? "datasetview"
-    : route.name,
-);
-const embedMode = computed(
-  () => route.name === "embed" || route.query.embed === "1",
-);
-
-const isDatasetView = computed(() => routeName.value === "datasetview");
-
 const activeFilterCount = computed(() => filterStore.activeFilterCount);
 
 const filtersTooltip = computed(() => {
-  const base = "Filter objects by tags, scope, properties, ID and region";
+  const base = PANEL_BY_ID.filtersPanel.description;
   const count = activeFilterCount.value;
   if (count === 0) {
     return base;
@@ -1263,10 +1737,10 @@ const filtersTooltip = computed(() => {
   return `${base} (${count} active filter${count === 1 ? "" : "s"})`;
 });
 
-// The aria-label stays terse to match the sibling palette buttons ("Object
-// list", "Snapshots", "Settings"); the descriptive sentence belongs in the
-// hover tooltip. It carries the count because aria-label overrides the
-// button's content, which would otherwise hide the badge from assistive tech.
+// The chip's accessible label starts with its visible title, like the other
+// chips', and leaves the descriptive sentence to the tooltip. It carries the
+// count because aria-label overrides the chip's content, which would
+// otherwise hide the badge from assistive tech.
 const filtersAriaLabel = computed(() =>
   activeFilterCount.value === 0
     ? "Filters"
@@ -1274,16 +1748,14 @@ const filtersAriaLabel = computed(() =>
 );
 
 // Gates are counted separately from activeFilterCount: each badge counts what
-// its own panel shows, so the Filters button never claims a filter its panel
+// its own panel shows, so the Filters chip never claims a filter its panel
 // cannot display (and vice versa).
 const activeAnalysisGateCount = computed(
   () => filterStore.activeAnalysisGateCount,
 );
 
 const analysisTooltip = computed(() => {
-  const base =
-    "Analysis: plot object properties against each other and " +
-    "select the objects to keep";
+  const base = PANEL_BY_ID.analysisPanel.description;
   const count = activeAnalysisGateCount.value;
   if (count === 0) {
     return base;
@@ -1291,13 +1763,11 @@ const analysisTooltip = computed(() => {
   return `${base} (${count} gate${count === 1 ? "" : "s"} active)`;
 });
 
-// Terse like the sibling palette buttons, but carrying the count: aria-label
-// overrides the button's content, which would otherwise hide the badge from
-// assistive tech.
+// As for Filters: the visible title, then what the count means.
 const analysisAriaLabel = computed(() =>
   activeAnalysisGateCount.value === 0
-    ? "Analysis plots"
-    : `Analysis plots (${activeAnalysisGateCount.value} gate${
+    ? "Analysis"
+    : `Analysis (${activeAnalysisGateCount.value} gate${
         activeAnalysisGateCount.value === 1 ? "" : "s"
       } active)`,
 );
@@ -1338,6 +1808,9 @@ const filteredToursByCategory = computed(
 );
 
 function handleTourStart(tourId: string) {
+  // A tour points at panels and their chips; under "hide all panels" there
+  // is neither to point at.
+  showPanels();
   const tour = availableTours.value[tourId];
   if (tour && tour.entryPoint !== routeName.value) {
     router.push({ name: tour.entryPoint });
@@ -1384,14 +1857,30 @@ const { inViewer } = viewerContext;
 
 useCommandProvider(
   panelCommands(viewerContext, {
-    isOpen: (id) => paletteOpen[id].value,
+    isOpen: panelLayout.isVisible,
     toggle: togglePalette,
-    // Same rule as the Transcripts app-bar button's v-if.
-    isAvailable: (id) =>
-      id !== "transcriptsPanel" ||
-      transcriptsStore.hasTranscripts ||
-      !!transcriptsStore.error ||
-      transcriptsStore.loading,
+    isAvailable: isPanelAvailable,
+  }),
+);
+
+useCommandProvider(
+  layoutCommands(viewerContext, {
+    applyOpenSet: panelLayout.applyOpenSet,
+    reset: panelLayout.reset,
+    resetArrangement: panelLayout.resetArrangement,
+    hasCollectionDefault: () => !!viewedConfiguration.value?.defaultPanelLayout,
+    // The store action writes to `store.configuration`, so only once that is
+    // the collection on screen.
+    canSaveCollectionDefault: () =>
+      store.isLoggedIn && !!viewedConfiguration.value,
+    // Only which panels are open: widths and order are each person's own.
+    // Read from the layout, not from what is on screen, so "hide all panels"
+    // does not save an empty default.
+    saveCollectionDefault: () =>
+      store.saveDefaultPanelLayout(
+        layoutWithOpenSet(panelLayout.layout.value.open),
+      ),
+    clearCollectionDefault: () => store.saveDefaultPanelLayout(null),
   }),
 );
 
@@ -1487,6 +1976,27 @@ useCommand(() => [
     },
   },
   {
+    id: "panel.toggleAll",
+    title: panelLayout.chromeHidden.value
+      ? "Show all panels"
+      : "Hide all panels",
+    group: "Panels",
+    // The verb of what running it will do, as for a single panel.
+    keywords: [
+      "palettes",
+      "chrome",
+      "canvas",
+      "full image",
+      panelLayout.chromeHidden.value ? "show" : "hide",
+    ],
+    icon: panelLayout.chromeHidden.value
+      ? "mdi-eye-outline"
+      : "mdi-eye-off-outline",
+    hotkey: boundHotkey(HIDE_PANELS_BINDING, HIDE_PANELS_DESCRIPTION),
+    enabled: inViewer,
+    run: panelLayout.toggleChromeHidden,
+  },
+  {
     id: "ai.togglePanel",
     title: aiPanelOpen.value ? "Close Nimbus AI panel" : "Open Nimbus AI panel",
     group: "Actions",
@@ -1501,21 +2011,10 @@ function annotationPanelChanged() {
   store.setIsAnnotationPanelOpen(annotationPanel.value);
 }
 
-function datasetChanged() {
-  if (routeName.value !== "datasetview" || embedMode.value) {
-    closeAllPalettes();
-  } else {
-    // Each palette marked `defaultOpen` in the registry (the left stack) opens
-    // on every entry.
-    for (const panel of PANELS) {
-      if (panel.defaultOpen) {
-        paletteOpen[panel.id].value = true;
-      }
-    }
-  }
-}
-
-watch(annotationPanel, () => annotationPanelChanged());
+// Immediate: a layout restored with the browser open is already open when
+// this watcher is created, and the store would otherwise keep saying closed
+// until the first toggle.
+watch(annotationPanel, () => annotationPanelChanged(), { immediate: true });
 
 // The reverse direction, so `store.openAnnotationBrowserTab` can reach the
 // palette registry from a component that has no access to it (the Timelapse
@@ -1557,11 +2056,6 @@ watch(
   },
 );
 
-// One watcher owns route defaults: a separate embed-close watcher can run
-// before route initialization reopens the defaults. Watch embed as well because
-// shared and embed normalize to the same viewer route name.
-watch([routeName, embedMode], datasetChanged, { immediate: true });
-
 // Left palettes mount/unmount with the dataset view, so (re)attach their
 // height observers whenever they appear.
 watch(
@@ -1586,32 +2080,46 @@ watch(
       return;
     }
     await nextTick();
-    const navEl = navigatorPaletteRef.value?.rootEl;
-    const layEl = layersPaletteRef.value?.rootEl;
-    if (navEl) {
-      navigatorHeight.value = navEl.offsetHeight;
-    }
-    if (layEl) {
-      layersHeight.value = layEl.offsetHeight;
+    for (const id of LEFT_PANEL_IDS) {
+      const el = leftPaletteRefs[id]?.value?.rootEl;
+      if (el) {
+        setLeftPaletteHeight(id, el.offsetHeight);
+      }
     }
   },
 );
 
+// A tour step anchored inside a palette that is closed or hidden
+// asks for it (plugins/tour.ts). Before layouts were remembered every visit
+// opened the left stack, so tours could assume their anchors were showing.
+function revealPanelForTour(panelId: unknown) {
+  if (isPanelId(panelId)) {
+    openPalette(panelId);
+  } else if (panelsHidden.value) {
+    // Not one of the registry's palettes: all that can be hiding it from
+    // here is "hide all panels".
+    panelLayout.toggleChromeHidden();
+  }
+}
+
 onMounted(() => {
+  tourBus.on(TOUR_REVEAL_PANEL_EVENT, revealPanelForTour);
   fetchConfig();
   loadAllTours();
   window.addEventListener("resize", updateWindowWidth);
   updateWindowWidth();
 
   // The Filters palette is always mounted, so observe it directly.
-  filtersResizeObserver = observePaletteHeight(
-    filtersPaletteRef,
-    filtersHeight,
-  );
+  filtersResizeObserver = observePaletteHeight(filtersPaletteRef, (height) => {
+    filtersHeight.value = height;
+  });
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", updateWindowWidth);
+  tourBus.off(TOUR_REVEAL_PANEL_EVENT, revealPanelForTour);
+  unregisterPanelLayoutController();
+  chipRowObserver?.disconnect();
   filtersResizeObserver?.disconnect();
   teardownLeftPaletteObservers();
 });
@@ -1650,7 +2158,13 @@ defineExpose({
   goHome,
   togglePalette,
   openPalette,
-  closeAllPalettes,
+  panelChips,
+  belowChipRows,
+  rightEdgeClearance,
+  timelapsePaletteShown,
+  leftStack,
+  rightColumnTop,
+  leftColumn,
   toggleHelpDialogUsingHotkey,
   handleTourStart,
   goToNewDataset,
@@ -1664,11 +2178,10 @@ defineExpose({
   flex: 0 0 auto;
 }
 
-/* Base tone of the palette cluster, deliberately theme-independent. The badge
-   below reuses it opaque as a separating ring, so the two must stay in sync. */
+/* Base tone of the palette cluster, deliberately theme-independent. */
 $palette-cluster-tone: #0f1217;
 
-/* Cluster of palette-toggle icon buttons in the app bar.
+/* Cluster of view-toggle icon buttons (3D, montage) in the app bar.
    Pill-shaped group with hairline border; each button is a 32px circle. */
 .palette-cluster {
   display: inline-flex;
@@ -1773,32 +2286,75 @@ $palette-cluster-tone: #0f1217;
   }
 }
 
-/* Count badge pinned to the top-right of a palette-toggle button (used by
-   Filters and Analysis to surface how much each panel is narrowing the object
-   set while it is closed; each badge counts only its own panel's rows).
-   The ring reuses the cluster's own tone, opaque, so the count reads as
-   separate from the icon glyph it overlaps. It stays within the cluster's 4px
-   padding and its 2px inter-button gap, so it never covers a neighbour. */
-.palette-ibtn-badge {
-  position: absolute;
-  top: -1px;
-  right: -1px;
-  box-sizing: border-box;
+// Closed panels: a row of chips at the top of a zone, where the zone's first
+// palette would be. The row wraps within its max-width (set inline).
+.palette-chips {
+  position: fixed;
+  z-index: 1006; // with the palettes, above the app bar
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+
+  // Right-aligned lines, still read left to right in registry order.
+  &.zone-right {
+    justify-content: flex-end;
+  }
+}
+
+.palette-chip {
+  height: 28px; // PALETTE_CHIP_HEIGHT in paletteGeometry.ts
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--nimbus-border, rgba(255, 255, 255, 0.08));
+  border-radius: 14px;
+  background: var(--nimbus-glass-bg);
+  backdrop-filter: var(--nimbus-glass-filter);
+  -webkit-backdrop-filter: var(--nimbus-glass-filter);
+  color: var(--nimbus-text-secondary, #d0d6e0);
+  font-family: var(--nimbus-font);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+
+  &:hover {
+    background: rgba(var(--v-theme-primary), 0.18);
+    color: rgb(var(--v-theme-primary));
+  }
+}
+
+// The accent for a panel that holds something new: a dot, not motion, so it
+// can sit there until the user looks without pulling at the eye.
+.palette-chip.relevant::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgb(var(--v-theme-warning));
+  box-shadow: 0 0 0 2px rgba(var(--v-theme-warning), 0.25);
+}
+
+// What a closed panel is doing (Filters and Analysis: how many filters or
+// gates narrow the object set), so it stays visible with the panel closed.
+.palette-chip-badge {
   min-width: 15px;
   height: 15px;
-  padding: 0 3px;
-  border: 1.5px solid $palette-cluster-tone;
+  padding: 0 4px;
   border-radius: 8px;
   background: rgb(var(--v-theme-primary));
   color: rgb(var(--v-theme-on-primary));
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-family: var(--nimbus-font);
   font-size: 9px;
   font-weight: 700;
   line-height: 1;
-  pointer-events: none;
 }
 </style>
 <style lang="scss">

@@ -932,10 +932,17 @@ export default class GirderAPI {
     base: IDatasetConfigurationBase,
   ): Promise<IDatasetConfiguration> {
     // Create metadata for the configuration item
+    // Without the keys that are null: a null value is how an update clears a
+    // key (the server drops it), and creating a document does not go through
+    // that, so it would be stored as a null key.
     const metadata: { [key: string]: any } = {
       subtype: "contrastConfiguration",
       compatibility: {},
-      ...toConfiguationMetadata(base),
+      ...Object.fromEntries(
+        Object.entries(toConfiguationMetadata(base)).filter(
+          ([, value]) => value != null,
+        ),
+      ),
     };
 
     // Create the item

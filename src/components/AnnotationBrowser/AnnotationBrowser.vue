@@ -30,8 +30,13 @@
       <v-window-item value="measurements" class="browser-window-item">
         <!-- is-active gates rendering: once opened the item stays mounted
              (hidden, not unmounted), and a hidden tab must not re-render on
-             every annotation/property change. -->
-        <measurements-tab :is-active="activeTab === 'measurements'" />
+             every annotation/property change. Hidden includes the palette
+             being closed: the tab is remembered between visits, so without
+             `visible` a remembered tab would do its work from page load in a
+             palette nobody has opened. -->
+        <measurements-tab
+          :is-active="visible && activeTab === 'measurements'"
+        />
       </v-window-item>
       <v-window-item value="connections" class="browser-window-item">
         <!-- is-active drives the reveal-on-show retry: this component mounts
@@ -39,7 +44,7 @@
              a viewer click made while the tab was never opened — or while it
              was hidden and unlaid-out — must be re-revealed when it shows. -->
         <connection-list
-          :is-active="activeTab === 'connections'"
+          :is-active="visible && activeTab === 'connections'"
           @clickedTag="clickedTag"
         />
       </v-window-item>
@@ -48,14 +53,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, watch } from "vue";
 import AnnotationList from "@/components/AnnotationBrowser/AnnotationList.vue";
 import ConnectionList from "@/components/AnnotationBrowser/ConnectionList.vue";
 import MeasurementsTab from "@/components/AnnotationBrowser/MeasurementsTab.vue";
 import store from "@/store";
 import annotationStore from "@/store/annotation";
 import filterStore from "@/store/filters";
-import { TAnnotationBrowserTab } from "@/store/model";
+import { ANNOTATION_BROWSER_TABS, TAnnotationBrowserTab } from "@/store/model";
+import { usePersistedUiState } from "@/utils/uiState";
 
 // Whether the palette is open. Its content stays mounted while closed
 // (display: none), so the server-backed Objects list uses this to skip
@@ -83,6 +89,33 @@ const connectionCount = computed(
 function clickedTag(tag: string) {
   filterStore.addTagToTagFilter(tag);
 }
+
+// The tab is remembered per user between visits. The store stays the one
+// live value: this only seeds it (at mount, and for a user who logs in) and
+// records what it becomes, whoever changes it.
+const rememberedTab = usePersistedUiState<TAnnotationBrowserTab>(
+  "objectBrowser.tab",
+  () => store.annotationBrowserTab,
+  (raw) =>
+    ANNOTATION_BROWSER_TABS.includes(raw as TAnnotationBrowserTab)
+      ? (raw as TAnnotationBrowserTab)
+      : null,
+);
+watch(
+  rememberedTab,
+  (tab) => {
+    if (tab !== store.annotationBrowserTab) {
+      store.setAnnotationBrowserTab(tab);
+    }
+  },
+  { immediate: true },
+);
+watch(
+  () => store.annotationBrowserTab,
+  (tab) => {
+    rememberedTab.value = tab;
+  },
+);
 
 defineExpose({ clickedTag, activeTab, connectionCount, objectCount });
 </script>

@@ -1,6 +1,7 @@
 # Analysis panel: scatter plots and sequential gating
 
-The **Analysis** palette (scatter-plot icon in the top bar) plots any two
+The **Analysis** palette (its **Analysis** chip at the top right of the
+viewer while it is closed) plots any two
 object measurements against each other and lets the user keep a subpopulation
 by drawing around it — flow-cytometry-style gating, applied to image objects.
 
@@ -27,7 +28,7 @@ points a user just drew around stay visible.
 ## Where gates apply
 
 A gate is a filter like any other. Everything narrows together: the image
-viewer, the Objects tab, counts, and exports. The Analysis button carries a
+viewer, the Objects tab, counts, and exports. The Analysis chip carries a
 badge with the number of active gates, separate from the Filters badge —
 each badge counts only what its own panel can show.
 

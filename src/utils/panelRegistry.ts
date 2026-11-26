@@ -29,11 +29,33 @@ export type PanelId =
 
 export type PanelZone = "left" | "right";
 
+// The facts a panel's status depends on. Small and cheap on purpose: these
+// are read reactively on every change, so they are counts and flags the
+// stores already keep, never something computed over the annotations.
+export interface IPanelContext {
+  // Filters narrowing the object set, as the Filters panel shows them.
+  activeFilterCount: number;
+  // Gates narrowing the object set, as the Analysis panel shows them.
+  activeAnalysisGateCount: number;
+  // The dataset has a transcript store, or the lookup is running or failed
+  // (so the failure can be read and retried from the panel).
+  transcriptsReachable: boolean;
+  // A job finished successfully while the Object Browser was not showing,
+  // so it holds objects or measurements the user has not seen. Cleared when
+  // the browser is shown and when the dataset changes. Only for a job on the
+  // dataset that is open when it finishes: one that finishes while another
+  // dataset is open raises nothing, there or on return (its results are in
+  // the list like any others by then).
+  hasUnseenJobResults: boolean;
+}
+
 export interface IPanelDefinition {
   id: PanelId;
-  // Same string the FloatingPalette header shows.
+  // Same string the FloatingPalette header and the panel's chip show.
   title: string;
-  // The app-bar toggle's mdi icon.
+  // What the panel is for, in a sentence: the chip's tooltip.
+  description: string;
+  // The chip's mdi icon.
   icon: string;
   zone: PanelZone;
   role: "primary" | "companion";
@@ -44,6 +66,27 @@ export interface IPanelDefinition {
   defaultOpen: boolean;
   // What users call the panel; the "Open X" command's aliases.
   aliases: string[];
+  // A short status shown on the panel's chip, so what a closed panel is
+  // doing stays visible. Null: nothing to show.
+  badge?: (context: IPanelContext) => string | null;
+  // Whether the panel exists for the open dataset. Omitted: always. An
+  // unavailable panel is hidden, with its chip and command; the layout that
+  // says it is open is left alone.
+  available?: (context: IPanelContext) => boolean;
+  // Whether the panel holds something new that the user has not looked at.
+  // While true and the panel is not on screen, its chip carries an
+  // accent. This only points; nothing opens by itself. Keep the rules few
+  // and causal (the user did something, and its result is in this panel):
+  // an accent that is often on is an accent nobody reads.
+  relevant?: (context: IPanelContext) => boolean;
+}
+
+/** A count as badge text: nothing for zero, capped so it fits the chip. */
+export function countBadge(count: number): string | null {
+  if (count <= 0) {
+    return null;
+  }
+  return count > 9 ? "9+" : `${count}`;
 }
 
 export const PANELS: readonly IPanelDefinition[] = [
@@ -51,6 +94,7 @@ export const PANELS: readonly IPanelDefinition[] = [
   {
     id: "navigatorPanel",
     title: "Navigator",
+    description: "XY / Z / Time and the timelapse mode toggle",
     icon: "mdi-axis-arrow",
     zone: "left",
     role: "primary",
@@ -60,6 +104,7 @@ export const PANELS: readonly IPanelDefinition[] = [
   {
     id: "layersPanel",
     title: "Layers",
+    description: "Channels, blending and layer mode",
     icon: "mdi-layers",
     zone: "left",
     role: "primary",
@@ -69,16 +114,19 @@ export const PANELS: readonly IPanelDefinition[] = [
   {
     id: "toolsPanel",
     title: "Tools",
+    description: "Create and configure annotation tools",
     icon: "mdi-tools",
     zone: "left",
     role: "primary",
     defaultOpen: true,
     aliases: ["toolset"],
   },
-  // Right column, in app-bar order.
+  // Right column, in chip order.
   {
     id: "annotationPanel",
     title: "Object Browser",
+    description:
+      "List of all objects in the dataset, including their properties, and various actions on them",
     icon: "mdi-format-list-bulleted-square",
     zone: "right",
     role: "primary",
@@ -91,6 +139,9 @@ export const PANELS: readonly IPanelDefinition[] = [
       "list",
       "table",
     ],
+    // The one accent so far: a worker or measurement the user started has
+    // finished, and its results are listed here.
+    relevant: (context) => context.hasUnseenJobResults,
   },
   // Filters hosts alongside both the Object Browser and the Analysis panel:
   // the Analysis panel's own guidance above the cap is "narrow the filters",
@@ -98,36 +149,49 @@ export const PANELS: readonly IPanelDefinition[] = [
   {
     id: "filtersPanel",
     title: "Filters",
+    description: "Filter objects by tags, scope, properties, ID and region",
     icon: "mdi-filter-variant",
     zone: "right",
     role: "companion",
     hosts: ["annotationPanel", "analysisPanel"],
     defaultOpen: false,
     aliases: ["filter"],
+    // Filters apply with the panel closed, so the count is how the user can
+    // tell the object set is narrowed.
+    badge: (context) => countBadge(context.activeFilterCount),
   },
   {
     id: "analysisPanel",
     title: "Analysis",
+    description:
+      "Plot object properties against each other and select the objects to keep",
     icon: "mdi-chart-scatter-plot",
     zone: "right",
     role: "primary",
     defaultOpen: false,
     aliases: ["measurements", "properties", "plots", "charts"],
+    // Gates also apply with the panel closed and are restored from the saved
+    // configuration. The Filters badge cannot cover them: each badge counts
+    // only what its own panel can show.
+    badge: (context) => countBadge(context.activeAnalysisGateCount),
   },
-  // Only offered for a dataset with a registered transcript store (App.vue
-  // gates the button and the command).
+  // Only offered for a dataset with a registered transcript store.
   {
     id: "transcriptsPanel",
     title: "Transcripts",
+    description: "Show transcripts of chosen genes on the image",
     icon: "mdi-dots-hexagon",
     zone: "right",
     role: "primary",
     defaultOpen: false,
     aliases: ["genes", "spatial"],
+    available: (context) => context.transcriptsReachable,
   },
   {
     id: "snapshotPanel",
     title: "Snapshots",
+    description:
+      "Snapshots for bookmarking and downloading cropped regions in your dataset",
     icon: "mdi-camera-outline",
     zone: "right",
     role: "primary",
@@ -137,11 +201,58 @@ export const PANELS: readonly IPanelDefinition[] = [
   {
     id: "settingsPanel",
     title: "Settings",
+    description: "Image and object display settings",
     icon: "mdi-tune",
     zone: "right",
     role: "primary",
     defaultOpen: false,
     aliases: ["preferences", "options", "display settings"],
+  },
+];
+
+// A workspace is a named set of open panels for one kind of work, applied in
+// one step from the command palette. It names only what is open: widths and
+// the left stack's order stay the user's own. Each set must already satisfy
+// the placement rules below (at most one right-zone primary, Filters only
+// with a host); panelRegistry.test.ts checks that.
+export interface IWorkspace {
+  id: string;
+  title: string;
+  // What it is for, shown under the command.
+  description: string;
+  open: PanelId[];
+  aliases: string[];
+}
+
+export const WORKSPACES: readonly IWorkspace[] = [
+  {
+    id: "annotate",
+    title: "Annotate",
+    description: "Navigator, Layers and Tools, for drawing and segmenting",
+    open: ["navigatorPanel", "layersPanel", "toolsPanel"],
+    aliases: ["draw", "segment", "default layout"],
+  },
+  {
+    id: "analyze",
+    title: "Analyze",
+    description:
+      "Layers, Filters and the Object Browser, for working through objects",
+    open: ["layersPanel", "filtersPanel", "annotationPanel"],
+    aliases: ["objects", "table", "browse objects"],
+  },
+  {
+    id: "plot",
+    title: "Plot",
+    description: "Layers, Filters and Analysis, for plots and gates",
+    open: ["layersPanel", "filtersPanel", "analysisPanel"],
+    aliases: ["scatter", "histogram", "gate"],
+  },
+  {
+    id: "review",
+    title: "Review",
+    description: "Navigator and Snapshots, for stepping through saved views",
+    open: ["navigatorPanel", "snapshotPanel"],
+    aliases: ["present", "bookmarks"],
   },
 ];
 
@@ -151,7 +262,7 @@ const PANELS_BY_ID = new Map<PanelId, IPanelDefinition>(
 
 /**
  * Each panel's definition by id, for templates: App.vue binds the palette
- * titles and app-bar toggle icons from here, so the "Open X" command and the
+ * titles and the chips from here, so the "Open X" command, the chip and the
  * palette header can't drift apart.
  */
 export const PANEL_BY_ID = Object.fromEntries(PANELS_BY_ID) as Readonly<
@@ -159,6 +270,28 @@ export const PANEL_BY_ID = Object.fromEntries(PANELS_BY_ID) as Readonly<
 >;
 
 export const PANEL_IDS: readonly PanelId[] = PANELS.map((panel) => panel.id);
+
+/**
+ * Whether `value` names a panel. Use this, not `value in PANEL_BY_ID`, for
+ * anything that did not come from the registry (stored state, a tool's
+ * input, an event payload): `in` is also true for names every object
+ * inherits, such as "constructor".
+ */
+export function isPanelId(value: unknown): value is PanelId {
+  return typeof value === "string" && PANELS_BY_ID.has(value as PanelId);
+}
+
+export function panelBadge(id: PanelId, context: IPanelContext): string | null {
+  return PANELS_BY_ID.get(id)?.badge?.(context) ?? null;
+}
+
+export function isPanelRelevant(id: PanelId, context: IPanelContext): boolean {
+  return PANELS_BY_ID.get(id)?.relevant?.(context) ?? false;
+}
+
+export function isPanelAvailable(id: PanelId, context: IPanelContext): boolean {
+  return PANELS_BY_ID.get(id)?.available?.(context) ?? true;
+}
 
 /**
  * Pure: the open set that results from opening `id` in `open`, with the

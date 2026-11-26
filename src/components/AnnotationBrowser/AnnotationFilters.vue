@@ -135,6 +135,7 @@ import PropertyFilterHistogram from "@/components/AnnotationBrowser/AnnotationPr
 import RoiFilters from "@/components/AnnotationBrowser/ROIFilters.vue";
 import AnnotationIdFilters from "@/components/AnnotationBrowser/AnnotationIdFilters.vue";
 import PropertyPicker from "@/components/PropertyPicker.vue";
+import { asStoredBoolean, usePersistedUiState } from "@/utils/uiState";
 
 const props = withDefaults(
   defineProps<{
@@ -145,7 +146,13 @@ const props = withDefaults(
   { visible: true },
 );
 
-const advancedOpen = ref(false);
+// Remembered between visits. (Property values is not: it opens itself
+// whenever filters arrive, below, so a remembered "closed" would not last.)
+const advancedOpen = usePersistedUiState(
+  "filters.advancedOpen",
+  () => false,
+  asStoredBoolean,
+);
 const propertyValuesOpen = ref(filterStore.filterPaths.length > 0);
 
 // Expand Property values when a filter is added from anywhere else (the

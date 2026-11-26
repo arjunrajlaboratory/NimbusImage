@@ -88,6 +88,7 @@ const VIEW_STATE_TOOLS = new Set([
   "set_layer_visibility",
   "set_display_options",
   "set_view_mode",
+  "set_panels",
   "select_annotations",
   "set_annotation_filter",
   "select_tool",

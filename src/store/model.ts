@@ -1,6 +1,7 @@
 import { IGirderItem, IGirderFolder, IUPennCollection } from "@/girder";
 import type { ITileHistogram } from "./images";
 import type { PanelId } from "@/utils/panelRegistry";
+import type { IPanelLayout } from "@/utils/panelLayout";
 interface IObject<Values = any> {
   [key: string]: Values;
 }
@@ -463,7 +464,12 @@ export type TLayerMode = "single" | "multiple" | "unroll";
 export type TTimelapseTrackColoring = "track" | "uniform";
 
 /** Which tab the Object Browser is showing. */
-export type TAnnotationBrowserTab = "objects" | "measurements" | "connections";
+export const ANNOTATION_BROWSER_TABS = [
+  "objects",
+  "measurements",
+  "connections",
+] as const;
+export type TAnnotationBrowserTab = (typeof ANNOTATION_BROWSER_TABS)[number];
 
 /**
  * Palettes that a component with no access to App.vue's open/closed refs may
@@ -677,6 +683,12 @@ export interface IDatasetConfigurationBase {
   // dataset absent from the map has no property coloring. Optional for
   // compatibility with configurations created before this was persisted.
   colorByProperty?: TColorByPropertyByDataset;
+  // The panels someone opening this collection for the first time starts
+  // with. Set only by the explicit "Save panel layout as collection default"
+  // command, never as a side effect of opening or closing panels: each
+  // person's own layout is kept in their browser (utils/usePanelLayout).
+  // Null or absent: the app's defaults.
+  defaultPanelLayout?: IPanelLayout | null;
 }
 
 export interface IDatasetConfiguration extends IDatasetConfigurationBase {
@@ -2618,6 +2630,12 @@ export type TJobType =
 export interface IComputeJobBase {
   jobId: string;
   datasetId: string | null;
+  // The job adds objects or measurements to the dataset: what the Object
+  // Browser lists. Set by the stores that run annotation workers and
+  // property computations; not by jobs that only prepare something (worker
+  // interfaces, previews, caches, uploads, publishing). When such a job
+  // succeeds with the Object Browser not showing, its toggle is accented.
+  leavesResults?: boolean;
   eventCallback?: (data: IJobEventData) => void;
   errorCallback?: (data: IJobEventData) => void;
 }
@@ -3029,6 +3047,7 @@ export function exampleConfigurationBase(): IDatasetConfigurationBase {
       propertyFilters: [],
     },
     colorByProperty: {},
+    defaultPanelLayout: null,
   };
 }
 

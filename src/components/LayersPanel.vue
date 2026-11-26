@@ -71,12 +71,24 @@
 </style>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, provide } from "vue";
 import DisplayLayers from "@/components/DisplayLayers.vue";
+import { PANEL_VISIBLE_KEY } from "@/utils/panelVisibility";
 import store from "@/store";
 import { TLayerMode } from "@/store/model";
 import { useCommand } from "@/commands/registry";
 import { ICommand } from "@/commands/types";
+
+// Whether the palette is on screen. Its content stays mounted while it is
+// not, so the rows read this before restoring a remembered expanded state
+// (an expanded row requests its layer's histogram on every frame change).
+const props = withDefaults(defineProps<{ visible?: boolean }>(), {
+  visible: true,
+});
+provide(
+  PANEL_VISIBLE_KEY,
+  computed(() => props.visible),
+);
 
 const layerMode = computed({
   get: () => store.layerMode,

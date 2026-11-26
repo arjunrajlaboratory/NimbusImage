@@ -28,7 +28,7 @@ Customize visualization with flexible layer controls:
 - Rename layers for clearer organization
 
 **Custom Color Preferences**:
-- Set your default channel colors via the Settings panel (gear icon in the top bar) → "Customize default channel colors"
+- Set your default channel colors via the Settings panel (its chip at the top right of the viewer) → "Customize default channel colors"
 - Custom colors automatically apply to new datasets
 - Preferences are saved to your account and persist across sessions
 - Override on a per-dataset basis when needed
@@ -127,7 +127,7 @@ Create, manage, and export visual bookmarks:
 
 **Creating Snapshots**:
 1. Navigate to desired view and adjust contrast
-2. Open Snapshots tab in top bar
+2. Open Snapshots (its chip at the top right of the viewer)
 3. Position red frame around region of interest
    - "Set frame to current viewport" captures current view
    - "Set frame to maximum" includes entire field

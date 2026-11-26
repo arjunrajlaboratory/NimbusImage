@@ -297,7 +297,10 @@ onBeforeUnmount(() => {
   bottom: 20px;
   right: 20px;
   width: 520px;
-  height: 680px;
+  /* Never over the rows of panel chips at the top of the viewer: on a short
+     window a 680px panel reached up over the right row, and the chips are
+     the only pointer control for their panels. */
+  height: min(680px, calc(100vh - 28px - var(--nimbus-below-chip-rows, 72px)));
   max-height: 680px;
   z-index: 2001;
   background-color: rgba(var(--v-theme-surface-bright), 0.88);

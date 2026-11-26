@@ -188,6 +188,57 @@ describe("jobs store: settling tracked jobs when the stream fails", () => {
     expect(job.settled()).toBe(true);
   });
 
+  it("marks unseen results only for a job that worked, with the Object Browser not showing", async () => {
+    const { default: main } = await import("./index");
+    const badge = (main as any).setAnnotationPanelBadge as ReturnType<
+      typeof vi.fn
+    >;
+    await track("earlier-job");
+    const socket = latestSocket();
+    socket.readyState = 1;
+    await socket.onopen(new Event("open"));
+    (main as any).dataset = { id: "ds" };
+    const finish = async (
+      jobId: string,
+      status: number,
+      job: Record<string, unknown> = { leavesResults: true },
+    ) => {
+      mocks.statuses[jobId] = status;
+      jobs.addJob({ jobId, datasetId: "ds", ...job } as any);
+      await microtasks();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    // Showing: nothing to mark.
+    (main as any).isAnnotationPanelOpen = true;
+    badge.mockClear();
+    await finish("seen-job", SUCCESS);
+    expect(badge).not.toHaveBeenCalled();
+
+    (main as any).isAnnotationPanelOpen = false;
+    try {
+      // A failure has its own notification; it left no results to look at.
+      await finish("failed-job", ERROR);
+      expect(badge).not.toHaveBeenCalled();
+      // A job that only prepares something (a cache, a preview, a publish)
+      // leaves nothing to look at; nor does one for another dataset.
+      await finish("cache-job", SUCCESS, {});
+      await finish("elsewhere-job", SUCCESS, {
+        leavesResults: true,
+        datasetId: "another",
+      });
+      await finish("no-dataset-job", SUCCESS, {
+        leavesResults: true,
+        datasetId: null,
+      });
+      expect(badge).not.toHaveBeenCalled();
+      await finish("unseen-job", SUCCESS);
+      expect(badge).toHaveBeenCalledWith(true);
+    } finally {
+      (main as any).isAnnotationPanelOpen = true;
+    }
+  });
+
   it("settles a job that finished before it was tracked on an already open stream", async () => {
     await track("earlier-job");
     const socket = latestSocket();

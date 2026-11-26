@@ -22,6 +22,13 @@ export const PALETTE_INSET = 16;
 export const PALETTE_GAP = 8;
 
 /**
+ * Height of one line of closed-panel chips (`.palette-chip` in App.vue). A
+ * chip row wraps and is measured; this is its height until it has been, and
+ * where nothing can measure it.
+ */
+export const PALETTE_CHIP_HEIGHT = 28;
+
+/**
  * Gap a canvas-anchored surface keeps from a palette's edge.
  *
  * Deliberately NOT `PALETTE_GAP`: the bottom-left button cluster, the progress
@@ -118,9 +125,11 @@ export const STACKED_ACTION_PANEL_OFFSET = 232;
 export function actionPanelClearsTimelapsePalette(
   viewportWidth: number,
   rightClearX: number,
+  // The palette's right edge moves with the left column when that is resized.
+  timelapsePaletteRight = TIMELAPSE_PALETTE_RIGHT,
 ): boolean {
   const panelLeft = viewportWidth - rightClearX - ACTION_PANEL_MAX_WIDTH;
-  return panelLeft >= TIMELAPSE_PALETTE_RIGHT + PALETTE_GAP;
+  return panelLeft >= timelapsePaletteRight + PALETTE_GAP;
 }
 
 /**
@@ -187,4 +196,78 @@ export function rightEdgeClearX(overlays: IRightEdgeOverlay[]): number {
       .filter((overlay) => overlay.open)
       .map((overlay) => overlayClearX(overlay.width, overlay.inset)),
   );
+}
+
+// --- Resizable zones --------------------------------------------------------
+//
+// A zone (the left stack, the right column) keeps each palette's own default
+// width until the user drags its inner edge; from then on every palette in
+// the zone uses that one width. The constants above are the unresized case.
+// Everything that clears a zone must be computed from the width actually in
+// use, through the functions below, never from the constants.
+
+export type TPaletteZone = "left" | "right";
+
+/**
+ * Narrowest a zone can be dragged: the narrowest default width among its
+ * palettes, which is the narrowest any of them has been laid out for. Below
+ * it controls collide (at 320 the Layers mode radios ran under "Add layer").
+ */
+export const ZONE_MIN_WIDTH: Readonly<Record<TPaletteZone, number>> = {
+  left: Math.min(...Object.values(LEFT_COLUMN_PALETTE_WIDTHS)),
+  right: Math.min(...Object.values(RIGHT_PALETTE_WIDTHS)),
+};
+
+/** Share of the viewport one zone may take, so the canvas keeps the middle. */
+const ZONE_MAX_VIEWPORT_FRACTION = 0.45;
+
+/**
+ * A zone width the viewport can hold. Applied when a stored width is used as
+ * well as while dragging: a width saved on a large monitor must not cover the
+ * canvas on a laptop.
+ */
+export function clampZoneWidth(
+  zone: TPaletteZone,
+  width: number,
+  viewportWidth: number,
+): number {
+  const min = ZONE_MIN_WIDTH[zone];
+  const max = Math.max(
+    min,
+    Math.floor(viewportWidth * ZONE_MAX_VIEWPORT_FRACTION),
+  );
+  return Math.round(Math.min(Math.max(width, min), max));
+}
+
+/**
+ * The width a palette is drawn at: its own default until its zone has been
+ * resized, then the zone's width, clamped to the viewport.
+ */
+export function paletteWidth(
+  zone: TPaletteZone,
+  defaultWidth: number,
+  zoneWidth: number | undefined,
+  viewportWidth: number,
+): number {
+  return zoneWidth === undefined
+    ? defaultWidth
+    : clampZoneWidth(zone, zoneWidth, viewportWidth);
+}
+
+/** Footprint of the left column at the width its palettes are drawn at. */
+export function leftColumnWidth(
+  zoneWidth: number | undefined,
+  viewportWidth: number,
+): number {
+  return paletteWidth("left", LEFT_COLUMN_WIDTH, zoneWidth, viewportWidth);
+}
+
+/** `RIGHT_OF_LEFT_COLUMN` for a left column `columnWidth` wide. */
+export function rightOfLeftColumn(columnWidth: number): number {
+  return PALETTE_INSET + columnWidth + PALETTE_GAP;
+}
+
+/** `LEFT_PALETTE_CLEAR_X` for a left column `columnWidth` wide. */
+export function leftPaletteClearX(columnWidth: number): number {
+  return PALETTE_INSET + columnWidth + CANVAS_SURFACE_GAP;
 }
