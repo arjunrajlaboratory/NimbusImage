@@ -61,7 +61,7 @@ vi.mock("@/store/scalarMaps", async () => {
   return {
     default: reactive({
       hasMaps: false,
-      error: null as string | null,
+      scalarMapsError: null as string | null,
       loading: false,
       scalarMapsListed: false,
       // The store's rule (tested in scalarMaps.test.ts), mirrored so App's
@@ -69,7 +69,7 @@ vi.mock("@/store/scalarMaps", async () => {
       get scalarMapsAvailable(): boolean {
         return (
           this.hasMaps ||
-          this.error !== null ||
+          this.scalarMapsError !== null ||
           (this.loading && !this.scalarMapsListed)
         );
       },
@@ -186,7 +186,7 @@ describe("App", () => {
     (transcriptsStore as any).error = null;
     (transcriptsStore as any).loading = false;
     (scalarMapsStore as any).hasMaps = false;
-    (scalarMapsStore as any).error = null;
+    (scalarMapsStore as any).scalarMapsError = null;
     (scalarMapsStore as any).loading = false;
     (scalarMapsStore as any).scalarMapsListed = false;
     (axios.get as any) = vi
@@ -204,11 +204,12 @@ describe("App", () => {
     await nextTick();
     expect(scalarMapsStore.refreshScalarMaps).toHaveBeenCalledTimes(2);
     expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(false);
-    (scalarMapsStore as any).error = "Could not read the dataset's saved maps.";
+    (scalarMapsStore as any).scalarMapsError =
+      "Could not read the dataset's saved maps.";
     await nextTick();
     await wrapper.get('[aria-label="Map Layers"]').trigger("click");
     expect((wrapper.vm as any).scalarMapsPanel).toBe(true);
-    (scalarMapsStore as any).error = null;
+    (scalarMapsStore as any).scalarMapsError = null;
     (scalarMapsStore as any).hasMaps = true;
     await nextTick();
     expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(true);

@@ -32,7 +32,7 @@ vi.mock("@/store/scalarMaps", async () => {
       currentMaps: [] as any[],
       display: {} as Record<string, any>,
       colormapStops: null as Record<string, string[]> | null,
-      error: null as string | null,
+      scalarMapsError: null as string | null,
       loading: false,
       refreshScalarMaps: mocks.refreshMaps,
       ensureScalarMapColormapStops: mocks.ensureColormapStops,
@@ -118,7 +118,7 @@ describe("ScalarMapsPanel", () => {
     (scalarMapsStore as any).currentMaps = [MAP];
     (scalarMapsStore as any).display = { a: display() };
     (scalarMapsStore as any).colormapStops = null;
-    (scalarMapsStore as any).error = null;
+    (scalarMapsStore as any).scalarMapsError = null;
   });
 
   it("lists maps only while shown, and again for a new dataset", async () => {
@@ -194,6 +194,23 @@ describe("ScalarMapsPanel", () => {
     ]);
   });
 
+  it("shows and offers to copy a set share exactly as set", () => {
+    const vm = mount().vm as any;
+    // 12.5% on the slider's 0.5 steps: never rounded to 13 (a different
+    // percentile from the one previewed).
+    (scalarMapsStore as any).display = {
+      a: display({ threshold: 175, thresholdPercent: 12.5 }),
+    };
+    expect(vm.thresholdText(MAP)).toBe(
+      "Value ≥ 175 µm² · ≈ top 12.5% of tissue (all positions)",
+    );
+    expect(vm.workerForms(MAP)[0]).toEqual({
+      type: "Top percent of tissue",
+      threshold: "12.5",
+      approximate: true,
+    });
+  });
+
   it("keeps the chosen share as state when set by percent", () => {
     const vm = mount().vm as any;
     vm.onShare(MAP, 30);
@@ -267,6 +284,26 @@ describe("ScalarMapsPanel", () => {
     expect(vm.deleteDialog).toBe(true);
     // Browser Back to another dataset with the dialog open.
     (store as any).dataset = { id: "ds2" };
+    (scalarMapsStore as any).currentMaps = [];
+    await nextTick();
+    expect(vm.deleteDialog).toBe(false);
+    await vm.confirmDelete();
+    expect(mocks.deleteMap).not.toHaveBeenCalled();
+  });
+
+  it("ends a confirmation when the palette is hidden", async () => {
+    const wrapper = mount();
+    const vm = wrapper.vm as any;
+    vm.askDelete(MAP);
+    // Navigating Home hides the palette with the dataset unchanged.
+    await wrapper.setProps({ visible: false });
+    expect(vm.deleteDialog).toBe(false);
+  });
+
+  it("ends a confirmation when its map leaves the list", async () => {
+    const vm = mount().vm as any;
+    vm.askDelete(MAP);
+    // A job's re-list removed it.
     (scalarMapsStore as any).currentMaps = [];
     await nextTick();
     expect(vm.deleteDialog).toBe(false);

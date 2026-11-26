@@ -1,3 +1,4 @@
+import { toRaw } from "vue";
 import geojs from "geojs";
 import {
   IGeoJSAnnotationLayer,
@@ -67,9 +68,13 @@ export function createImageTileOverlayLayer(
   params.layer.keepLower = false;
   params.layer.url = BLANK_TILE_URL;
   params.layer.visible = false;
-  const layer = registerImageOverlayLayer(map.createLayer("osm", params.layer));
-  // Beneath the annotation outlines, which stay legible over the overlay.
-  layer.zIndex(options.annotationLayer.zIndex() as number);
+  const layer = registerImageOverlayLayer(
+    map,
+    map.createLayer("osm", params.layer),
+    // Before the viewer's first ordering pass: beneath the annotation
+    // outlines, which stay legible over the overlay.
+    options.annotationLayer,
+  );
   layer.node().css({ "mix-blend-mode": "unset" });
   layer.opacity(options.opacity);
   return layer;
@@ -79,10 +84,31 @@ export function createImageTileOverlayLayer(
 // transcript points). ImageViewer keeps them there whenever it adds image
 // layers; see orderLayersAboveImages.
 const imageOverlayLayers = new WeakSet<object>();
+// Each viewer map's annotation stack, as ImageViewer last ordered it, so an
+// overlay created between viewer draws is placed by the same rule at once.
+const viewerStacks = new WeakMap<object, (IGeoJSLayer | null | undefined)[]>();
 
-/** Mark a layer as an overlay that must stay above every image layer. */
-export function registerImageOverlayLayer<T extends object>(layer: T): T {
+/**
+ * Mark a layer as an overlay that must stay above every image layer, and
+ * place it there now: below the whole annotation stack (overview raster,
+ * worker preview, outlines, ...), exactly where ImageViewer's next draw would
+ * put it. Creating it at the annotation layer's index instead left a new
+ * overlay above the overview raster until the next draw, tinting the cells.
+ * Before the viewer has ordered this map once, it goes just under
+ * `fallbackBelow` (the annotation layer).
+ */
+export function registerImageOverlayLayer<T extends IGeoJSLayer>(
+  map: IGeoJSMap,
+  layer: T,
+  fallbackBelow?: IGeoJSLayer,
+): T {
   imageOverlayLayers.add(layer);
+  const stack = viewerStacks.get(toRaw(map));
+  if (stack) {
+    orderLayers(map, stack);
+  } else if (fallbackBelow) {
+    layer.zIndex(fallbackBelow.zIndex() as number);
+  }
   return layer;
 }
 
@@ -90,37 +116,52 @@ export function isImageOverlayLayer(layer: object): boolean {
   return imageOverlayLayers.has(layer);
 }
 
+const byZ = (a: IGeoJSLayer, b: IGeoJSLayer) =>
+  (a.zIndex() as number) - (b.zIndex() as number);
+
+function orderLayers(
+  map: IGeoJSMap,
+  stack: (IGeoJSLayer | null | undefined)[],
+): void {
+  const layers = map.layers();
+  const overlays = layers.filter(isImageOverlayLayer).sort(byZ);
+  const expected = [
+    ...overlays,
+    ...stack.filter(
+      (layer): layer is IGeoJSLayer => !!layer && layers.includes(layer),
+    ),
+  ];
+  // Relative order, not absolute indices: GeoJS's deleteLayer leaves a gap in
+  // the z-indices that moveToTop (which only rotates existing values) never
+  // closes, so after any overlay was deleted an index comparison failed on
+  // every draw and re-raised every layer for the life of the viewer.
+  const top = [...layers].sort(byZ).slice(layers.length - expected.length);
+  if (top.every((layer, index) => layer === expected[index])) {
+    return;
+  }
+  expected.forEach((layer) => layer.moveToTop());
+}
+
 /**
- * Order a viewer map's layers: the image layers (z-indices below
- * `imageLayerCount`), then every registered overlay in its current order,
- * then `stack` (the annotation-related layers, bottom to top).
+ * Order a viewer map's layers: the image layers (and anything else not
+ * named) at the bottom, then every registered overlay in its current order,
+ * then `stack` (the annotation-related layers, bottom to top). Also records
+ * the stack, so registerImageOverlayLayer can place a new overlay the same
+ * way without waiting for a draw.
  *
  * GeoJS gives a new layer the top z-index, so the image layers that
  * `_setupTileLayers` adds for a new display layer land above everything.
  * Raising only the annotation stack afterwards left the overlays beneath the
  * new image layers, hidden in the Normal blend. Raising the overlays first,
- * then the stack, restores the intended order. A no-op when the order is
- * already right.
+ * then the stack, restores the intended order. Nothing moves when the top of
+ * the map is already exactly overlays then stack.
  */
 export function orderLayersAboveImages(
   map: IGeoJSMap,
-  imageLayerCount: number,
   stack: (IGeoJSLayer | null | undefined)[],
 ): void {
-  const overlays = map
-    .layers()
-    .filter(isImageOverlayLayer)
-    .sort((a, b) => (a.zIndex() as number) - (b.zIndex() as number));
-  const expected = [
-    ...overlays,
-    ...stack.filter((layer): layer is IGeoJSLayer => !!layer),
-  ];
-  if (
-    expected.every((layer, index) => layer.zIndex() === imageLayerCount + index)
-  ) {
-    return;
-  }
-  expected.forEach((layer) => layer.moveToTop());
+  viewerStacks.set(toRaw(map), stack);
+  orderLayers(map, stack);
 }
 
 /**

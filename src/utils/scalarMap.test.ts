@@ -130,11 +130,20 @@ describe("scalarMap worker threshold forms", () => {
       "above",
       20.5,
     );
+    // Shown exactly as set (the slider steps by 0.5), never rounded to a
+    // different percentile.
     expect(fractional[0]).toEqual({
       type: "Top percent of tissue",
-      threshold: "21",
+      threshold: "20.5",
       approximate: true,
     });
+    const twelveAndHalf = workerThresholdForms(
+      LINEAR,
+      thresholdForTissueShare(LINEAR, 12.5, "below"),
+      "below",
+      12.5,
+    );
+    expect(twelveAndHalf[0].threshold).toBe("12.5");
     // Set by value, between percentiles.
     expect(workerThresholdForms(LINEAR, 9, "below", null)[0]).toEqual({
       type: "Bottom percent of tissue",
@@ -153,7 +162,20 @@ describe("scalarMap worker threshold forms", () => {
 describe("scalarMap ranges and sliders", () => {
   it("widens a constant map's range by the server's rule", () => {
     expect(displayValueRange([3, 3])).toEqual([2.5, 3.5]);
+    expect(displayValueRange([0, 0])).toEqual([-0.5, 0.5]);
     expect(displayValueRange([1, 4])).toEqual([1, 4]);
+  });
+
+  it("keeps a constant map's range open at large magnitudes", () => {
+    // v ± 0.5 rounds back to v above 2^53.
+    const [low, high] = displayValueRange([1e17, 1e17]);
+    expect(low).toBe(1e17 - 1e11);
+    expect(high).toBe(1e17 + 1e11);
+    expect(low < 1e17 && 1e17 < high).toBe(true);
+    expect(displayValueRange([-1e17, -1e17])).toEqual([
+      -1e17 - 1e11,
+      -1e17 + 1e11,
+    ]);
   });
 
   it.each([

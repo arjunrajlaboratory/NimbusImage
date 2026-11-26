@@ -63,14 +63,16 @@ Files: `server/api/scalarMap.py` (routes), `server/helpers/scalarMap.py`
 | `DELETE scalar_map/{itemId}` | WRITE | Removes the item and drops its cached arrays. 400 for an item that is not a map. |
 
 `revision` (`scalarMapRevision`) is
-`<file id>-<size>-<file created, %Y%m%d%H%M%S%f>[-<sha512 prefix>]-<geometry digest>`.
+`<file id>-<size>-<file created, %Y%m%d%H%M%S%f>[-<sha512 prefix>]-<metadata digest>`.
 The first part is the **file identity** (`scalarMapFileIdentity`): a re-upload
 gets a new file id, and Girder's in-place content replacement
 (`Upload.finalizeUpload` with a `fileId`) rewrites `created` and `size`, so a
 same-size replacement on an assetstore without checksums still changes it.
-The geometry digest is a short sha1 of `originPx`, `gridSpacingPx` and
-`shape`, the metadata that places the array on the image, so a metadata-only
-correction changes it too. `revision` starts the tile ETag and goes in the
+The metadata digest is a short sha1 of the whole validated `nimbusScalarMap`
+object as canonical JSON (sorted keys), so any metadata-only edit changes it:
+the geometry that places the array on the image, and also `locations`,
+`valueRange` and `percentiles`, which the client derives its layers, range
+and cutoff from. `revision` starts the tile ETag and goes in the
 client's tile URLs; the array cache is keyed by the file identity alone.
 
 ### Metadata validation
@@ -89,9 +91,17 @@ not constrained.
   bare `.npy` is refused without being decoded. The member `<location>.npy` is
   the one both checked (header: 2-D float, the metadata's shape, within the
   cell cap) and decoded, and only as many bytes as the checked header allows
-  are read. Fortran-order arrays are supported. An encrypted member or an
-  unknown compression method (zipfile's `RuntimeError` /
-  `NotImplementedError`) is a 400 like any other bad file.
+  are read. Fortran-order arrays are supported. Only `ZIP_STORED` and
+  `ZIP_DEFLATED` members are read (what `np.savez` and
+  `np.savez_compressed` write), checked before the member is opened: bzip2
+  and LZMA decompress a chunk without an output bound, possibly while the
+  header is read, before the shape and cell caps apply. An encrypted member
+  (zipfile's `RuntimeError`) is a 400 like any other bad file.
+- **Storage failures are server errors.** An `OSError` from the file handle
+  (disk, or S3 and other network assetstores; `requests` exceptions are
+  `OSError`s) is re-raised by `_BoundedReads` as `ScalarMapStorageError`,
+  which the format-error mapping does not catch, so it surfaces as a 500
+  instead of blaming the file with a 400.
 - **Streamed, never buffered.** zipfile reads straight from Girder's
   `FileHandle` (it is seekable), through `_BoundedReads`, which splits every
   read into pieces of `min(8 MiB, core.filehandle_max_size)`: the handle
@@ -117,7 +127,9 @@ metadata can change under a cached array.
 - **Invalidation.** Delete calls `invalidateScalarMapFiles`, which drops the
   file's arrays and bumps a per-file epoch; a load that started before the
   bump does not cache its result. A replaced file has a new revision, so its
-  key differs and the old array is never served.
+  key differs and the old array is never served. A map deleted through
+  Girder's own item or folder routes is not invalidated: its arrays stay
+  cached until LRU eviction, bounded by the cache budget.
 - The cache lock is never held during I/O.
 
 ### Rendering
@@ -130,12 +142,19 @@ metadata can change under a cached array.
   centers, extended flat past the outer centers. NaN-aware: a pixel whose
   containing cell is NaN, or that lies outside the array or the image, is
   transparent; a NaN neighbor drops out of the weights (renormalized) instead
-  of poisoning a valid pixel, so the support keeps its cell edges.
+  of poisoning a valid pixel, so the support keeps its cell edges. The
+  result is clamped to the range of its contributing samples: an
+  interpolated value can never legitimately leave it, and the clamp makes a
+  flat region sample exactly to its value (without it, a constant 100 map at
+  12.5 px spacing came out a hair off 100 in 266 of 2,500 pixels, dimmed by a
+  threshold of 100 on either side).
 - **Color.** The colormap's anchor table from `server/helpers/colormaps.py`
   (the same tables color-by-property uses) is interpolated to a 256-entry
   LUT; values clamp to `[min, max]`. Omitted `min`/`max` default to
-  `valueRange`, widened to `[v - 0.5, v + 0.5]` for a constant map; `min >=
-  max` is a 400.
+  `valueRange`; a constant map is widened to `[v - pad, v + pad]` with
+  `pad = max(0.5, abs(v) * 1e-6)` (a fixed 0.5 rounds back to `v` from
+  2^53), the same rule as the client's `displayValueRange`; `min >= max` is
+  a 400.
 - **Threshold.** Inclusive on both sides: `value >= threshold` is selected for
   `above`, `value <= threshold` for `below`, matching the worker's `Value at
   least` / `Value at most`. Unselected pixels are drawn at alpha 64.
@@ -175,7 +194,10 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
   main store's GeoJS `setMaps`, which threw, and every list "failed" in the
   live app while every unit test passed (see the nimbus-frontend skill).
 - `currentMaps` is empty until the current dataset's list lands
-  (`mapsDatasetId`). An empty list and a failed list stay distinct (`error`).
+  (`mapsDatasetId`). An empty list and a failed list stay distinct
+  (`scalarMapsError`). The failure is stored with its dataset
+  (`listErrorDatasetId`) and `scalarMapsError` is null for any other one, so
+  a failure on dataset B never shows over dataset A's list after going back.
 - **When the list is fetched.** `refreshScalarMaps()` runs when a dataset is
   opened in the viewer (a new dataset, a reload, or a return to it), when the
   palette is shown, about a second after any job on the open dataset ends,
@@ -191,16 +213,25 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
   its command): with maps, after a failed lookup, or while the FIRST list for
   this dataset loads. A re-list of a dataset already known to have no maps
   does not count, or the button would appear and vanish on every dataset open
-  and finished job. A retry of a listed dataset keeps its error (and so the
-  button) until the answer lands.
+  and finished job. A request never clears the error up front: this dataset's
+  failure (and so the button) stays until the answer lands.
 - **A failed re-list keeps the last good list.** A network blip must not wipe
-  the maps or their display settings; only `error` is set.
+  the maps or their display settings; only the error is set.
 - **Sequence guard.** Every request claims a generation before any early
   return; a successful delete bumps it too (and re-lists if a list was
   pending), so no response captured earlier can land afterwards.
 - `setScalarMaps` skips entries that fail `isValidScalarMap` (logged), so one
-  bad map never loses the list. A map whose `revision` changed keeps
-  visible/opacity/colormap and gets fresh range and threshold defaults.
+  bad map never loses the list.
+- **How a map is shown survives a re-list.** Same item and `revision`:
+  everything. New `revision` (the server changes it on any file or metadata
+  edit, including locations, `valueRange`, `percentiles` and name): visible,
+  opacity and colormap are kept, and range and threshold are derived again;
+  the overlay re-syncs, and if the current location was removed it hides the
+  layer and requests nothing. A **worker re-run** deletes the item and
+  uploads a new one: when exactly one dropped and one new item share
+  `meta.toolId` (`replacementsByTool`), the new item inherits visible,
+  opacity and colormap the same way, so the iterate loop (tweak, re-run,
+  look) does not come back hidden. Ambiguous matches carry nothing.
 - Display defaults: hidden, opacity 0.7, viridis, range = `valueRange`
   (widened when constant), threshold off but preset to the worker's default
   (top 20%).
@@ -208,8 +239,8 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
 ### Overlay
 
 - Layers come from `createImageTileOverlayLayer`: the image pyramid at tile
-  size 256, `keepLower = false`, `crossDomain = "use-credentials"`, z-index of
-  the annotation layer (under the outlines), created hidden with a blank URL.
+  size 256, `keepLower = false`, `crossDomain = "use-credentials"`, created
+  hidden with a blank URL, and placed at once by the layer-order rule below.
 - Showing/hiding, the XY/Z/Time location, the file revision and the
   share-link token re-sync immediately. Colormap, range and threshold change
   the existing layer's URL after a 150 ms debounce. Opacity is
@@ -222,10 +253,24 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
 - **Layer order.** The util registers every overlay layer (the scalar maps,
   and the transcript heat maps and point layer). `ImageViewer.draw()` calls
   `orderLayersAboveImages` to keep image layers at the bottom, then the
-  registered overlays in their order, then the annotation stack. GeoJS
-  creates a new layer on top, so when a display layer was added while a map
-  was shown, the new image layers covered it (hidden in the Normal blend);
-  only the annotation stack used to be raised.
+  registered overlays in their order, then the annotation stack (overview
+  raster, worker preview, outlines, ...). GeoJS creates a new layer on top,
+  so when a display layer was added while a map was shown, the new image
+  layers covered it (hidden in the Normal blend); only the annotation stack
+  used to be raised.
+  - **Creation and redraw agree.** The util remembers each viewer map's stack
+    from the last draw, and `registerImageOverlayLayer` runs the same
+    ordering as soon as an overlay is created. Inserting it at the annotation
+    layer's index instead put it above the overview raster and worker
+    preview until the next draw, tinting a large dataset's cell raster.
+    Before a map's first draw it falls back to just under the annotation
+    layer.
+  - **Relative, not absolute.** The check compares the z-sorted top of the
+    map with "overlays, then stack". GeoJS's `deleteLayer` leaves a gap in
+    the z-indices that `moveToTop` (which rotates existing values) never
+    closes, so an absolute-index check failed on every draw after any overlay
+    had been hidden, re-raising every layer for the life of the viewer.
+    Nothing moves when the order is already right.
 - **Location.** A map follows the viewer's global XY/Z/Time, as annotations
   do, not per-layer Z offsets or max-merge slices.
 - **One renderer per map.** Each shown map is its own GeoJS layer with its
@@ -270,6 +315,10 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
   (round-trips float32). The percent form is exact only when it is a whole
   percentile whose stored value is the cutoff (the worker thresholds `Top
   percent N` at `percentiles[100 - N]`); otherwise it is marked approximate.
+  A share the user set is shown as set (`formatRequestedShare`: "12.5", not
+  "13", which is a different percentile than the one previewed), in both the
+  readout and the copyable form; only a share estimated from a value is
+  rounded (`formatShare`).
 - **Legend** gradients come from the server's tables through
   `GET upenn_annotation/color_by_property/options`, loaded once; there is no
   client copy to drift.
@@ -277,10 +326,12 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
   mounted).
 - **Delete confirmations are sessions.** The palette lives as long as the
   app, so a dialog can outlive its dataset (browser Back/Forward) and a
-  request can outlive its dialog (Escape while deleting). Closing the dialog
-  or switching datasets ends the session; a request's result applies only to
-  the session that started it; and only a map of the dataset on screen can be
-  confirmed.
+  request can outlive its dialog (Escape while deleting); the dialog is
+  teleported, so nothing else closes it with its context. Closing the dialog,
+  switching datasets, hiding the palette (navigating Home can do that with
+  the dataset unchanged) and the target leaving the list (a job's re-list)
+  each end the session; a request's result applies only to the session that
+  started it; and only a map of the dataset on screen can be confirmed.
 - **Descriptive fields are optional.** `name`, `statistic`, `property` and
   `radius` are not validated, so the card falls back to "Untitled map" and
   leaves out absent parts of the subtitle rather than printing "undefined".
@@ -300,9 +351,11 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **Mutation and action names are unique across store modules.** Found live: the store's `setMaps` cross-fired into the main store's GeoJS `setMaps` (`TypeError: maps.map is not a function`) and every list reported failure. Isolated module tests could not see it. — *"declares no mutation, action or getter another store module declares"*, *"documents why: an un-namespaced mutation name runs in every module declaring it"*
 - [ ] **A response from an older request never lands**, including across a dataset switch or clear. The sequence token is claimed before any early return. — *"ignores an answer that lands after a newer (forced) request"*, *"does not let a request for the previous dataset land after the dataset is cleared"*, *"drops a failure for a request that was superseded"*
 - [ ] **"Could not ask" is not "no maps".** — *"keeps 'could not ask' distinct from 'no maps', and retries"*
+- [ ] **A list error belongs to its dataset.** Dataset B's failure never shows over dataset A's list. — *"never shows another dataset's list error over this dataset's list"*
 - [ ] **One malformed map never loses the list.** Percentiles are required (101 finite, non-decreasing) on both sides. — *"skips a malformed map instead of losing the list"*, *"rejects %s"*, *"testMetaValidation"*
 - [ ] **Delete beats an in-flight list.** A list response captured before a delete must not bring the map back. — *"does not let a list captured before a delete bring the map back"*
-- [ ] **Display state resets with the dataset, survives a re-list, and is re-derived for a rewritten file.** — *"resets with the dataset and keeps display settings across a re-list"*, *"re-derives range and threshold when a map's file changes, keeping how it is shown"*
+- [ ] **Display state resets with the dataset, survives a re-list, and is re-derived for a rewritten file or edited metadata** (the server's revision changes on any metadata edit). — *"resets with the dataset and keeps display settings across a re-list"*, *"re-derives range and threshold when a map's file changes, keeping how it is shown"*, *"re-derives a map's settings after a metadata edit removes a location"*
+- [ ] **A worker re-run's replacement keeps how the map was shown** (visible, opacity, colormap) when exactly one dropped and one new item share `meta.toolId`, and the overlay shows it with no user action; an ambiguous or other-tool match carries nothing. — *"carries how a map is shown to its replacement from a worker re-run"*, *"carries nothing over when the replacement is ambiguous or another tool's"*, *"shows a worker re-run's replacement map without user action"*
 
 ### List freshness
 
@@ -325,10 +378,11 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 
 - [ ] **Sampling is bilinear and NaN-aware**, and off-array, off-image and NaN pixels are transparent. — *"testSamplingMatchesBruteForce"*, *"testNanNeighborDoesNotPoisonValidPixel"*, *"testOutsideArrayIsNan"*, *"testTileColorsNanAndOutside"*, *"testTileAtLowerLevel"*
 - [ ] **The threshold comparison is inclusive on both sides**, matching the worker and the panel's tie readout. — *"testThresholdIsInclusive"*, *"testTileThresholdBothSides"*
-- [ ] **A constant map renders.** Its range is widened to `[v - 0.5, v + 0.5]` by the server's default and by the client's default and Reset (the client used to send `min == max`, a 400 on every tile). — *"testDefaultRangeOfConstantMap"*, *"widens a constant map's range by the server's rule"*, *"widens a constant map's default range and its reset range"*
+- [ ] **A flat region equal to the threshold is selected on both sides.** Sampling clamps to the range of the contributing samples; without it a constant map came out a hair off its value and was dimmed. — *"testFlatRegionAtTheThresholdIsSelectedOnBothSides"*, *"testInterpolationStaysWithinItsSamples"*
+- [ ] **A constant map renders.** Its range is widened to `[v - pad, v + pad]`, `pad = max(0.5, abs(v) * 1e-6)`, by the server's default and by the client's default and Reset (the client used to send `min == max`, a 400 on every tile; a fixed 0.5 pad is a no-op from 2^53). — *"testDefaultRangeOfConstantMap"*, *"testConstantMapDefaultRange"*, *"widens a constant map's range by the server's rule"*, *"widens a constant map's default range and its reset range"*, *"keeps a constant map's range open at large magnitudes"*
 - [ ] **A replaced file is never served stale**, by the server cache, the ETag or the client URL. — *"testCacheNotStaleAfterFileReplaced"*, *"re-syncs at once when the file's revision or the share-view token changes"*
 - [ ] **A same-size in-place replacement on an assetstore without checksums is not stale.** The file identity includes the file's `created`, which Girder rewrites on in-place replacement. — *"testSameSizeReplacementWithoutChecksumIsNotStale"*
-- [ ] **A metadata-only correction of the geometry changes the revision and the ETag**, so browsers do not revalidate onto misplaced tiles. — *"testMetadataOnlyEditChangesRevisionAndEtag"*
+- [ ] **Any metadata-only edit changes the revision and the ETag**: the geometry (so browsers do not revalidate onto misplaced tiles), and `locations`, `valueRange` and `percentiles` (so a re-list re-derives layers, range and cutoff). The digest covers the whole validated object as canonical JSON. — *"testMetadataOnlyEditChangesRevisionAndEtag"*, *"testRevisionCoversTheWholeMetadata"*
 - [ ] **The legend comes from the server's colormap tables**, the ones the tiles are rendered from. — *"draws the legend from the server's colormap table"*, *"loads the legend tables once and retries after a failure"*, *"testColormapEndpointsMatchAnchors"*
 
 ### Reading and cost
@@ -339,6 +393,8 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **The array cache stays within its byte budget.** — *"testCacheStaysWithinBudget"*
 - [ ] **The file is read strictly as a ZIP with one explicit member**, checked and decoded from the same member. — *"testBareNpyIsRefusedWithoutDecoding"*, *"testChecksAndDecodesTheSameExplicitMember"*, *"testReadRejectsBadArrays"*, *"testFortranOrderMember"*
 - [ ] **A crafted archive is a 400, not a 500**: an encrypted member or an unknown compression method. — *"testEncryptedMemberIsRefused"*, *"testUnsupportedCompressionIsRefused"*, *"testCraftedArchiveIs400"*
+- [ ] **Only stored and deflated members are read**, checked before opening: bzip2 and LZMA expand without an output bound, possibly before the header caps apply. — *"testOnlyNumpysCompressionMethodsAreRead"*
+- [ ] **A storage failure is a server error, not a bad map**: an `OSError` from the file handle becomes `ScalarMapStorageError` (a 500), never "not a readable .npz". — *"testStorageFailureIsNotABadFile"*, *"testStorageFailureIsAServerError"*
 - [ ] **A location without data requests nothing.** — *"never creates a layer for a map with no data at the current location"*, *"follows the viewer's location and requests nothing where the map has no data"*
 - [ ] **Opacity is a restyle only**: no URL change, no new layer. — *"only restyles on an opacity change"*
 - [ ] **Slider-driven URL changes reuse the layer and are debounced.** — *"updates the URL of the same layer on range, colormap and threshold changes, debounced"*
@@ -348,18 +404,22 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **One layer per shown map, with the shared heat-map setup; deleted when hidden, deleted, or unmounted.** — *"creates one layer per visible map with the shared heat-map setup"*, *"removes a layer when its map is hidden or deleted, and on unmount"*
 - [ ] **Layers are not deleted twice from a map that already exited them.** — *"does not delete layers again from a map that already exited them"*
 - [ ] **TranscriptOverlay is unchanged by the shared layer util.** — *"creates heat-map layers that keep only the current level"*, *"draws one heat map per gene in its own color and deletes removed ones"*
-- [ ] **Overlays stay above display layers added after them** (scalar maps and transcript heat maps and points), and under the annotation stack; the ordering step is a no-op when nothing moved. — *"keeps overlays above display layers added after them"*, *"keeps several overlays in their order and any registered layer counts"*, *"does nothing when the order is already right"*, *"orders the annotation stack above the images as before when there is no overlay"*
+- [ ] **Overlays stay above display layers added after them** (scalar maps and transcript heat maps and points), and under the annotation stack; nothing moves when the order is already right. — *"keeps overlays above display layers added after them"*, *"keeps several overlays in their order and any registered layer counts"*, *"does nothing when the order is already right"*, *"orders the annotation stack above the images as before when there is no overlay"*
+- [ ] **A new overlay is placed below the overview raster and worker preview at once**, not only at the next viewer draw, and that draw then moves nothing. — *"places a new overlay below the overview raster at once, without a viewer draw"*, *"goes under the annotation layer before the viewer has ordered the map"*
+- [ ] **The ordering compares relative order, so a deleted overlay's z-index gap does not make every later draw re-raise every layer.** — *"stops moving layers after an overlay is shown, hidden and drawn twice"*
+- [ ] **A metadata edit that removes the current location hides the layer and requests nothing.** — *"hides the layer and requests nothing when a metadata edit removes the current location"*
 
 ### Panel semantics
 
 - [ ] **Sliders over map values use integer positions**, so a tiny range (1e-7) does not round to 0 in Vuetify. — *"maps integer positions over [%d, %d] without losing values"*, *"drives value sliders with integer positions, even on a tiny range"*, *"gives a constant map a usable slider range"*
 - [ ] **The copyable worker threshold reproduces the preview.** The value form is exact; a percent form that is not a whole stored percentile is marked approximate. — *"gives a whole percentile exactly and the value at full precision"*, *"marks a fractional or derived percent as approximate"*, *"gives the worker the exact cutoff, and marks an inexact percent"*
+- [ ] **A share the user set is shown and copied exactly as set** (12.5, never rounded to 13); only an estimated share is rounded. — *"shows and offers to copy a set share exactly as set"*
 - [ ] **The picked share is state; the value is derived from it, never the reverse.** — *"keeps the requested share and derives the value; setting a value clears it"*, *"keeps the chosen share as state when set by percent"*
 - [ ] **Ties are reported, not hidden, and only real ties.** The readout labels the share as an estimate over all positions, and mentions ties only when the cutoff sits on a run of equal percentiles. — *"counts tied values with the selected side, as the inclusive cutoff does"*, *"says when ties select more tissue than was asked for"*, *"calls a difference a tie only when the cutoff sits on a run of equal percentiles"*, *"reads the threshold as a value and as a share of tissue"*
 - [ ] **Percent and value agree with the worker at whole percentiles.** — *"reads whole percentiles exactly, as the worker does"*, *"round-trips value -> share -> value without ties"*
 - [ ] **Every whole percent maps exactly to its stored percentile, reported exact** (no float noise at 7, 14, 28, 29, 55–58), and a tie run starting there is included. — *"maps every whole percent to exactly its stored percentile, reported exact"*, *"includes a tie run that starts at a whole percentile"*
 - [ ] **The range thumbs stay one position apart** instead of a collapsed range being dropped. — *"keeps the range thumbs at least one position apart instead of dropping the update"*, *"keeps the range one position wide instead of dropping a collapsed range"*
-- [ ] **A delete confirmation belongs to its dataset and its session.** A dataset switch closes it, a previous dataset's map is never deleted, and a late result never closes or writes into a later confirmation. — *"closes a pending confirmation on a dataset switch and never deletes the previous dataset's map"*, *"applies a delete's result only to the confirmation that started it"*
+- [ ] **A delete confirmation belongs to its dataset, its palette and its session.** A dataset switch, hiding the palette or the target leaving the list closes it; a map not on screen is never deleted; and a late result never closes or writes into a later confirmation. — *"closes a pending confirmation on a dataset switch and never deletes the previous dataset's map"*, *"ends a confirmation when the palette is hidden"*, *"ends a confirmation when its map leaves the list"*, *"applies a delete's result only to the confirmation that started it"*
 - [ ] **A map missing descriptive fields still shows sensibly** ("Untitled map", absent parts left out) and is not rejected. — *"falls back for a map missing its descriptive fields"*
 
 ### Symmetric pairs — change one, check the other

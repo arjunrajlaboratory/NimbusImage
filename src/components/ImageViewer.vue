@@ -2182,7 +2182,7 @@ function draw() {
     // transcripts), then the annotation stack. New image layers are created
     // on top, so without the overlays in this step a display layer added
     // while an overlay is shown would cover it.
-    orderLayersAboveImages(map, mll.length * 2, [
+    orderLayersAboveImages(map, [
       mapentry.annotationOverviewLayer,
       mapentry.workerPreviewLayer,
       mapentry.annotationLayer,

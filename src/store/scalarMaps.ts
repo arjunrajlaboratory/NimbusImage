@@ -44,6 +44,40 @@ function forgetListRequest(generation: number) {
   }
 }
 
+/**
+ * New item id -> the dropped item id it replaces, for a worker re-run: the
+ * two share a non-empty `meta.toolId`, and that tool has exactly one dropped
+ * and exactly one new item in this re-list (anything else is ambiguous and
+ * gets no carry-over).
+ */
+export function replacementsByTool(
+  before: readonly IScalarMap[],
+  after: readonly IScalarMap[],
+): Map<string, string> {
+  const beforeIds = new Set(before.map((map) => map.itemId));
+  const afterIds = new Set(after.map((map) => map.itemId));
+  const byTool = (maps: IScalarMap[]) => {
+    const groups = new Map<string, string[]>();
+    for (const map of maps) {
+      const toolId = map.meta.toolId;
+      if (typeof toolId === "string" && toolId !== "") {
+        groups.set(toolId, [...(groups.get(toolId) ?? []), map.itemId]);
+      }
+    }
+    return groups;
+  };
+  const dropped = byTool(before.filter((map) => !afterIds.has(map.itemId)));
+  const added = byTool(after.filter((map) => !beforeIds.has(map.itemId)));
+  const replacements = new Map<string, string>();
+  added.forEach((newIds, toolId) => {
+    const oldIds = dropped.get(toolId);
+    if (newIds.length === 1 && oldIds?.length === 1) {
+      replacements.set(newIds[0], oldIds[0]);
+    }
+  });
+  return replacements;
+}
+
 /** How a map is drawn before the user changes anything. */
 export function defaultScalarMapDisplay(map: IScalarMap): IScalarMapDisplay {
   const [min, max] = displayValueRange(map.meta.valueRange);
@@ -71,8 +105,9 @@ export function defaultScalarMapDisplay(map: IScalarMap): IScalarMapDisplay {
  * `mapsDatasetId` says which dataset `maps` belongs to, so a stale answer is
  * never shown for the current dataset (`currentMaps` is empty until the
  * current dataset's answer lands). "No maps" (an empty list, no error) and
- * "could not ask" (`error`) stay distinct so a network blip does not hide
- * the feature.
+ * "could not ask" (`scalarMapsError`) stay distinct so a network blip does
+ * not hide the feature. The error is tagged with its dataset too: another
+ * dataset's failure never shows over this one's list.
  *
  * The list is read again whenever a dataset is opened, when the palette is
  * shown, shortly after any job on the dataset ends (jobs.ts, debounced), and
@@ -85,7 +120,10 @@ export class ScalarMaps extends VuexModule {
   maps: IScalarMap[] = [];
   mapsDatasetId: string | null = null;
   loading = false;
-  error: string | null = null;
+  // The last list failure and the dataset it was for; read it through
+  // `scalarMapsError`, which is null for any other dataset.
+  listError: string | null = null;
+  listErrorDatasetId: string | null = null;
   // Keyed by item id; entries for maps no longer listed are dropped.
   display: Record<string, IScalarMapDisplay> = {};
   // Legend gradients, keyed by colormap name: the server's anchor tables
@@ -112,6 +150,14 @@ export class ScalarMaps extends VuexModule {
     );
   }
 
+  /** The open dataset's list failure, or null (also for another dataset's). */
+  get scalarMapsError(): string | null {
+    return this.listErrorDatasetId !== null &&
+      this.listErrorDatasetId === (main.dataset?.id ?? null)
+      ? this.listError
+      : null;
+  }
+
   /**
    * Whether to offer the Map Layers palette (app-bar button and command):
    * with maps, after a failed lookup (so a network blip does not hide the
@@ -122,30 +168,47 @@ export class ScalarMaps extends VuexModule {
   get scalarMapsAvailable(): boolean {
     return (
       this.hasMaps ||
-      this.error !== null ||
+      this.scalarMapsError !== null ||
       (this.loading && !this.scalarMapsListed)
     );
   }
 
   /**
    * Replace the list. Malformed entries are skipped and logged, so one bad
-   * map can never throw here and lose the whole list. A map whose file
-   * changed (new `revision`) keeps only how it is shown, not its range or
-   * threshold, which may not fit the new values.
+   * map can never throw here and lose the whole list.
+   *
+   * How each map is shown carries over a re-list of the same dataset:
+   * - same item, same `revision`: everything;
+   * - same item, new `revision` (its file or any metadata changed): how it
+   *   is shown (visible, opacity, colormap); range and threshold are derived
+   *   again, since they may not fit the new values;
+   * - a worker re-run, which deletes the item and uploads a new one: the
+   *   same three settings pass from the dropped item to the new one, when
+   *   both share `meta.toolId` and the match is unambiguous (exactly one
+   *   dropped and one new item for that tool). Without this, every
+   *   iteration (tweak the radius, re-run, look again) came back hidden.
    */
   @Mutation
   setScalarMaps(payload: { datasetId: string; maps: unknown[] }) {
     const sameDataset = payload.datasetId === this.mapsDatasetId;
     const previous = new Map(this.maps.map((map) => [map.itemId, map]));
     const maps: IScalarMap[] = [];
-    const display: Record<string, IScalarMapDisplay> = {};
     for (const map of payload.maps) {
-      if (!isValidScalarMap(map)) {
+      if (isValidScalarMap(map)) {
+        maps.push(map);
+      } else {
         logWarning("Skipping a malformed saved map:", map);
-        continue;
       }
-      maps.push(map);
-      const kept = sameDataset ? this.display[map.itemId] : undefined;
+    }
+    const replacedBy = sameDataset
+      ? replacementsByTool(this.maps, maps)
+      : new Map<string, string>();
+    const display: Record<string, IScalarMapDisplay> = {};
+    for (const map of maps) {
+      const kept = sameDataset
+        ? this.display[map.itemId] ??
+          this.display[replacedBy.get(map.itemId) ?? ""]
+        : undefined;
       if (!kept) {
         display[map.itemId] = defaultScalarMapDisplay(map);
       } else if (previous.get(map.itemId)?.revision === map.revision) {
@@ -170,8 +233,12 @@ export class ScalarMaps extends VuexModule {
   }
 
   @Mutation
-  setScalarMapsError(error: string | null) {
-    this.error = error;
+  setScalarMapsError(payload: {
+    datasetId: string | null;
+    error: string | null;
+  }) {
+    this.listError = payload.error;
+    this.listErrorDatasetId = payload.error === null ? null : payload.datasetId;
   }
 
   /** Visibility, opacity, colormap, range and the threshold switch. The
@@ -322,18 +389,15 @@ export class ScalarMaps extends VuexModule {
     listInFlight = null;
     if (datasetId === null) {
       this.setScalarMaps({ datasetId: "", maps: [] });
-      this.setScalarMapsError(null);
+      this.setScalarMapsError({ datasetId: null, error: null });
       this.setScalarMapsLoading(false);
       return;
     }
     this.setScalarMapsLoading(true);
-    // A retry for a dataset already listed keeps its error until the answer
-    // lands, so the palette stays offered meanwhile (a dataset listed with no
-    // maps does not count `loading` as available). Another dataset's error
-    // never applies here.
-    if (datasetId !== this.mapsDatasetId) {
-      this.setScalarMapsError(null);
-    }
+    // The error is not cleared here: this dataset's failure stays until the
+    // answer lands, so the palette stays offered through a retry (a dataset
+    // listed with no maps does not count `loading` as available), and
+    // another dataset's failure is already hidden by `scalarMapsError`.
     const stillCurrent = () =>
       generation === listRequestGeneration && main.dataset?.id === datasetId;
     const promise = (async () => {
@@ -341,12 +405,15 @@ export class ScalarMaps extends VuexModule {
         const maps = await main.scalarMapAPI.listMaps(datasetId);
         if (stillCurrent()) {
           this.setScalarMaps({ datasetId, maps });
-          this.setScalarMapsError(null);
+          this.setScalarMapsError({ datasetId, error: null });
         }
       } catch (error) {
         logError("Failed to list the dataset's scalar maps:", error);
         if (stillCurrent()) {
-          this.setScalarMapsError("Could not read the dataset's saved maps.");
+          this.setScalarMapsError({
+            datasetId,
+            error: "Could not read the dataset's saved maps.",
+          });
         }
       } finally {
         if (generation === listRequestGeneration) {

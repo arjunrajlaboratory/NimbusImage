@@ -92,9 +92,10 @@ function ensurePointLayer(): IGeoJSPointFeature {
   if (pointFeature) {
     return pointFeature;
   }
-  // An overlay like the heat maps: ImageViewer keeps it above image layers
-  // added later (orderLayersAboveImages).
+  // An overlay like the heat maps: placed under the annotation stack now and
+  // kept above image layers added later (orderLayersAboveImages).
   pointLayer = registerImageOverlayLayer(
+    props.map,
     props.map.createLayer("feature", { features: ["point"] }),
   );
   pointFeature = pointLayer.createFeature("point", {

@@ -78,14 +78,22 @@ export function isValidScalarMap(map: unknown): map is IScalarMap {
 
 /**
  * The range a map is displayed over by default (and on Reset). A constant
- * map (min == max) is widened to [v - 0.5, v + 0.5], the server's own rule
- * when min/max are omitted: the tile route rejects min == max.
+ * map (min == max) is widened to [v - pad, v + pad] with pad = max(0.5,
+ * |v| * 1e-6), the server's own rule when min/max are omitted: the tile
+ * route rejects min == max.
  */
 export function displayValueRange(
   valueRange: readonly [number, number],
 ): [number, number] {
   const [min, max] = valueRange;
-  return max > min ? [min, max] : [min - 0.5, min + 0.5];
+  if (max > min) {
+    return [min, max];
+  }
+  // A fixed 0.5 is lost to rounding for |v| >= 2^53 (v - 0.5 == v); the
+  // relative term keeps the range open at any magnitude. Same rule as the
+  // server's defaultDisplayRange.
+  const pad = Math.max(0.5, Math.abs(min) * 1e-6);
+  return [min - pad, min + pad];
 }
 
 // Sliders over map values use integer positions: Vuetify rounds a slider's
@@ -302,7 +310,21 @@ export function formatExactValue(value: number): string {
   return Number(value.toPrecision(9)).toString();
 }
 
-/** A share of tissue for display: one decimal below 10 %, whole above. */
+/**
+ * A share the user set (the percent slider, steps of 0.5), shown as set:
+ * "12.5", not rounded to "13", which is a different percentile from the one
+ * previewed. Two decimals at most, trailing zeros dropped.
+ */
+export function formatRequestedShare(share: number): string {
+  if (!Number.isFinite(share)) {
+    return "–";
+  }
+  return Number(share.toFixed(2)).toString();
+}
+
+/** An ESTIMATED share of tissue (derived from a value) for display: one
+ * decimal below 10 %, whole above. Never for a share the user set; see
+ * formatRequestedShare. */
 export function formatShare(share: number): string {
   if (!Number.isFinite(share)) {
     return "–";
@@ -348,7 +370,11 @@ export function workerThresholdForms(
     {
       type:
         side === "above" ? "Top percent of tissue" : "Bottom percent of tissue",
-      threshold: exactPercent ? roundedShare.toString() : formatShare(share),
+      threshold: exactPercent
+        ? roundedShare.toString()
+        : requestedShare !== null
+          ? formatRequestedShare(requestedShare)
+          : formatShare(share),
       approximate: !exactPercent,
     },
     {

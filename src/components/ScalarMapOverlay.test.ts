@@ -241,6 +241,38 @@ describe("ScalarMapOverlay", () => {
     mocks.store.shareLinkTileToken = "share-token";
   });
 
+  it("shows a worker re-run's replacement map without user action", async () => {
+    const { map, osmLayers } = mount();
+    expect(osmLayers).toHaveLength(1);
+    // The store re-listed: "a" was replaced by "b", whose display carried
+    // over (scalarMaps.test.ts), so "b" is visible from the start.
+    mocks.maps.currentMaps = [scalarMap("b")];
+    mocks.maps.display = { b: display() };
+    await nextTick();
+    expect(map.deleteLayer).toHaveBeenCalledWith(osmLayers[0]);
+    expect(osmLayers).toHaveLength(2);
+    expect(osmLayers[1].url).toHaveBeenCalledWith(
+      expect.stringContaining("tiles/b?location=xy0_z0_t0"),
+    );
+    expect(osmLayers[1]._visible).toBe(true);
+  });
+
+  it("hides the layer and requests nothing when a metadata edit removes the current location", async () => {
+    mocks.store.z = 1;
+    mocks.maps.currentMaps = [scalarMap("a", ["xy0_z0_t0", "xy0_z1_t0"])];
+    const { map, osmLayers } = mount();
+    const layer = osmLayers[0];
+    expect(layer._visible).toBe(true);
+    layer.url.mockClear();
+    // New revision, and the current location is gone from the metadata.
+    mocks.maps.currentMaps = [scalarMap("a", ["xy0_z0_t0"], "r2")];
+    await nextTick();
+    vi.advanceTimersByTime(200);
+    expect(layer._visible).toBe(false);
+    expect(layer.url).not.toHaveBeenCalled();
+    expect(map.createLayer).toHaveBeenCalledTimes(1);
+  });
+
   it("only restyles on an opacity change", async () => {
     const { map, osmLayers } = mount();
     const layer = osmLayers[0];

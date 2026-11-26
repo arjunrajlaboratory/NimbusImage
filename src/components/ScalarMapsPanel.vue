@@ -18,8 +18,10 @@
         </template>
       </v-tooltip>
     </div>
-    <div v-if="scalarMapsStore.error" class="mb-2">
-      <p class="text-body-2 text-error">{{ scalarMapsStore.error }}</p>
+    <div v-if="scalarMapsStore.scalarMapsError" class="mb-2">
+      <p class="text-body-2 text-error">
+        {{ scalarMapsStore.scalarMapsError }}
+      </p>
       <v-btn
         variant="outlined"
         color="primary"
@@ -31,7 +33,7 @@
       >
     </div>
     <template v-if="maps.length === 0">
-      <p v-if="!scalarMapsStore.error" class="text-body-2 mb-2">
+      <p v-if="!scalarMapsStore.scalarMapsError" class="text-body-2 mb-2">
         {{
           scalarMapsStore.loading
             ? "Reading saved maps…"
@@ -39,7 +41,7 @@
         }}
       </p>
       <p
-        v-if="!scalarMapsStore.error && !scalarMapsStore.loading"
+        v-if="!scalarMapsStore.scalarMapsError && !scalarMapsStore.loading"
         class="text-caption text-medium-emphasis mb-0"
       >
         Run the Hotspot Regions worker with <em>Save map layer</em> on to create
@@ -290,6 +292,7 @@ import {
   SLIDER_POSITIONS,
   displayValueRange,
   formatMapValue,
+  formatRequestedShare,
   formatShare,
   scalarMapLocationKey,
   scalarMapSummary,
@@ -410,12 +413,15 @@ function thresholdText(map: IScalarMap): string {
   const share = shareOf(map);
   const sideWord = above ? "top" : "bottom";
   // An estimate from the percentiles pooled over every position of the map,
-  // not a count on the plane on screen.
-  const estimate = `≈ ${sideWord} ${formatShare(
-    share.selected,
-  )}% of tissue (all positions)`;
+  // not a count on the plane on screen. A share the user set is shown as set
+  // (no rounding past the slider's 0.5 steps); a derived one is rounded.
+  const shown =
+    share.requested !== null && !share.tied
+      ? formatRequestedShare(share.requested)
+      : formatShare(share.selected);
+  const estimate = `≈ ${sideWord} ${shown}% of tissue (all positions)`;
   if (share.tied && share.requested !== null) {
-    return `${value} · ${estimate}; ${formatShare(
+    return `${value} · ${estimate}; ${formatRequestedShare(
       share.requested,
     )}% requested, more selected because of ties at the cutoff`;
   }
@@ -490,11 +496,38 @@ watch(deleteDialog, (open) => {
   }
 });
 
+function closeDeleteDialog() {
+  deleteDialog.value = false;
+  endDeleteSession();
+}
+
+// The dialog is teleported, so nothing else closes it with its context: end
+// the confirmation when the dataset changes, when the palette is hidden
+// (navigating Home can hide it without changing the dataset), and when the
+// map it names leaves the list (a job's re-list removed it, or another tab
+// deleted it), which would otherwise leave a Delete that does nothing.
+watch(() => store.dataset?.id, closeDeleteDialog);
+
 watch(
-  () => store.dataset?.id,
-  () => {
-    deleteDialog.value = false;
-    endDeleteSession();
+  () => props.visible,
+  (visible) => {
+    if (!visible) {
+      closeDeleteDialog();
+    }
+  },
+);
+
+watch(
+  () =>
+    deleteDialog.value &&
+    pendingDelete.value !== null &&
+    !scalarMapsStore.currentMaps.some(
+      (candidate) => candidate.itemId === pendingDelete.value!.itemId,
+    ),
+  (targetGone) => {
+    if (targetGone) {
+      closeDeleteDialog();
+    }
   },
 );
 

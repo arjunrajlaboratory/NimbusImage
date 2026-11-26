@@ -92,7 +92,7 @@ describe("scalarMaps store", () => {
     mocks.main.dataset = null;
     await scalarMapsStore.refreshScalarMaps();
     mocks.main.dataset = { id: "ds1" };
-    scalarMapsStore.setScalarMapsError(null);
+    scalarMapsStore.setScalarMapsError({ datasetId: null, error: null });
     scalarMapsStore.setScalarMapsLoading(false);
   });
 
@@ -139,11 +139,11 @@ describe("scalarMaps store", () => {
   it("keeps 'could not ask' distinct from 'no maps', and retries", async () => {
     mocks.listMaps.mockRejectedValueOnce(new Error("offline"));
     await scalarMapsStore.refreshScalarMaps();
-    expect(scalarMapsStore.error).toContain("Could not read");
+    expect(scalarMapsStore.scalarMapsError).toContain("Could not read");
     expect(scalarMapsStore.hasMaps).toBe(false);
     mocks.listMaps.mockResolvedValueOnce([]);
     await scalarMapsStore.refreshScalarMaps();
-    expect(scalarMapsStore.error).toBeNull();
+    expect(scalarMapsStore.scalarMapsError).toBeNull();
     expect(scalarMapsStore.hasMaps).toBe(false);
     expect(scalarMapsStore.mapsDatasetId).toBe("ds1");
   });
@@ -211,7 +211,7 @@ describe("scalarMaps store", () => {
     await scalarMapsStore.refreshScalarMaps(true);
     first.reject(new Error("late"));
     await stale;
-    expect(scalarMapsStore.error).toBeNull();
+    expect(scalarMapsStore.scalarMapsError).toBeNull();
   });
 
   it("resets with the dataset and keeps display settings across a re-list", async () => {
@@ -352,7 +352,7 @@ describe("scalarMaps store", () => {
     await scalarMapsStore.refreshScalarMaps(true);
     // A network blip does not wipe what was listed.
     expect(ids()).toEqual(["a"]);
-    expect(scalarMapsStore.error).not.toBeNull();
+    expect(scalarMapsStore.scalarMapsError).not.toBeNull();
 
     // Same with no maps listed: the error keeps the palette offered through
     // the retry, until the retry's answer lands.
@@ -366,7 +366,7 @@ describe("scalarMaps store", () => {
     expect(scalarMapsStore.scalarMapsAvailable).toBe(true);
     retry.resolve([]);
     await retrying;
-    expect(scalarMapsStore.error).toBeNull();
+    expect(scalarMapsStore.scalarMapsError).toBeNull();
     expect(scalarMapsStore.scalarMapsAvailable).toBe(false);
   });
 
@@ -385,5 +385,97 @@ describe("scalarMaps store", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("never shows another dataset's list error over this dataset's list", async () => {
+    await scalarMapsStore.refreshScalarMaps();
+    // Open B; its first list fails.
+    mocks.main.dataset = { id: "ds2" };
+    mocks.listMaps.mockRejectedValueOnce(new Error("offline"));
+    await scalarMapsStore.refreshScalarMaps();
+    expect(scalarMapsStore.scalarMapsError).toContain("Could not read");
+    // Back to A, before (or without) its re-list landing.
+    mocks.main.dataset = { id: "ds1" };
+    expect(scalarMapsStore.scalarMapsError).toBeNull();
+    // B's failure is still B's when it is opened again.
+    mocks.main.dataset = { id: "ds2" };
+    expect(scalarMapsStore.scalarMapsError).toContain("Could not read");
+  });
+
+  function withTool(itemId: string, toolId: string, revision = "r1") {
+    const map = scalarMap(itemId, [0, 10], revision);
+    return { ...map, meta: { ...map.meta, toolId } };
+  }
+
+  it("carries how a map is shown to its replacement from a worker re-run", async () => {
+    mocks.listMaps.mockResolvedValueOnce([withTool("old", "tool1")]);
+    await scalarMapsStore.refreshScalarMaps();
+    scalarMapsStore.updateScalarMapDisplay({
+      itemId: "old",
+      changes: {
+        visible: true,
+        colormap: "magma",
+        opacity: 0.3,
+        min: 4,
+        max: 5,
+      },
+    });
+    // The worker deleted "old" and uploaded "new" for the same tool.
+    mocks.listMaps.mockResolvedValueOnce([withTool("new", "tool1", "r9")]);
+    await scalarMapsStore.refreshScalarMaps(true);
+    expect(scalarMapsStore.display.new).toMatchObject({
+      visible: true,
+      colormap: "magma",
+      opacity: 0.3,
+      // Range and threshold are derived from the new map.
+      min: 0,
+      max: 10,
+      threshold: 8,
+    });
+    expect(scalarMapsStore.display.old).toBeUndefined();
+  });
+
+  it("carries nothing over when the replacement is ambiguous or another tool's", async () => {
+    mocks.listMaps.mockResolvedValueOnce([
+      withTool("a1", "tool1"),
+      withTool("a2", "tool1"),
+      withTool("b1", "tool2"),
+    ]);
+    await scalarMapsStore.refreshScalarMaps();
+    for (const itemId of ["a1", "a2", "b1"]) {
+      scalarMapsStore.updateScalarMapDisplay({
+        itemId,
+        changes: { visible: true },
+      });
+    }
+    mocks.listMaps.mockResolvedValueOnce([
+      // Two tool1 items dropped, one added: ambiguous.
+      withTool("a3", "tool1"),
+      // tool2's item dropped, but the new item is a third tool's.
+      withTool("c1", "tool3"),
+    ]);
+    await scalarMapsStore.refreshScalarMaps(true);
+    expect(scalarMapsStore.display.a3.visible).toBe(false);
+    expect(scalarMapsStore.display.c1.visible).toBe(false);
+  });
+
+  it("re-derives a map's settings after a metadata edit removes a location", async () => {
+    await scalarMapsStore.refreshScalarMaps();
+    scalarMapsStore.updateScalarMapDisplay({
+      itemId: "a",
+      changes: { visible: true, min: 50, max: 60 },
+    });
+    const edited = scalarMap("a", [0, 100], "r2");
+    edited.meta.locations = [{ XY: 1, Z: 0, Time: 0, key: "xy1_z0_t0" }];
+    mocks.listMaps.mockResolvedValueOnce([edited]);
+    await scalarMapsStore.refreshScalarMaps(true);
+    expect(scalarMapsStore.currentMaps[0].meta.locations).toEqual([
+      { XY: 1, Z: 0, Time: 0, key: "xy1_z0_t0" },
+    ]);
+    expect(scalarMapsStore.display.a).toMatchObject({
+      visible: true,
+      min: 0,
+      max: 100,
+    });
   });
 });
