@@ -8,7 +8,7 @@ import pytest
 
 from pytest_girder.assertions import assertStatus, assertStatusOk
 
-from girder.constants import AccessType
+from girder.constants import EDIT_METADATA_FLAG, AccessType
 from girder.models.folder import Folder
 from girder.models.item import Item
 
@@ -151,6 +151,55 @@ class TestResourceBatch:
             )
             assertStatusOk(resp)
             assert result[kind][resourceId] == resp.json, kind
+
+    @pytest.mark.parametrize("level,flags,expected", [
+        (AccessType.READ, [], False),
+        (AccessType.READ, [EDIT_METADATA_FLAG], True),
+        (AccessType.WRITE, [], True),
+    ])
+    def testItemCanEditMetadataMatchesItemEndpoint(
+            self, admin, user, server, level, flags, expected):
+        """_canEditMetadata follows WRITE access or the edit-metadata flag on
+        the item's folder, as GET item/{id} computes it."""
+        folder = utilities.createPrivateFolder(
+            admin, "flag_ds", upenn_utilities.datasetMetadata
+        )
+        Folder().setUserAccess(folder, user, level, flags=flags, save=True)
+        items = [
+            Item().createItem("image%d.tif" % i, admin, folder)
+            for i in range(2)
+        ]
+        itemIds = [str(item["_id"]) for item in items]
+
+        result = batch(server, user, {"item": itemIds})
+
+        for itemId in itemIds:
+            resp = server.request(
+                path="/item/%s" % itemId, method="GET", user=user
+            )
+            assertStatusOk(resp)
+            assert resp.json["_canEditMetadata"] is expected
+            assert result["item"][itemId] == resp.json
+
+    def testItemsAcrossFoldersGetTheirOwnFolderAccess(
+            self, admin, user, server):
+        readFolder, readItem, _ = createSharedResources(admin, user)
+        writeFolder = utilities.createPrivateFolder(
+            admin, "write_ds", upenn_utilities.datasetMetadata
+        )
+        Folder().setUserAccess(
+            writeFolder, user, AccessType.WRITE, save=True
+        )
+        writeItem = Item().createItem("image.tif", admin, writeFolder)
+
+        result = batch(server, user, {
+            "item": [str(readItem["_id"]), str(writeItem["_id"])],
+        })
+
+        assert result["item"][str(readItem["_id"])]["_canEditMetadata"] \
+            is False
+        assert result["item"][str(writeItem["_id"])]["_canEditMetadata"] \
+            is True
 
     def testUnreadableResourcesAreOmitted(self, admin, user, server):
         folder = utilities.createPrivateFolder(

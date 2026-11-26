@@ -1,8 +1,9 @@
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.v1.resource import Resource
-from girder.constants import AccessType, TokenScope
+from girder.constants import EDIT_METADATA_FLAG, AccessType, TokenScope
 from girder.exceptions import RestException
+from girder.models.folder import Folder
 from girder.utility.model_importer import ModelImporter
 from girder.utility.progress import ProgressContext
 
@@ -145,4 +146,30 @@ class CustomResource(Resource):
                 str(doc['_id']): model.filter(doc, user) for doc in docs
             }
 
+        if result.get('item'):
+            self._addCanEditMetadata(result['item'].values(), user)
+
         return result
+
+    def _addCanEditMetadata(self, items, user):
+        """
+        Set ``_canEditMetadata`` on filtered item documents, as GET item/{id}
+        does: the user has WRITE access or the edit-metadata access flag on
+        the item's folder. Girder's per-item check loads the folder for each
+        item, so load the parent folders in one query and apply the same
+        Folder ACL checks to them.
+        """
+        folderModel = Folder()
+        folderIds = list({item['folderId'] for item in items})
+        foldersById = {
+            str(folder['_id']): folder
+            for folder in folderModel.find(
+                {'_id': {'$in': folderIds}},
+                fields=['access', 'public', 'publicFlags'])
+        }
+        for item in items:
+            folder = foldersById[str(item['folderId'])]
+            item['_canEditMetadata'] = (
+                folderModel.hasAccess(folder, user, AccessType.WRITE)
+                or folderModel.hasAccessFlags(
+                    folder, user, EDIT_METADATA_FLAG))
