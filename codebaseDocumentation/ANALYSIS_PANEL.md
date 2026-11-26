@@ -502,7 +502,7 @@ Change any of this and re-check these. Each item names the test that holds it.
   boundary held by *"plots at exactly the cap"*
 - Plot *n* receives gates *0..n-1* only — *"feeds each plot the population passing the PRECEDING gates only"*
 - Input arrays stay identity-stable when nothing changed, so a Z-scrub doesn't re-render every plot — *"keeps plot input arrays identity-stable when nothing changed"*
-- Memoised inputs for removed plots are dropped — *"drops memoized inputs for removed plots"*
+- Memoized inputs for removed plots are dropped — *"drops memoized inputs for removed plots"*
 - A series is built per plot with both axes chosen — *"builds a series per plot with both axes chosen, and none without"*
 - Above the cap, the chained gate counts build no full-population id Set until a plot has a resolved gate (up to ~700K ids per recompute otherwise) — *"builds the reaching population only once a plot has a resolved gate"*
 
