@@ -21,8 +21,12 @@ from ..server.helpers import scalarMap
 from ..server.helpers.scalarMap import (
     MAX_SCALAR_MAP_CACHE_BYTES,
     THRESHOLD_DIM_ALPHA,
+    ScalarMapStorageError,
     colorizeScalarValues,
     colormapLut,
+    defaultDisplayRange,
+    renderScalarMapTile,
+    scalarMapRevision,
     readScalarMapArray,
     sampleScalarMap,
     tilePixelCenters,
@@ -324,9 +328,99 @@ class TestScalarMapHelpers:
             readScalarMapArray(bytes(data), LOCATION, [ROWS, COLS])
 
     def testUnsupportedCompressionIsRefused(self):
-        with pytest.raises(ValueError, match="not a readable .npz"):
+        with pytest.raises(ValueError, match="unsupported compression"):
             readScalarMapArray(_unsupportedCompression(), LOCATION,
                                [ROWS, COLS])
+
+    @pytest.mark.parametrize("method", [
+        zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA,
+    ])
+    def testOnlyNumpysCompressionMethodsAreRead(self, method):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=method) as archive:
+            with archive.open(LOCATION + ".npy", "w") as member:
+                np.lib.format.write_array(
+                    member, np.zeros((ROWS, COLS), np.float32)
+                )
+        with pytest.raises(ValueError, match="unsupported compression"):
+            readScalarMapArray(buffer.getvalue(), LOCATION, [ROWS, COLS])
+
+    def testStorageFailureIsNotABadFile(self):
+        data = _npz(**{LOCATION: np.zeros((ROWS, COLS), np.float32)})
+
+        class FlakyHandle(io.BytesIO):
+            reads = 0
+
+            def read(self, size=-1):
+                FlakyHandle.reads += 1
+                if FlakyHandle.reads > 1:
+                    raise OSError("connection reset by peer")
+                return super().read(size)
+
+        source = scalarMap._BoundedReads(FlakyHandle(data), 1024)
+        with pytest.raises(ScalarMapStorageError):
+            readScalarMapArray(source, LOCATION, [ROWS, COLS])
+        assert not issubclass(ScalarMapStorageError, (ValueError, OSError))
+
+    def testFlatRegionAtTheThresholdIsSelectedOnBothSides(self):
+        # A constant float32 map at a spacing that is not a power of two:
+        # bilinear weights used to land 121 of 2,500 pixels a hair below
+        # 100 and 145 a hair above.
+        array = np.full((4, 4), 100, dtype=np.float32)
+        meta = _meta(gridSpacingPx=12.5, shape=[4, 4])
+        xs, ys = tilePixelCenters(256, 0, 0, 0, 0)
+        values = sampleScalarMap(array, (0, 0), 12.5, xs[:50], ys[:50])
+        assert (values == 100).all()
+        for side in ("above", "below"):
+            png = renderScalarMapTile(
+                array, meta, 50, 50, 256, 0, 0, 0, 0, "viridis", 0, 200,
+                100.0, side,
+            )
+            rgba = np.asarray(Image.open(io.BytesIO(png)))
+            assert (rgba[:50, :50, 3] == 255).all(), side
+
+    def testInterpolationStaysWithinItsSamples(self):
+        rng = np.random.default_rng(3)
+        array = rng.uniform(-5, 5, (6, 7)).astype(np.float32)
+        array[2, 2] = np.nan
+        xs = np.linspace(0, 7 * 9.7, 301)
+        ys = np.linspace(0, 6 * 9.7, 257)
+        values = sampleScalarMap(array, (0, 0), 9.7, xs, ys)
+        valid = ~np.isnan(values)
+        assert values[valid].min() >= np.nanmin(array)
+        assert values[valid].max() <= np.nanmax(array)
+
+    def testRevisionCoversTheWholeMetadata(self):
+        fileDoc = {"_id": "a" * 24, "size": 10}
+        base = scalarMapRevision(fileDoc, _meta())
+        assert scalarMapRevision(fileDoc, _meta()) == base
+        for change in (
+            {"locations": [
+                {"XY": 0, "Z": 0, "Time": 0, "key": LOCATION},
+                {"XY": 1, "Z": 0, "Time": 0, "key": "xy1_z0_t0"},
+            ]},
+            {"valueRange": [0.0, 2.0]},
+            {"percentiles": [float(i) / 50 for i in range(101)]},
+            {"originPx": [4, 0]},
+            {"gridSpacingPx": 4},
+            {"name": "renamed"},
+        ):
+            assert scalarMapRevision(fileDoc, _meta(**change)) != base, change
+        # Key order does not matter (canonical JSON).
+        reordered = dict(reversed(list(_meta().items())))
+        assert scalarMapRevision(fileDoc, reordered) == base
+
+    @pytest.mark.parametrize("value,expected", [
+        (3.0, (2.5, 3.5)),
+        (0.0, (-0.5, 0.5)),
+        (1e17, (1e17 - 1e11, 1e17 + 1e11)),
+    ])
+    def testConstantMapDefaultRange(self, value, expected):
+        low, high = defaultDisplayRange(
+            _meta(valueRange=[value, value], percentiles=[value] * 101)
+        )
+        assert (low, high) == pytest.approx(expected)
+        assert low < value < high
 
     def testFortranOrderMember(self):
         good = np.asfortranarray(
@@ -674,6 +768,12 @@ class TestScalarMapEndpoints:
         etagBefore = _tile(server, item, admin).headers["ETag"]
         for change in (
             {"originPx": [4, 0]}, {"gridSpacingPx": 4},
+            {"locations": [
+                {"XY": 0, "Z": 0, "Time": 0, "key": LOCATION},
+                {"XY": 1, "Z": 0, "Time": 0, "key": "xy1_z0_t0"},
+            ]},
+            {"valueRange": [0.0, 2.0]},
+            {"percentiles": [float(i) / 50 for i in range(101)]},
         ):
             item = Item().setMetadata(
                 item, {"nimbusScalarMap": _meta(**change)}
@@ -732,6 +832,52 @@ class TestScalarMapEndpoints:
         assert second.headers["ETag"] != first.headers["ETag"]
         assert tuple(_rgba(second)[20, 12, :3]) == tuple(viridis[255])
 
+    def testStorageFailureIsAServerError(
+        self, server, admin, fsAssetstore, monkeypatch
+    ):
+        folder = _privateDataset(admin)
+        item = _uploadMap(admin, folder, {
+            LOCATION: np.zeros((ROWS, COLS), dtype=np.float32)
+        }, _meta())
+
+        class FlakyHandle:
+            def __init__(self, handle):
+                self._handle, self._reads = handle, 0
+
+            def read(self, size=-1):
+                self._reads += 1
+                if self._reads > 1:
+                    raise OSError("connection reset by peer")
+                return self._handle.read(size)
+
+            def seek(self, *args):
+                return self._handle.seek(*args)
+
+            def tell(self):
+                return self._handle.tell()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self._handle.close()
+
+        realFile = File()
+
+        class FlakyFile:
+            def open(self, fileDoc):
+                return FlakyHandle(realFile.open(fileDoc))
+
+        monkeypatch.setattr(scalarMap, "File", FlakyFile)
+        resp = server.request(
+            "/scalar_map/%s/tiles/0/0/0" % item["_id"], user=admin,
+            params={"location": LOCATION, "sizeX": SIZE_X,
+                    "sizeY": SIZE_Y, "maxLevel": 0},
+            isJson=False, exception=True,
+        )
+        assertStatus(resp, 500)
+        assert "not a readable .npz" not in _message(resp)
+
     def testCraftedArchiveIs400(self, server, admin, fsAssetstore):
         folder = _privateDataset(admin)
         data = _unsupportedCompression()
@@ -745,7 +891,7 @@ class TestScalarMapEndpoints:
         )
         resp = _tile(server, item, admin)
         assertStatus(resp, 400)
-        assert "not a readable .npz" in _message(resp)
+        assert "unsupported compression" in _message(resp)
 
     def testFileOverGirderSingleReadLimit(self, server, admin, fsAssetstore):
         # Girder's FileHandle refuses one read above 16 MiB by default;

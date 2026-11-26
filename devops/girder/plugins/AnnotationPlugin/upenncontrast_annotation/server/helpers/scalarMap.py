@@ -41,8 +41,8 @@ PERCENTILE_COUNT = 101
 # 32M cells (8192 x 4096) is 128 MiB as float32 and leaves headroom without
 # letting one map item pin the cache.
 MAX_SCALAR_MAP_CELLS = 32 * 1024 * 1024
-# The compressed .npz is read whole into memory before the requested array is
-# decompressed, so its size is bounded too.
+# Largest .npz accepted. It is streamed (never held whole); the cap bounds
+# how much a single map can make a load read.
 MAX_SCALAR_MAP_FILE_BYTES = 512 * 1024 * 1024
 # Girder's FileHandle refuses a single read above core.filehandle_max_size
 # (16 MiB by default), so the file is read in chunks no larger than this
@@ -178,16 +178,14 @@ def scalarMapFileIdentity(fileDoc):
 
 def scalarMapRevision(fileDoc, meta):
     """What the list route returns as `revision` and the tile ETag starts
-    from: the file identity plus a digest of the metadata that places the
-    array on the image (originPx, gridSpacingPx, shape), so a metadata-only
-    correction also changes tile URLs and ETags."""
-    geometry = json.dumps(
-        [meta["originPx"], meta["gridSpacingPx"], meta["shape"]],
-        separators=(",", ":"),
-    )
+    from: the file identity plus a digest of the whole validated
+    `nimbusScalarMap` object (canonical JSON), so any metadata edit (the
+    geometry, locations, valueRange, percentiles, ...) changes tile URLs,
+    ETags and what list consumers derive their state from."""
+    canonical = json.dumps(meta, sort_keys=True, separators=(",", ":"))
     return "%s-%s" % (
         scalarMapFileIdentity(fileDoc),
-        hashlib.sha1(geometry.encode()).hexdigest()[:12],
+        hashlib.sha1(canonical.encode()).hexdigest()[:12],
     )
 
 
@@ -196,10 +194,13 @@ def locationKeys(meta):
 
 
 def defaultDisplayRange(meta):
-    """`valueRange`, widened around a constant map so min < max."""
+    """`valueRange`, widened around a constant map so min < max. The pad is
+    relative for large values, where `v +- 0.5` rounds back to v (from
+    2 ** 53); the client's `displayValueRange` uses the same rule."""
     low, high = (float(v) for v in meta["valueRange"])
     if low == high:
-        return low - 0.5, high + 0.5
+        pad = max(0.5, abs(low) * 1e-6)
+        return low - pad, high + pad
     return low, high
 
 
@@ -264,7 +265,9 @@ def sampleScalarMap(array, originPx, gridSpacingPx, xs, ys):
     NaN-aware: a point whose containing cell is NaN, or that lies outside the
     array, is NaN; otherwise NaN neighbors drop out of the bilinear weights
     and the remaining weights are renormalized, so a NaN neighbor never
-    poisons a valid point and the map's support keeps its cell edges."""
+    poisons a valid point and the map's support keeps its cell edges. A
+    value is clamped to the range of its contributing samples, so a flat
+    region samples exactly to its value."""
     rows, cols = array.shape
     cCell, c0, c1, fx, insideX = _axisSamples(
         xs, originPx[0], gridSpacingPx, cols
@@ -276,6 +279,8 @@ def sampleScalarMap(array, originPx, gridSpacingPx, xs, ys):
     fy = fy[:, np.newaxis]
     total = np.zeros((len(ys), len(xs)), dtype=np.float64)
     weight = np.zeros_like(total)
+    lowest = np.full_like(total, np.inf)
+    highest = np.full_like(total, -np.inf)
     for rowIdx, colIdx, w in (
         (r0, c0, (1 - fy) * (1 - fx)),
         (r0, c1, (1 - fy) * fx),
@@ -287,8 +292,17 @@ def sampleScalarMap(array, originPx, gridSpacingPx, xs, ys):
         w = np.where(valid, w, 0.0)
         total += np.where(valid, values, 0.0) * w
         weight += w
+        lowest = np.where(valid, np.minimum(lowest, values), lowest)
+        highest = np.where(valid, np.maximum(highest, values), highest)
     with np.errstate(invalid="ignore", divide="ignore"):
         result = total / weight
+    # An interpolated value never leaves the range of the samples it mixes;
+    # clamping removes the rounding that made a flat region equal to a
+    # threshold land a hair on either side of it.
+    contributing = weight > 0
+    result[contributing] = np.clip(
+        result[contributing], lowest[contributing], highest[contributing]
+    )
     result[weight <= 0] = np.nan
     result[np.isnan(array[np.ix_(rCell, cCell)])] = np.nan
     result[~insideY, :] = np.nan
@@ -350,10 +364,21 @@ def renderScalarMapTile(array, meta, sizeX, sizeY, tileSize, maxLevel,
 
 # zipfile refuses encrypted members with RuntimeError and unknown compression
 # methods with NotImplementedError (a RuntimeError subclass); both are a bad
-# file, like the rest.
+# file, like the rest. Failures of the storage underneath arrive as
+# ScalarMapStorageError instead, which is not in this tuple.
 _ARCHIVE_ERRORS = (
     zipfile.BadZipFile, zlib.error, EOFError, OSError, RuntimeError,
 )
+# What np.savez and np.savez_compressed write. bzip2 and LZMA decompress a
+# chunk without an output bound, possibly while the .npy header is read,
+# before the shape and cell caps can apply.
+ALLOWED_COMPRESSION = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+
+
+class ScalarMapStorageError(Exception):
+    """Reading the map's file from its assetstore failed (a network or disk
+    error), as opposed to the file being malformed: a server error, not the
+    caller's 400."""
 
 
 def _readNpyHeader(member):
@@ -405,6 +430,13 @@ def readScalarMapArray(source, locationKey, expectedShape):
                     "The map file has no array for location %s"
                     % locationKey
                 )
+            if archive.getinfo(memberName).compress_type \
+                    not in ALLOWED_COMPRESSION:
+                raise ValueError(
+                    "The map array for %s uses an unsupported compression "
+                    "method (only stored or deflated, as numpy writes)"
+                    % locationKey
+                )
             with archive.open(memberName) as member:
                 shape, fortranOrder, dtype = _readNpyHeader(member)
                 if dtype.kind != "f" or len(shape) != 2:
@@ -441,7 +473,11 @@ def readScalarMapArray(source, locationKey, expectedShape):
 class _BoundedReads:
     """A Girder FileHandle with every read split into pieces it accepts:
     it refuses one read above core.filehandle_max_size (16 MiB by default),
-    and zipfile asks for a member's whole compressed size at once."""
+    and zipfile asks for a member's whole compressed size at once.
+
+    An OSError from the handle (disk, or S3 and other network assetstores:
+    requests' exceptions are OSErrors) is re-raised as
+    ScalarMapStorageError, so it is not reported as a malformed file."""
 
     def __init__(self, handle, maxRead):
         self._handle = handle
@@ -453,7 +489,12 @@ class _BoundedReads:
         parts = []
         while size is None or size > 0:
             step = self._maxRead if size is None else min(size, self._maxRead)
-            chunk = self._handle.read(step)
+            try:
+                chunk = self._handle.read(step)
+            except OSError as exc:
+                raise ScalarMapStorageError(
+                    "Reading the map file failed: %s" % exc
+                ) from exc
             if not chunk:
                 break
             parts.append(chunk)
@@ -462,7 +503,12 @@ class _BoundedReads:
         return parts[0] if len(parts) == 1 else b"".join(parts)
 
     def seek(self, offset, whence=io.SEEK_SET):
-        self._handle.seek(offset, whence)
+        try:
+            self._handle.seek(offset, whence)
+        except OSError as exc:
+            raise ScalarMapStorageError(
+                "Seeking in the map file failed: %s" % exc
+            ) from exc
         return self._handle.tell()
 
     def tell(self):
