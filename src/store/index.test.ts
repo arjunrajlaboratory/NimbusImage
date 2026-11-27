@@ -105,6 +105,43 @@ describe("share-link bootstrap identity", () => {
     },
   );
 
+  // The query parameter the request actually leaves with, after the
+  // client's interceptors ran.
+  async function sentParams(client: any) {
+    let params: unknown;
+    await client._axios.get("user/me", {
+      adapter: async (config: any) => {
+        params = config.params;
+        return {
+          data: null,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          config,
+        };
+      },
+    });
+    return params;
+  }
+
+  it("asks for compressed responses on the boot client and a share link's", async () => {
+    expect(await sentParams(main.girderRest)).toEqual({ compress: "zstd" });
+    vi.spyOn(RestClient.prototype, "fetchUser").mockImplementation(
+      async function (this: any) {
+        this.user = { _id: this.token, shareLink: { datasetId: "d" } };
+        return this.user;
+      },
+    );
+    vi.spyOn(ShareLinkAPI.prototype, "me").mockResolvedValue({
+      datasetViewId: "v",
+    } as any);
+
+    await main.openShareLink({ token: "link-token" });
+
+    expect(main.girderRest.token).toBe("link-token");
+    expect(await sentParams(main.girderRest)).toEqual({ compress: "zstd" });
+  });
+
   it("commits only the latest validated link and does not persist its bearer", async () => {
     const storedLogin = localStorage.getItem("nimbus.girderToken");
     vi.spyOn(RestClient.prototype, "fetchUser").mockImplementation(

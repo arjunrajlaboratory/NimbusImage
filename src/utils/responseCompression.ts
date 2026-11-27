@@ -13,7 +13,10 @@ export const COMPRESSION_VALUE = "zstd";
 export function requestCompressedResponses(axios: AxiosInstance) {
   axios.interceptors.request.use((config) => {
     if (config.params instanceof URLSearchParams) {
-      config.params.set(COMPRESSION_PARAM, COMPRESSION_VALUE);
+      // A copy: axios passes the caller's object through by reference.
+      const params = new URLSearchParams(config.params);
+      params.set(COMPRESSION_PARAM, COMPRESSION_VALUE);
+      config.params = params;
     } else {
       config.params = {
         ...config.params,

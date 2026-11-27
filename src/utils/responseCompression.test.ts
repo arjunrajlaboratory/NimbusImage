@@ -38,8 +38,10 @@ describe("requestCompressedResponses", () => {
   });
 
   it("opts URLSearchParams in without dropping them", async () => {
-    const config = await sentConfig(new URLSearchParams("datasetId=ds1"));
+    const callers = new URLSearchParams("datasetId=ds1");
+    const config = await sentConfig(callers);
     expect(config.params.toString()).toBe("datasetId=ds1&compress=zstd");
+    expect(callers.toString()).toBe("datasetId=ds1");
   });
 
   it("puts the opt-in on the URL axios sends", async () => {

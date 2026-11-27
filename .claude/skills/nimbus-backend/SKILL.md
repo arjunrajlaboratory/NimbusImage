@@ -788,7 +788,9 @@ celery workers included. Sample it while the request runs and abort past a cap.
 
 `server/helpers/compression.py` installs a CherryPy `before_handler` tool on the
 API root. It removes the `compress` query parameter from every request under
-`/api/v1`, so no endpoint ever sees it, and when the value is `zstd` it attaches a
+`/api/v1`, from both `request.params` and `request.query_string` (the MCP OAuth
+endpoints refuse any query string), so no endpoint sees it, and when the value is
+`zstd` it attaches a
 `before_finalize` hook to that request. The hook zstd-encodes the response when its
 `Content-Type` is JSON, GeoJSON, CSV or TSV and the client's `Accept-Encoding`
 includes `zstd`. Everything else is sent uncompressed (there is no gzip).

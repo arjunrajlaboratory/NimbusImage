@@ -212,10 +212,24 @@ function clearStoredToken() {
   localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
+// The v4 RestClient's `.get`/`.post`/etc. forward to an internal axios
+// instance and don't expose interceptors on the RestClient itself.
+function axiosOf(client: RestClientInstance): AxiosInstance {
+  return (client as unknown as { _axios: AxiosInstance })._axios;
+}
+
+// Every client the app sends requests through, including the isolated one a
+// share link runs as, asks Girder for compressed responses.
+function createRestClient(apiRoot: string): RestClientInstance {
+  const client = new RestClient({ apiRoot });
+  requestCompressedResponses(axiosOf(client));
+  return client;
+}
+
 function createGirderRestClient(options: {
   apiRoot: string;
 }): RestClientInstance {
-  const client = new RestClient(options);
+  const client = createRestClient(options.apiRoot);
   const stored = loadStoredToken(client.apiRoot);
   if (stored) {
     client.token = stored;
@@ -240,12 +254,8 @@ function createGirderRestClient(options: {
   // Belt-and-suspenders: any 401 anywhere indicates the persisted token is
   // no longer accepted (revoked, server-side cookie_lifetime hit, instance
   // wiped, etc.). Drop the storage so the next reload starts clean rather
-  // than re-sending the dead token on every request. Reaches into `_axios`
-  // because the v4 RestClient's `.get`/`.post`/etc. forward to an internal
-  // axios instance and don't expose interceptors on the RestClient itself.
-  const axios = (client as unknown as { _axios: AxiosInstance })._axios;
-  requestCompressedResponses(axios);
-  axios.interceptors.response.use(
+  // than re-sending the dead token on every request.
+  axiosOf(client).interceptors.response.use(
     (response) => response,
     (error) => {
       if (error?.response?.status === 401) {
@@ -2253,7 +2263,7 @@ export class Main extends VuexModule {
     // Validate on an isolated client with no persisted-login handlers. Even
     // a successful user/me followed by a failed link/me must not change the
     // current token, Vuex identity, or user-dependent state.
-    const candidate = new RestClient({ apiRoot: previousClient.apiRoot });
+    const candidate = createRestClient(previousClient.apiRoot);
     candidate.token = token;
     if (!(await candidate.fetchUser())) {
       throw new Error("This share link is no longer valid.");

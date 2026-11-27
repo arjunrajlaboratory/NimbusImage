@@ -27,6 +27,8 @@ than ~50 MB/s. The body is compressed chunk by chunk without flushing
 between chunks, so even the CSV export, which streams one line per chunk,
 compresses as well as a whole body would.
 """
+from urllib.parse import parse_qsl, urlencode
+
 try:
     from compression import zstd
 except ImportError:  # Python < 3.14; backports.zstd (setup.py)
@@ -51,8 +53,9 @@ ZSTD_LEVEL = 1
 # tens-of-MB one takes only tens of ms.
 ZSTD_STREAMED_THREADS = 2
 
-# The query parameter (and value) that opts a request in. It is removed
-# before the endpoint runs, so no endpoint ever sees it.
+# The query parameter (and value) that opts a request in. It is removed from
+# request.params and request.query_string before the endpoint runs, so no
+# endpoint sees it (the MCP OAuth endpoints refuse any query string).
 OPT_IN_PARAM = "compress"
 OPT_IN_VALUE = "zstd"
 
@@ -102,7 +105,14 @@ def takeCompressionOptIn():
     """before_handler hook: remove the opt-in parameter from the request and,
     when it asks for zstd, compress this response."""
     request = cherrypy.serving.request
-    if request.params.pop(OPT_IN_PARAM, None) == OPT_IN_VALUE:
+    value = request.params.pop(OPT_IN_PARAM, None)
+    if value is None:
+        return
+    pairs = parse_qsl(request.query_string, keep_blank_values=True)
+    request.query_string = urlencode(
+        [(key, item) for key, item in pairs if key != OPT_IN_PARAM]
+    )
+    if value == OPT_IN_VALUE:
         request.hooks.attach("before_finalize", compressResponse, priority=80)
 
 

@@ -64,9 +64,7 @@ def connect(
             over the internet. Pass False when running next to the
             server on a fast private network (a worker, a server-side
             service), where compressing costs more than it saves.
-            Needs a zstd module for urllib3 (Python 3.14+, or
-            ``pip install backports.zstd``); without one the server
-            answers uncompressed.
+            The ``urllib3[zstd]`` dependency provides the decoder.
 
     Returns:
         Authenticated NimbusClient.

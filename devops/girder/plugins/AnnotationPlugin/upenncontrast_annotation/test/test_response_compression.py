@@ -271,10 +271,27 @@ def testOptInParamIsRemovedBeforeTheEndpoint(monkeypatch, value, compressed):
     # Its own map: Request's class-level one is shared by every request.
     request.hooks = cherrypy._cprequest.HookMap(cherrypy._cprequest.hookpoints)
     request.params = {"datasetId": "abc", "compress": value}
+    request.query_string = "datasetId=abc&compress=zstd&sort=a%2Cb&empty="
     monkeypatch.setattr(cherrypy.serving, "request", request)
 
     takeCompressionOptIn()
 
     assert request.params == {"datasetId": "abc"}
+    # Endpoints that read the raw query string don't see it either.
+    assert request.query_string == "datasetId=abc&sort=a%2Cb&empty="
     attached = [hook.callback for hook in request.hooks["before_finalize"]]
     assert (compressResponse in attached) is compressed
+
+
+def testRequestWithoutOptInIsUntouched(monkeypatch):
+    request = cherrypy._cprequest.Request(None, None)
+    request.hooks = cherrypy._cprequest.HookMap(cherrypy._cprequest.hookpoints)
+    request.params = {"datasetId": "abc"}
+    request.query_string = "datasetId=abc&b=%2C"
+    monkeypatch.setattr(cherrypy.serving, "request", request)
+
+    takeCompressionOptIn()
+
+    assert request.params == {"datasetId": "abc"}
+    assert request.query_string == "datasetId=abc&b=%2C"
+    assert not list(request.hooks["before_finalize"])

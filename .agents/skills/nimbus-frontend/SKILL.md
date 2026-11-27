@@ -928,8 +928,10 @@ const result = await store.api.someMethod();
 
 Girder zstd-compresses a JSON/CSV response only when the request carries
 `?compress=zstd` (see nimbus-backend, "API responses are zstd-compressed only on
-request"). `createGirderRestClient` adds it to every axios request, so the API
-classes get it for free. A `fetch()` or a download link built from
+request"). Every app client is built by `createRestClient` in
+`src/store/index.ts`, which adds it to every axios request, so the API classes
+get it for free. Build any new client through it: the share-link client was
+once a bare `new RestClient`, so shared views went out uncompressed. A `fetch()` or a download link built from
 `client.apiRoot` doesn't go through axios: wrap its URL in
 `withCompressionOptIn` (`src/utils/responseCompression.ts`), as the CSV, GeoJSON
 and JSON exports in `ExportAPI.ts` do, or a large export goes out uncompressed.
