@@ -42,7 +42,7 @@ describe("getUnrollCells", () => {
     ]);
   });
 
-  it("leaves cells unlabelled when nothing is unrolled", () => {
+  it("leaves cells unlabeled when nothing is unrolled", () => {
     const cellImages = [0, 1].map((IndexXY) => image({ IndexXY }));
     expect(getUnrollCells({ cellImages, flags: noUnroll })).toEqual([
       { index: 0, label: "", location: {} },

@@ -497,7 +497,7 @@ the new one*, which nothing catches because the component unmounts fine and the
 trailing call usually lands harmlessly.
 
 Guard it with a test that records the throttles **at construction** — the
-version that listed them by name stayed green while two uncancelled ones
+version that listed them by name stayed green while two uncanceled ones
 shipped, and a version that scanned `wrapper.vm` only moved the hand-maintained
 list to `defineExpose` (an unexposed throttle stays invisible there):
 
@@ -1420,7 +1420,7 @@ effect the code under test is checking for:
 ```ts
 function appendAnalysisPlot(id: string) { /* what the real action does */ }
 beforeEach(() => { mock.addAnalysisPlot.mockImplementation(appendAnalysisPlot); });
-// A test layering extra behaviour composes rather than replaces:
+// A test layering extra behavior composes rather than replaces:
 mock.addAnalysisPlot.mockImplementation((id) => { appendAnalysisPlot(id); ...extra... });
 ```
 

@@ -77,7 +77,7 @@ function channels(hex: string): [number, number, number] {
   ];
 }
 
-/** Hue in degrees, recovered from a hex colour. */
+/** Hue in degrees, recovered from a hex color. */
 function hueOf(hex: string): number {
   const [r, g, b] = channels(hex).map((c) => c / 255);
   const max = Math.max(r, g, b);
@@ -102,7 +102,7 @@ describe("trackKey", () => {
   // The viewer builds its components from connections filtered to the displayed
   // time window and the list from scoped ones, so the two iterate a track's
   // members in different orders. Keying on iteration order — which the previous
-  // `Array.from(set)[0]` did — gave one track two different colours.
+  // `Array.from(set)[0]` did — gave one track two different colors.
   it("is independent of iteration order", () => {
     expect(trackKey(new Set(["z", "m", "a"]))).toBe(
       trackKey(new Set(["a", "z", "m"])),
@@ -121,7 +121,7 @@ describe("trackColor", () => {
     );
   });
 
-  it("returns a 6-digit hex colour", () => {
+  it("returns a 6-digit hex color", () => {
     expect(trackColor("abc")).toMatch(/^#[0-9a-f]{6}$/);
   });
 
@@ -157,7 +157,7 @@ describe("trackColor", () => {
   /**
    * The failure this function's golden-angle step exists for, and the one the
    * "spans the hue circle" test above could not see. Track ids are ObjectIds
-   * allocated in one batch, so neighbouring tracks differ in the LAST character
+   * allocated in one batch, so neighboring tracks differ in the LAST character
    * only. Under a plain `hash % 360` their hues came out one degree apart: a
    * real dataset's first five tracks rendered as five indistinguishable greens,
    * rgb(80,226,{162,218,215,213,211}).
@@ -172,7 +172,7 @@ describe("trackColor", () => {
     ];
     // Every palette, not just the default: a shuffle that fixes one collision
     // by making these five indistinguishable is a worse outcome than the
-    // collision. Optimising the neighbour-gap metric alone once picked a step
+    // collision. Optimizing the neighbor-gap metric alone once picked a step
     // that scored 44 deg there and 19.4 deg here.
     for (let seed = 0; seed < TRACK_PALETTE_COUNT; seed++) {
       const hues = ids.map((id) => hueOf(trackColor(id, seed)));
@@ -186,7 +186,7 @@ describe("trackColor", () => {
     }
   });
 
-  it("changes the colour when the seed is bumped", () => {
+  it("changes the color when the seed is bumped", () => {
     expect(trackColor("abc", 1)).not.toBe(trackColor("abc", 0));
   });
 
@@ -204,7 +204,7 @@ describe("trackColor", () => {
         `69fa8984a30941949685${(start + i).toString(16).padStart(4, "0")}`,
     );
 
-  /** Smallest hue gap between ids that are NEIGHBOURS in allocation order. */
+  /** Smallest hue gap between ids that are NEIGHBORS in allocation order. */
   const minAdjacentGap = (ids: string[], seed = 0) => {
     let min = 360;
     for (let i = 1; i < ids.length; i++) {
@@ -250,10 +250,10 @@ describe("trackColor", () => {
   };
 
   /**
-   * Regression for a claim the code made and did not honour. The seed used to be
+   * Regression for a claim the code made and did not honor. The seed used to be
    * folded into the hash accumulator, which for equal-length ids adds the same
    * `31^n · seed` to every hash — a constant offset. Every hue moved, so the
-   * colours looked different and both a unit test and a live browser check
+   * colors looked different and both a unit test and a live browser check
    * accepted it, but every pairwise gap survived: identical gap multiset at every
    * seed, with the closest pair pinned at 2.927°. The one thing Shuffle exists
    * for — separating a pair that collides — was the one thing it could not do.
@@ -273,10 +273,10 @@ describe("trackColor", () => {
   /**
    * The primary property, at the scale it actually degrades. Every palette the
    * seed can select must hold it — a shuffle that fixes one collision by making
-   * neighbouring tracks indistinguishable is a worse outcome than the collision.
+   * neighboring tracks indistinguishable is a worse outcome than the collision.
    * 1/φ, the previous step, measures 4.2° here and would fail this.
    */
-  it("keeps neighbouring ids far apart in every palette", () => {
+  it("keeps neighboring ids far apart in every palette", () => {
     const ids = consecutiveIds(248);
     for (let seed = 0; seed < TRACK_PALETTE_COUNT; seed++) {
       expect(minAdjacentGap(ids, seed)).toBeGreaterThan(20);
@@ -297,7 +297,7 @@ describe("trackColor", () => {
   });
 
   // Only ever incremented in practice, but indexing past the array would yield
-  // an undefined step and a NaN hue — a silently colourless track.
+  // an undefined step and a NaN hue — a silently colorless track.
   it("survives a seed outside the palette range", () => {
     for (const seed of [-1, -7, TRACK_PALETTE_COUNT, TRACK_PALETTE_COUNT * 3]) {
       expect(trackColor("69fa8984a3094194968568c5", seed)).toMatch(

@@ -33,7 +33,7 @@ Treat the ranking as judgment, not a vote count.
 
 ## Already strengths (lead with these)
 
-- Analysis from the viewer without code (gating, UMAP lasso, DE, neighbourhoods, region stats).
+- Analysis from the viewer without code (gating, UMAP lasso, DE, neighborhoods, region stats).
 - Sharing without shipping the data (share links / embeds; Xenium Explorer is desktop-only and its shared views drop custom groups).
 - Speed at scale (708,983 cells interactive).
 

@@ -247,7 +247,7 @@ const toolSuggestionsGlow = ref(false);
 let toolSuggestionsGlowTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function onToolCreationDone() {
-  // The child emitted "done" meaning the dialog is closing/cancelled/finished
+  // The child emitted "done" meaning the dialog is closing/canceled/finished
   toolCreationDialogOpen.value = false;
   selectedToolType.value = null; // Now is the right time to clear it
 }
@@ -268,7 +268,7 @@ function handleToolTypeSelected(toolType: any) {
 
 // "Add tool: …" from the command palette: open tool creation pre-selected,
 // exactly as picking that card in the tool-type dialog does. Cleared once
-// honoured, so asking for the same tool twice is still a change.
+// honored, so asking for the same tool twice is still a change.
 watch(
   toolCreationRequest,
   (request) => {

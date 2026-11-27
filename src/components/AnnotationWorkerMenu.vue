@@ -161,14 +161,14 @@
               {{
                 batchProgress.completed +
                 batchProgress.failed +
-                batchProgress.cancelled
+                batchProgress.canceled
               }}
               / {{ batchProgress.total }} datasets
               <span v-if="batchProgress.failed > 0" class="text-error">
                 ({{ batchProgress.failed }} failed)
               </span>
-              <span v-if="batchProgress.cancelled > 0" class="text-warning">
-                ({{ batchProgress.cancelled }} cancelled)
+              <span v-if="batchProgress.canceled > 0" class="text-warning">
+                ({{ batchProgress.canceled }} canceled)
               </span>
             </div>
             <v-progress-linear
@@ -377,8 +377,8 @@ const batchProgressPercent = computed(() => {
   if (!batchProgress.value || batchProgress.value.total === 0) {
     return 0;
   }
-  const { completed, failed, cancelled, total } = batchProgress.value;
-  return ((completed + failed + cancelled) / total) * 100;
+  const { completed, failed, canceled, total } = batchProgress.value;
+  return ((completed + failed + canceled) / total) * 100;
 });
 
 // Refactored: jobLog side-effect extracted to watch

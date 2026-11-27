@@ -134,7 +134,7 @@ def _requireOutputWithinLimit(metadata, region, output):
         "dtype. Coordinates are in base pixels and are clamped to the "
         "image (negative values are not offsets from the far edge, unlike "
         "tiles/region). If width or height is given, the region is "
-        "downsampled to fit (aspect ratio preserved; nearest neighbour from "
+        "downsampled to fit (aspect ratio preserved; nearest neighbor from "
         "the level read, which may be a lower, averaged pyramid level); it "
         "is never upsampled. At most %d bytes of output samples per request."
         % MAX_RAW_REGION_BYTES

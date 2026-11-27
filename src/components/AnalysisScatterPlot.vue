@@ -519,7 +519,7 @@ function gateShapes(): Record<string, unknown>[] {
 /**
  * Scattergl traces for the display sample: every dot in one trace colored
  * per point, plus legend proxies, for a categorical colorBy; a colorbar trace
- * plus a grey "no value" trace for a numeric one; one plain trace otherwise.
+ * plus a gray "no value" trace for a numeric one; one plain trace otherwise.
  * With a gate, dots outside it are dimmed — computed on the drawn polygon,
  * as a picture of the gate; the gate itself resolves over every object.
  */

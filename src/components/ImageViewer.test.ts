@@ -1021,10 +1021,10 @@ describe("ImageViewer", () => {
       expect(map2.zoom).toHaveBeenCalled();
     });
 
-    it("synchronisationEnabled prevents circular updates", () => {
-      (wrapper.vm as any).synchronisationEnabled = false;
+    it("synchronizationEnabled prevents circular updates", () => {
+      (wrapper.vm as any).synchronizationEnabled = false;
       // When disabled, the sync callback won't update cameraInfo
-      expect((wrapper.vm as any).synchronisationEnabled).toBe(false);
+      expect((wrapper.vm as any).synchronizationEnabled).toBe(false);
     });
   });
 
@@ -2508,9 +2508,9 @@ describe("ImageViewer", () => {
       expect(typeof (wrapper.vm as any).unrollW).toBe("number");
     });
 
-    it("synchronisationEnabled starts as true", () => {
+    it("synchronizationEnabled starts as true", () => {
       wrapper = mountComponent();
-      expect((wrapper.vm as any).synchronisationEnabled).toBe(true);
+      expect((wrapper.vm as any).synchronizationEnabled).toBe(true);
     });
 
     it("scaleWidget starts as null", () => {

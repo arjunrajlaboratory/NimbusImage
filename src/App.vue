@@ -1848,7 +1848,7 @@ $palette-cluster-tone: #0f1217;
    set while it is closed; each badge counts only its own panel's rows).
    The ring reuses the cluster's own tone, opaque, so the count reads as
    separate from the icon glyph it overlaps. It stays within the cluster's 4px
-   padding and its 2px inter-button gap, so it never covers a neighbour. */
+   padding and its 2px inter-button gap, so it never covers a neighbor. */
 .palette-ibtn-badge {
   position: absolute;
   top: -1px;

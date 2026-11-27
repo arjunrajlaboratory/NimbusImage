@@ -873,7 +873,7 @@ export class Filters extends VuexModule {
     );
     if (resolutionPlots.length === 0 && paths.length === 0) {
       // Nothing to fetch or resolve: don't even look at the population, so a
-      // dataset nobody is analysing never pays for any of this.
+      // dataset nobody is analyzing never pays for any of this.
       return "idle";
     }
     const base = this.analysisPopulation;

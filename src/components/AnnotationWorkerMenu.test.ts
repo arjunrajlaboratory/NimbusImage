@@ -287,7 +287,7 @@ describe("AnnotationWorkerMenu", () => {
         total: 10,
         completed: 3,
         failed: 1,
-        cancelled: 1,
+        canceled: 1,
         currentDatasetName: "test",
       },
     });
@@ -602,14 +602,14 @@ describe("AnnotationWorkerMenu", () => {
         ({ onBatchProgress, onComplete }: any) => {
           call++;
           if (call === 1) {
-            onComplete({ succeeded: 1, failed: 0, cancelled: 0 });
+            onComplete({ succeeded: 1, failed: 0, canceled: 0 });
             return Promise.resolve();
           }
           onBatchProgress({
             total: 3,
             completed: 1,
             failed: 0,
-            cancelled: 0,
+            canceled: 0,
             currentDatasetName: "second",
           });
           // Still running when the first batch's timer fires
@@ -665,7 +665,7 @@ describe("AnnotationWorkerMenu", () => {
         total: 4,
         completed: 1,
         failed: 0,
-        cancelled: 0,
+        canceled: 0,
         currentDatasetName: "dataset-2",
       });
       expect(vm.batchProgress?.currentDatasetName).toBe("dataset-2");
@@ -690,7 +690,7 @@ describe("AnnotationWorkerMenu", () => {
     it("ends the run and keeps the outcome when a batch completes", async () => {
       (annotationsStore as any).computeAnnotationsWithWorkerBatch = vi.fn(
         async ({ onComplete }: any) => {
-          onComplete({ succeeded: 2, failed: 0, cancelled: 0 });
+          onComplete({ succeeded: 2, failed: 0, canceled: 0 });
         },
       );
       const vm = mountComponent().vm as any;

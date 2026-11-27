@@ -496,13 +496,13 @@ Change any of this and re-check these. Each item names the test that holds it.
 
 **Panel (`src/components/AnalysisPanel.test.ts`)**
 - Visibility is reported to the store, including on unmount — *"reports its open state to the store, including on unmount"*
-- While hidden, no scatter child mounts, no series builds, and no memoised input population remains; reopening restores them — *"does no display work and retains no plot populations while hidden"*
+- While hidden, no scatter child mounts, no series builds, and no memoized input population remains; reopening restores them — *"does no display work and retains no plot populations while hidden"*
 - Above the cap the panel switches to server-binned heatmaps and builds no
   client series — *"switches to server-binned heatmaps above the point cap"*;
   boundary held by *"plots at exactly the cap"*
 - Plot *n* receives gates *0..n-1* only — *"feeds each plot the population passing the PRECEDING gates only"*
 - Input arrays stay identity-stable when nothing changed, so a Z-scrub doesn't re-render every plot — *"keeps plot input arrays identity-stable when nothing changed"*
-- Memoised inputs for removed plots are dropped — *"drops memoised inputs for removed plots"*
+- Memoized inputs for removed plots are dropped — *"drops memoized inputs for removed plots"*
 - A series is built per plot with both axes chosen — *"builds a series per plot with both axes chosen, and none without"*
 - Above the cap, the chained gate counts build no full-population id Set until a plot has a resolved gate (up to ~700K ids per recompute otherwise) — *"builds the reaching population only once a plot has a resolved gate"*
 
@@ -621,7 +621,7 @@ together across context clears.
    mounted, so display-only work and retained populations survive while hidden.
    **Status: fixed in `9da54518`.** The hidden panel now
    renders no plot subtree, the input-chain watcher unsubscribes from plot data
-   and clears its memoised populations, and the series computed returns before
+   and clears its memoized populations, and the series computed returns before
    touching plot inputs. *"does no display work and retains no plot populations
    while hidden"* covers close, reopen, and close-again transitions.
 4. **Medium — configuration hydration requests analysis twice**

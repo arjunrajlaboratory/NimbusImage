@@ -30,13 +30,13 @@ export const jobLogStatus: { [key: number]: IJobLogStatusProperty } = {
   },
   5: {
     color: "purple",
-    statusText: "Cancelled",
-    stateText: "Job was cancelled.",
+    statusText: "Canceled",
+    stateText: "Job was canceled.",
   },
   824: {
     color: "yellow",
-    statusText: "Cancelling",
-    stateText: "Job is being cancelled...",
+    statusText: "Canceling",
+    stateText: "Job is being canceled...",
   },
 };
 
@@ -55,7 +55,7 @@ export function getJobStateText(status: number): string {
 }
 
 // A job's end timestamp is the first terminal-status entry (3 success,
-// 4 error, 5 cancelled) in its timestamps list.
+// 4 error, 5 canceled) in its timestamps list.
 function findEndTimestamp(job: IJob) {
   return job.timestamps?.find((ts) => [3, 4, 5].includes(ts.status));
 }

@@ -183,7 +183,7 @@ describe("TimelapsePanel", () => {
     const untagged = mountComponent();
     expect(untagged.vm.connectionCount).toBe(2);
     expect(untagged.vm.timelapseTaggedCount).toBe(0);
-    // The v-btn stub serialises the prop, so compare the string: `toBeTruthy`
+    // The v-btn stub serializes the prop, so compare the string: `toBeTruthy`
     // would pass on "false" and prove nothing.
     expect(untagged.find(".delete-btn").attributes("disabled")).toBe("true");
 

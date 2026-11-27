@@ -16,12 +16,12 @@ async computeBatch({
   onCancel: (cancelFn: () => void) => void;
   onComplete: (results: IBatchResults) => void;
 }) {
-  let isCancelled = false;
+  let isCanceled = false;
   const submittedJobIds: string[] = [];
 
   // Provide cancel function IMMEDIATELY (before loop)
   onCancel(() => {
-    isCancelled = true;
+    isCanceled = true;
     for (const jobId of submittedJobIds) {
       api.cancelJob(jobId);
     }
@@ -29,7 +29,7 @@ async computeBatch({
 
   // Dataset loop
   for (const dataset of datasets) {
-    if (isCancelled) break;
+    if (isCanceled) break;
     // ... submit job, await completion
   }
 }
@@ -115,7 +115,7 @@ Errors on individual datasets do NOT stop the batch:
 
 ```typescript
 for (const dataset of datasets) {
-  if (isCancelled) { cancelled++; continue; }
+  if (isCanceled) { canceled++; continue; }
   try {
     await submitAndAwait(dataset);
     completed++;

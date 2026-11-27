@@ -295,7 +295,7 @@ function pollJob(
           await afterWrite(result?.written ?? total, what, request, target);
           return;
         }
-        if (status === jobStates.error || status === jobStates.cancelled) {
+        if (status === jobStates.error || status === jobStates.canceled) {
           if (!polling.isCurrent(request)) return;
           error.value = "The server job failed; see the job log.";
           running.value = false;

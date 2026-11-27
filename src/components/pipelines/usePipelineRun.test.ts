@@ -129,7 +129,7 @@ describe("createPipelineRunController", () => {
       options.onComplete?.({
         succeeded: 1,
         failed: 1,
-        cancelled: 0,
+        canceled: 0,
         failedStepIndex: 1,
       });
     });
@@ -148,10 +148,10 @@ describe("createPipelineRunController", () => {
     expect(controller.jobIdFor(reordered, 1)).toBe("job-step1");
   });
 
-  it("shows the step status the runner reports, cancelled included", async () => {
+  it("shows the step status the runner reports, canceled included", async () => {
     h.pipelinesStore.runPipeline.mockImplementationOnce(async (options) => {
       options.onStepComplete?.(0, "success");
-      options.onStepComplete?.(1, "cancelled");
+      options.onStepComplete?.(1, "canceled");
     });
     const controller = createPipelineRunController();
 
@@ -159,7 +159,7 @@ describe("createPipelineRunController", () => {
 
     expect(
       controller.statusesFor(twoStepPipeline).map(({ status }) => status),
-    ).toEqual(["success", "cancelled"]);
+    ).toEqual(["success", "canceled"]);
   });
 
   it("does not let a finished batch's linger timer hide the next batch's progress", async () => {
@@ -168,12 +168,12 @@ describe("createPipelineRunController", () => {
       total: 2,
       completed: 1,
       failed: 0,
-      cancelled: 0,
+      canceled: 0,
       currentDatasetName: "Dataset 2",
     };
     h.pipelinesStore.runPipelineBatch.mockImplementationOnce(
       async (options: any) => {
-        options.onComplete?.({ succeeded: 2, failed: 0, cancelled: 0 });
+        options.onComplete?.({ succeeded: 2, failed: 0, canceled: 0 });
       },
     );
     let finishSecond!: () => void;
@@ -199,20 +199,20 @@ describe("createPipelineRunController", () => {
   });
 
   describe("switching configuration", () => {
-    function cancelledRun() {
+    function canceledRun() {
       h.pipelinesStore.runPipeline.mockImplementationOnce(async (options) => {
-        options.onStepComplete?.(0, "cancelled");
+        options.onStepComplete?.(0, "canceled");
         options.onComplete?.({
           succeeded: 0,
           failed: 0,
-          cancelled: 1,
+          canceled: 1,
           failedStepIndex: null,
         });
       });
     }
 
     it("forgets a finished run once its configuration is no longer selected", async () => {
-      cancelledRun();
+      canceledRun();
       const controller = createPipelineRunController();
       await controller.run(pipeline);
       expect(controller.result.value).not.toBeNull();
@@ -228,7 +228,7 @@ describe("createPipelineRunController", () => {
     });
 
     it("keeps a finished run while its configuration stays selected", async () => {
-      cancelledRun();
+      canceledRun();
       const controller = createPipelineRunController();
       await controller.run(pipeline);
 
@@ -236,7 +236,7 @@ describe("createPipelineRunController", () => {
       h.store.selectedConfigurationId = "cfg1";
       await nextTick();
 
-      expect(controller.result.value?.cancelled).toBe(1);
+      expect(controller.result.value?.canceled).toBe(1);
     });
 
     it("keeps a run in flight across a switch, then forgets it when it settles", async () => {
@@ -249,7 +249,7 @@ describe("createPipelineRunController", () => {
               options.onComplete?.({
                 succeeded: 1,
                 failed: 0,
-                cancelled: 0,
+                canceled: 0,
                 failedStepIndex: null,
               });
               resolve();

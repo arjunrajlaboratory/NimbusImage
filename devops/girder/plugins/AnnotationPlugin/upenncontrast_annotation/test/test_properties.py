@@ -389,7 +389,7 @@ class TestPropertyEndpoints:
         self, admin, server
     ):
         """A failing cancel is logged, the remaining jobs are still
-        cancelled, and the scheduling error -- not the cancel error -- is
+        canceled, and the scheduling error -- not the cancel error -- is
         what the caller gets."""
         dataset = utilities.createFolder(admin, "batch-cancel-failure", {})
         first, second, third = (

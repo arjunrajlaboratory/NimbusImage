@@ -34,7 +34,7 @@ export interface IBatchRunProgress {
   total: number;
   completed: number;
   failed: number;
-  cancelled: number;
+  canceled: number;
   currentDatasetName: string;
 }
 
@@ -50,7 +50,7 @@ export function stepStatusIcon(status?: TStepStatus): string {
       return "mdi-check-circle";
     case "error":
       return "mdi-close-circle";
-    case "cancelled":
+    case "canceled":
       return "mdi-cancel";
     case "skipped":
       return "mdi-minus-circle-outline";
@@ -65,7 +65,7 @@ export function stepStatusColor(status?: TStepStatus): string | undefined {
       return "success";
     case "error":
       return "error";
-    case "cancelled":
+    case "canceled":
       return "warning";
     default:
       return undefined;
@@ -275,7 +275,7 @@ export function createPipelineRunController() {
       total: collectionDatasetCount.value,
       completed: 0,
       failed: 0,
-      cancelled: 0,
+      canceled: 0,
       currentDatasetName: "Starting…",
     };
     let completed = false;

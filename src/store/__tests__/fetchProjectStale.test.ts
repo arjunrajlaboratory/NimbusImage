@@ -56,7 +56,7 @@ describe("fetchProject", () => {
   });
 
   it("keeps the cached object when a re-read finds no change", async () => {
-    // Views watch the project object and re-initialise (forms, dataset and
+    // Views watch the project object and re-initialize (forms, dataset and
     // access fetches) when it is replaced; an unchanged re-read must not.
     h.main.projectsAPI.getProject.mockResolvedValueOnce(snapshot("draft"));
     await projects.fetchProject("p1");

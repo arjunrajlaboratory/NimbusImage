@@ -552,7 +552,7 @@ Run `pnpm test src/store/colorByProperty.test.ts src/store/applyColorAssignment.
 - [ ] **The assignment matches what was written, exactly** — same ids, same
       colors, value-less annotations absent. —
       *"testAssignmentListsExactlyWhatWasWritten"*,
-      *"testAssignmentCoversEveryColouredAnnotationAtScale"*
+      *"testAssignmentCoversEveryColoredAnnotationAtScale"*
 - [ ] **An empty assignment means "clear everything"**, which is how the clear
       path repaints without a refetch. —
       *"an empty assignment clears every color (the clear path)"*,

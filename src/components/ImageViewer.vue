@@ -461,7 +461,7 @@ const samLoadingMessages = computed(() => {
 // so the SAM watcher fires on swap, but skips deep-walking the GeoJS tree.
 const samMapEntry = shallowRef<IMapEntry | null>(null);
 const mouseState = ref<IMouseState | null>(null);
-let synchronisationEnabled = true;
+let synchronizationEnabled = true;
 
 const blankUrl =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVQIHWNgYAAAAAMAAU9ICq8AAAAASUVORK5CYII=";
@@ -905,7 +905,7 @@ const mapLayerList = computed<ILayerStackImage[][]>(() => {
 
 // One entry per map, index-aligned with mapLayerList (and so with maps): each
 // map draws its own layer group in the "unroll" layer mode, and a group can
-// cover different frames than its neighbour, so cells are derived per map from
+// cover different frames than its neighbor, so cells are derived per map from
 // the layer whose tiles that map shows.
 const unrollCellsByMap = computed<IUnrollCell[][]>(() => {
   if (!unrolling.value) {
@@ -1251,7 +1251,7 @@ function mouseUp(evt: MouseEvent) {
   endMouseCapture("commit");
 }
 
-function synchroniseCameraFromMap(map: IGeoJSMap) {
+function synchronizeCameraFromMap(map: IGeoJSMap) {
   const size = map.size();
   // Setting camera info will apply to all maps thanks to applyCameraInfo
   cameraInfo.value = {
@@ -1273,7 +1273,7 @@ function setCenter(center: IGeoJSPosition) {
     return;
   }
   map.center(center);
-  synchroniseCameraFromMap(map);
+  synchronizeCameraFromMap(map);
 }
 
 function resetRotation() {
@@ -1293,7 +1293,7 @@ function resetView() {
     return;
   }
   map.bounds(map.maxBounds(undefined, null), null);
-  synchroniseCameraFromMap(map);
+  synchronizeCameraFromMap(map);
 }
 
 function setCorners(evt: any) {
@@ -1318,13 +1318,13 @@ function setCorners(evt: any) {
   const zoom = map.zoom() - Math.log2(Math.max(scaling.x, scaling.y));
   map.zoom(zoom);
   map.center(center, null);
-  synchroniseCameraFromMap(map);
+  synchronizeCameraFromMap(map);
 }
 
 function applyCameraInfo() {
   maps.value.forEach((mapentry) => {
     const map = mapentry.map;
-    synchronisationEnabled = false;
+    synchronizationEnabled = false;
     try {
       map.zoom(cameraInfo.value.zoom, undefined, true, true);
       map.rotation(cameraInfo.value.rotate, undefined, true);
@@ -1332,7 +1332,7 @@ function applyCameraInfo() {
     } catch (err) {
       logWarning(err);
     } finally {
-      synchronisationEnabled = true;
+      synchronizationEnabled = true;
     }
   });
 }
@@ -1445,19 +1445,19 @@ const MAX_UNROLL_LABEL_CELLS = 400;
 
 interface IUnrollLabelState {
   widgets: IGeoJSDomWidget[];
-  // Identifies the labelled grid; a change means the widgets are rebuilt.
+  // Identifies the labeled grid; a change means the widgets are rebuilt.
   signature: string;
 }
 
 const unrollLabelStates = new WeakMap<IGeoJSMap, IUnrollLabelState>();
 
-// Cell count of the last grid that went unlabelled, so the warning is logged
+// Cell count of the last grid that went unlabeled, so the warning is logged
 // once per grid rather than on every draw.
 let warnedUnrollLabelCells = 0;
 
-// The cells of one map's grid that get a label: unlabelled ones (every unrolled
+// The cells of one map's grid that get a label: unlabeled ones (every unrolled
 // dimension has a single value) and grids too dense to label are dropped.
-function labelledUnrollCells(mapIndex: number): IUnrollCell[] {
+function labeledUnrollCells(mapIndex: number): IUnrollCell[] {
   const cells = (unrollCellsByMap.value[mapIndex] ?? []).filter(
     (cell) => cell.label,
   );
@@ -1552,7 +1552,7 @@ function updateUnrollLabels() {
     if (!uiLayer) {
       return;
     }
-    const cells = labelledUnrollCells(mapIndex);
+    const cells = labeledUnrollCells(mapIndex);
     const signature = JSON.stringify([
       cells.map((cell) => [cell.index, cell.label]),
       unrollW.value,
@@ -1618,8 +1618,8 @@ function _setupMap(
   if (maps.value.length <= mllidx || needReset) {
     const map = markRaw(geojs.map(params.map));
     const synchronizationCallback = () => {
-      if (synchronisationEnabled) {
-        synchroniseCameraFromMap(map);
+      if (synchronizationEnabled) {
+        synchronizeCameraFromMap(map);
       }
     };
     map.geoOn(geojs.event.pan, synchronizationCallback);
@@ -2546,7 +2546,7 @@ function applyCameraDeepLink() {
     }),
   );
   map.center(center);
-  synchroniseCameraFromMap(map);
+  synchronizeCameraFromMap(map);
 }
 
 watch(
@@ -2670,11 +2670,11 @@ defineExpose({
   samLoadingMessages,
   samMapEntry,
   mouseState,
-  get synchronisationEnabled() {
-    return synchronisationEnabled;
+  get synchronizationEnabled() {
+    return synchronizationEnabled;
   },
-  set synchronisationEnabled(v) {
-    synchronisationEnabled = v;
+  set synchronizationEnabled(v) {
+    synchronizationEnabled = v;
   },
   blankUrl,
   mouseDown,

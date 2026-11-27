@@ -964,7 +964,7 @@ async function propertyAxisExtent(
  * past both the furthest real point on that axis and any bound the caller
  * asked for — the second half matters because an explicit `min` larger than
  * the derived `max` is an inverted rectangle, which this used to reject as
- * bad input rather than recognise as a bound that was too small.
+ * bad input rather than recognize as a bound that was too small.
  */
 function openGateBound(
   extent: number,
@@ -1081,7 +1081,7 @@ const JOB_STATUS_POLL_SECONDS = 10;
 const TERMINAL_JOB_STATES = new Set([
   jobStates.success,
   jobStates.error,
-  jobStates.cancelled,
+  jobStates.canceled,
 ]);
 
 function pruneAgentJobs() {

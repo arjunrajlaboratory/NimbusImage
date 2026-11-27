@@ -456,7 +456,7 @@ export interface IViewConfiguration {
 export type TLayerMode = "single" | "multiple" | "unroll";
 
 /**
- * How timelapse track segments are coloured. "track" gives every connected
+ * How timelapse track segments are colored. "track" gives every connected
  * component its own hue; "uniform" draws them all in `TRACK_UNIFORM_COLOR`,
  * which is easier to read when many tracks overlap.
  */
@@ -575,7 +575,7 @@ export interface IAnnotationBrowserConfig {
   // Analysis-panel scatter plots and their gate polygons. Optional for
   // compatibility with configurations saved before analysis plots existed.
   analysisPlots?: IAnalysisPlot[];
-  // Property path labelling tracks in the Connections tab ([] = default
+  // Property path labeling tracks in the Connections tab ([] = default
   // short-id labels). Optional for compatibility with configurations saved
   // before track labels existed.
   trackLabelPath?: string[];
@@ -2498,7 +2498,7 @@ export interface IPipeline {
 export interface IPipelineRunResult {
   succeeded: number;
   failed: number;
-  cancelled: number;
+  canceled: number;
   failedStepIndex: number | null;
 }
 

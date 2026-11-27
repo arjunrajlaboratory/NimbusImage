@@ -259,7 +259,7 @@ curl -s -X POST -H "Girder-Token: $TOKEN" -H "Content-Type: application/json" \
 
 # Monitor job progress (poll until status changes from 2)
 curl -s -H "Girder-Token: $TOKEN" http://localhost:8080/api/v1/job/JOB_ID
-# Job status codes: 0=inactive, 1=queued, 2=running, 3=success, 4=error, 5=cancelled
+# Job status codes: 0=inactive, 1=queued, 2=running, 3=success, 4=error, 5=canceled
 # Log lines contain JSON: {"progress": 0.5, "current": 3, "total": 7, "message": "Uploading file.tiff..."}
 
 # Verify project status after completion

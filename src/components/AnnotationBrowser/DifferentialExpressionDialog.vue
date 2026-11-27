@@ -250,7 +250,7 @@ function pollJob(jobId: string, sequence: number) {
         }
         if (
           job.status === jobStates.error ||
-          job.status === jobStates.cancelled
+          job.status === jobStates.canceled
         ) {
           error.value = "The comparison job failed; see the job log.";
           running.value = false;

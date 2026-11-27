@@ -48,7 +48,7 @@ export function getValueFromObjectAndPath<T extends Exclude<any, object>>(
   return currentItem;
 }
 
-// Specialised function for UI
+// Specialized function for UI
 // Get a string of the value rounded to to decimals or a dash if no value
 export function getStringFromPropertiesAndPath(
   properties: IAnnotationPropertyValues[0],

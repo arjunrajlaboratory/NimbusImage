@@ -190,7 +190,7 @@ vi.mock("@/store/filters", () => ({
     setAnalysisPlotAxes: vi.fn(),
     setAnalysisPlotGate: vi.fn(),
     hydrateAnalysisPlots: vi.fn(),
-    // Mirrors the real action: hydrate PLUS persist. Modelled as two separate
+    // Mirrors the real action: hydrate PLUS persist. Modeled as two separate
     // recordable calls so a test can tell "restored in memory" apart from
     // "restored durably" — the distinction the memory-only revert turned on.
     restoreAnalysisPlots: vi.fn(),
@@ -355,7 +355,7 @@ beforeEach(() => {
   mockJobs.addJob = vi.fn(() => new Promise<boolean>(() => {}));
   clearTrackedAgentJobs();
   // Per-turn agent budgets are real module state; a leaked count made later
-  // tests hit the turn limit instead of the behaviour they assert.
+  // tests hit the turn limit instead of the behavior they assert.
   clearAgentTurnLimits();
   clearPlots();
 });
@@ -1750,7 +1750,7 @@ describe("update_layer contrast scope", () => {
       delta: { color: "#ff0000" },
       throwOnError: true,
     });
-    // No separate changeLayer write for the colour.
+    // No separate changeLayer write for the color.
     expect(mockMain.changeLayer).not.toHaveBeenCalled();
   });
 });

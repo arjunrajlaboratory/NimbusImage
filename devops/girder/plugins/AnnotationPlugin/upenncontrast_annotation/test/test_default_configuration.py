@@ -1,9 +1,9 @@
 """Tests for the ported default-configuration builder.
 
-The colour tables are transcribed from ``src/store/model.ts``. Rather than
-trusting the transcription, ``TestColourTableParity`` re-parses that file
+The color tables are transcribed from ``src/store/model.ts``. Rather than
+trusting the transcription, ``TestColorTableParity`` re-parses that file
 and compares -- so a palette edit on the frontend fails here instead of
-silently giving API-created datasets different layer colours from
+silently giving API-created datasets different layer colors from
 UI-created ones. It skips when the frontend tree is not reachable (e.g. an
 installed-package test run) rather than failing for the wrong reason.
 """
@@ -50,7 +50,7 @@ class TestDefaultLayers:
         assert len(layers) == 6
         assert [layer["channel"] for layer in layers] == [0, 1, 2, 3, 4, 5]
 
-    def testKnownChannelNamesGetTheirColour(self):
+    def testKnownChannelNamesGetTheirColor(self):
         layers = build_default_layers(
             ["DAPI", "GFP", "CY5"], id_factory=_ids(),
         )
@@ -69,8 +69,8 @@ class TestDefaultLayers:
         layers = build_default_layers(["foo", "bar"], id_factory=_ids())
         assert [layer["color"] for layer in layers] == COLORS[:2]
 
-    def testDuplicateChannelColourFallsBackToThePalette(self):
-        """CY5 and ATTO647 share a colour; the second layer must not
+    def testDuplicateChannelColorFallsBackToThePalette(self):
+        """CY5 and ATTO647 share a color; the second layer must not
         reuse it (mirrors newLayer's `usedColors` check)."""
         layers = build_default_layers(
             ["CY5", "ATTO647"], id_factory=_ids(),
@@ -240,7 +240,7 @@ class TestDefaultConfiguration:
     not os.path.isfile(_MODEL_TS),
     reason="frontend src/store/model.ts not reachable from this checkout",
 )
-class TestColourTableParity:
+class TestColorTableParity:
     """The Python tables must equal the frontend's, parsed from source."""
 
     @staticmethod
@@ -283,7 +283,7 @@ class TestColourTableParity:
         palette, _ = self._frontendTables()
         assert COLORS == palette
 
-    def testChannelColoursMatch(self):
+    def testChannelColorsMatch(self):
         _, channels = self._frontendTables()
         assert CHANNEL_COLORS == channels
 

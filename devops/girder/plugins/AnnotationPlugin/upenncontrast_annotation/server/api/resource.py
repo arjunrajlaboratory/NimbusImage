@@ -1,8 +1,9 @@
 from girder.api import access
 from girder.api.describe import Description, autoDescribeRoute
 from girder.api.v1.resource import Resource
-from girder.constants import AccessType, TokenScope
+from girder.constants import EDIT_METADATA_FLAG, AccessType, TokenScope
 from girder.exceptions import RestException
+from girder.models.folder import Folder
 from girder.utility.model_importer import ModelImporter
 from girder.utility.progress import ProgressContext
 
@@ -145,4 +146,37 @@ class CustomResource(Resource):
                 str(doc['_id']): model.filter(doc, user) for doc in docs
             }
 
+        if result.get('item'):
+            result['item'] = self._addCanEditMetadata(result['item'], user)
+
         return result
+
+    def _addCanEditMetadata(self, itemsById, user):
+        """
+        Set ``_canEditMetadata`` on filtered item documents, as GET item/{id}
+        does: the user has WRITE access or the edit-metadata access flag on
+        the item's folder. Girder's per-item check loads the folder for each
+        item, so load the parent folders in one query and evaluate the same
+        Folder ACL checks once per folder.
+
+        Returns the items whose folder still exists; one deleted since the
+        items were read is omitted, as an unreadable item would be.
+        """
+        folderModel = Folder()
+        canEditByFolderId = {
+            folder['_id']: (
+                folderModel.hasAccess(folder, user, AccessType.WRITE)
+                or folderModel.hasAccessFlags(
+                    folder, user, EDIT_METADATA_FLAG))
+            for folder in folderModel.find(
+                {'_id': {'$in': list(
+                    {item['folderId'] for item in itemsById.values()})}},
+                fields=['access', 'public', 'publicFlags'])
+        }
+        itemsInFolders = {}
+        for itemId, item in itemsById.items():
+            canEdit = canEditByFolderId.get(item['folderId'])
+            if canEdit is not None:
+                item['_canEditMetadata'] = canEdit
+                itemsInFolders[itemId] = item
+        return itemsInFolders
