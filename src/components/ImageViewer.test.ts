@@ -1436,7 +1436,7 @@ describe("ImageViewer", () => {
         .map((overlay) => overlay.props("disabled"));
     }
 
-    it("disables the scalar map and transcript overlays while a dataset view loads", async () => {
+    it("disables the scalar map overlay while a dataset view loads, leaving transcripts to the unroll gate", async () => {
       (scalarMapsStore as any).hasMaps = true;
       (transcriptsStore as any).hasTranscripts = true;
       mockedStore.layerStackImages = [createLayerStackImage()];
@@ -1460,7 +1460,9 @@ describe("ImageViewer", () => {
       sync.setDatasetLoading(true);
       await nextTick();
       expect(overlayDisabledProps("ScalarMapOverlay")).toEqual([true]);
-      expect(overlayDisabledProps("TranscriptOverlay")).toEqual([true]);
+      // TranscriptOverlay applies `disabled` through its pan debounce, so it
+      // keeps master's unroll-only gate.
+      expect(overlayDisabledProps("TranscriptOverlay")).toEqual([false]);
 
       sync.setDatasetLoading(false);
       await nextTick();

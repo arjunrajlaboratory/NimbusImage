@@ -61,7 +61,7 @@
         :sizeX="transcriptImage.sizeX"
         :sizeY="transcriptImage.sizeY"
         :maxLevel="mapentry.params.layer.maxLevel ?? transcriptImage.levels - 1"
-        :disabled="imageOverlaysDisabled"
+        :disabled="unrolling"
       />
     </template>
     <template v-if="scalarMapsStore.hasMaps && transcriptImage">
@@ -828,13 +828,15 @@ let fitAppliedDatasetId: string | null = null;
 const overview = computed(() => store.overview);
 const dataset = computed(() => store.dataset);
 const unrolling = computed(() => store.unroll);
-// The transcript and scalar map overlays draw only where the viewer can draw
-// the matching image. Unrolled, frames sit on a grid the overlays know nothing
-// about. While a dataset view loads (`sync.datasetLoading`), draw() hides the
-// image tiles: setDatasetViewId applies the incoming XY/Z/Time while
-// store.dataset (and every list keyed by it, such as the scalar maps' list)
-// is still the outgoing dataset's, so an overlay drawn then would show the
-// outgoing dataset's data at the incoming position.
+// The scalar map overlay draws only where the viewer can draw the matching
+// image. Unrolled, frames sit on a grid the overlay knows nothing about.
+// While a dataset view loads (`sync.datasetLoading`), draw() hides the image
+// tiles: setDatasetViewId applies the incoming XY/Z/Time while store.dataset
+// (and the scalar maps listed for it) is still the outgoing dataset's, so a
+// map drawn then would show the outgoing dataset's data at the incoming
+// position. The transcript overlay keeps the unrolled-only gate: it handles
+// `disabled` through its pan debounce, so this gate would leave its points
+// up after the image hides.
 const imageOverlaysDisabled = computed(
   () => unrolling.value || sync.datasetLoading,
 );

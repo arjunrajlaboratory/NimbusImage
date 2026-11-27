@@ -289,7 +289,10 @@ folder and describe it in the item's metadata. Part B reads only this.
 
 - **File**: `hotspot_map_<toolId>.npz` (`numpy.savez_compressed`), holding one
   float32 array per location group, keyed `xy{XY}_z{Z}_t{Time}`. Values
-  outside the support mask (§4.1 step 5) are `NaN`.
+  outside the support mask (§4.1 step 5) are `NaN`; every other value is
+  finite (no `+-inf`). Save float32, not float64: the layer compares
+  thresholds against the float32 values, and refuses float64 rather than
+  round it (a float64 0.7 would become 0.699999988 and miss a 0.7 cutoff).
 - **Not an image.** `GirderAPI.getImages()` treats every large-image item in
   the dataset folder as a source of the dataset, so a TIFF there would be
   picked up as dataset data. An `.npz` is not a large image. Verify after the
@@ -318,14 +321,16 @@ folder and describe it in the item's metadata. Part B reads only this.
   `percentiles` are the 0th–100th percentiles of the masked values, pooled
   over locations, so the layer can convert "top 20% of tissue" to a value
   without loading the array. They are **required**: exactly 101 finite,
-  non-decreasing numbers.
+  non-decreasing numbers. Compute them and `valueRange` from the float32
+  values that are saved, not from a float64 intermediate, so a cutoff at a
+  stored percentile compares equal to the cells it came from.
 
   The server validates this object (`validateScalarMapMeta`): version 1,
   `gridSpacingPx > 0`, finite numbers, `valueRange` with min ≤ max, at least
   one location, unique keys matching `xy\d+_z\d+_t\d+`, and at most 32M
   cells. An item that fails, or that holds more or fewer than one file, is
-  not listed. Each `.npz` member must be a 2-D float16, float32 or float64
-  array (no long double) of exactly `shape`, stored or deflated, with an
+  not listed. Each `.npz` member must be a 2-D float32 (or float16) array
+  of exactly `shape`, finite or NaN, stored or deflated, with an
   `.npy` header of at most 10,000 bytes (anything `np.savez` writes). The
   archive may hold at most 16,384 entries and a 2 MiB central directory,
   and the file at most 512 MiB. See `SCALAR_MAP_LAYER.md`.
@@ -365,8 +370,8 @@ most tests need no mocks.
 12. `Fraction above cutoff`: a patch where 80% of cells exceed the cutoff is
     found by `Value at least 0.75`; a patch at 50% is not.
 13. Colonies: `Seed tags` = `Cell tags` yields one region per chained group.
-14. Saved map: array keys match `locations`, NaN outside the mask,
-    `percentiles[80]` equals the threshold used by `Top percent 20`, and
+14. Saved map: array keys match `locations`, arrays are float32, NaN
+    outside the mask and finite elsewhere, `percentiles[80]` equals the threshold used by `Top percent 20`, and
     `Create regions` off writes the map and no annotations.
 
 Plus a live check on a real dataset: run it, then confirm in Nimbus that the

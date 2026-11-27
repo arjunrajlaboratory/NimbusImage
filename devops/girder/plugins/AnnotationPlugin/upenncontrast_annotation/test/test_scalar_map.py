@@ -21,6 +21,7 @@ from girder.models.upload import Upload
 
 from ..server.helpers import scalarMap
 from ..server.helpers.scalarMap import (
+    MAX_CONCURRENT_SCALAR_MAP_DECODES,
     MAX_SCALAR_MAP_CACHE_BYTES,
     THRESHOLD_DIM_ALPHA,
     ScalarMapStorageError,
@@ -249,15 +250,24 @@ class TestScalarMapHelpers:
         with pytest.raises(ValueError):
             colorizeScalarValues(values, "viridis", 1, 1)
 
-    def testInfiniteCellsTakeTheEndColors(self):
-        lut = colormapLut("viridis")
-        values = np.array([[np.inf, -np.inf, 0.5]])
-        rgba = colorizeScalarValues(values, "viridis", 0, 1)
-        assert tuple(rgba[0, 0]) == tuple(lut[-1]) + (255,)
-        assert tuple(rgba[0, 1]) == tuple(lut[0]) + (255,)
-        assert tuple(rgba[0, 2]) == tuple(lut[128]) + (255,)
+    def testInfiniteCellsAreRefused(self):
+        # The contract is finite or NaN. Bilinear sampling multiplies a
+        # zero weight by an inf neighbor (NaN), so an accepted inf cell
+        # blanked the pixels next to it.
+        for value in (np.inf, -np.inf):
+            array = np.ones((ROWS, COLS), dtype=np.float32)
+            array[ROWS - 1, 3] = value
+            with pytest.raises(ValueError, match="infinite"):
+                readScalarMapArray(_npz(**{LOCATION: array}), LOCATION,
+                                   [ROWS, COLS])
+        array = np.ones((ROWS, COLS), dtype=np.float32)
+        array[2, 3] = np.nan
+        readScalarMapArray(_npz(**{LOCATION: array}), LOCATION, [ROWS, COLS])
+
+    def testOverflowingRangeIsRefused(self):
         # Finite bounds whose difference overflows are refused, rather
         # than dividing inf by inf (NaN, whose integer cast is CPU-defined).
+        values = np.array([[3e38, 0.5]])
         with pytest.raises(ValueError, match="finite"):
             colorizeScalarValues(values, "viridis", -1e308, 1e308)
 
@@ -271,14 +281,15 @@ class TestScalarMapHelpers:
             assert rgba[0, 0, 3] == 255, side
 
     def testReadRejectsBadArrays(self, monkeypatch):
-        good = np.zeros((ROWS, COLS), dtype=np.float64)
+        good = np.zeros((ROWS, COLS), dtype=np.float32)
         array = readScalarMapArray(_npz(**{LOCATION: good}), LOCATION,
                                    [ROWS, COLS])
         assert array.dtype == np.float32
         cases = [
             (_npz(**{LOCATION: good}), "xy1_z0_t0", "no array"),
             (_npz(**{LOCATION: good.astype(np.int32)}), LOCATION, "float"),
-            (_npz(**{LOCATION: np.zeros(4)}), LOCATION, "2-D"),
+            (_npz(**{LOCATION: np.zeros(4, np.float32)}), LOCATION,
+             "2-D"),
             (_npz(**{LOCATION: good}), LOCATION, "shape"),
             (b"not a zip", LOCATION, "readable"),
         ]
@@ -292,20 +303,41 @@ class TestScalarMapHelpers:
                                [ROWS, COLS])
 
     def testWideFloatIsRefused(self):
-        # float16/32/64 are read; a 16-byte long double is not. It exists
-        # only where the platform has one (x86-64 and aarch64 Linux; on
-        # macOS arm64 long double is float64).
-        if np.dtype(np.longdouble).itemsize <= 8:
-            pytest.skip("no long double wider than float64 here")
-        for dtype in (np.float16, np.float32, np.float64):
-            readScalarMapArray(
-                _npz(**{LOCATION: np.zeros((ROWS, COLS), dtype)}),
+        # float16 and float32 are read (float16 upcasts exactly); float64
+        # and wider are refused, not rounded to float32.
+        for dtype in (np.float16, np.float32):
+            array = readScalarMapArray(
+                _npz(**{LOCATION: np.full((ROWS, COLS), 0.5, dtype)}),
                 LOCATION, [ROWS, COLS],
             )
-        wide = np.zeros((ROWS, COLS), dtype=np.longdouble)
-        with pytest.raises(ValueError, match="not a 2-D float array"):
-            readScalarMapArray(_npz(**{LOCATION: wide}), LOCATION,
-                               [ROWS, COLS])
+            assert array.dtype == np.float32 and (array == 0.5).all()
+        wide = [np.float64, np.dtype(">f8")]
+        if np.dtype(np.longdouble).itemsize > 8:
+            wide.append(np.longdouble)
+        for dtype in wide:
+            with pytest.raises(ValueError, match="save scalar maps as"):
+                readScalarMapArray(
+                    _npz(**{LOCATION: np.zeros((ROWS, COLS), dtype)}),
+                    LOCATION, [ROWS, COLS],
+                )
+
+    def testFloat32PlateauAtItsOwnValueIsSelected(self):
+        # The client derives a cutoff from the map's own float32 values and
+        # sends the double's shortest round-trip string; `>=` and `<=` on
+        # the float32 samples (compared as float64) select the plateau.
+        array = readScalarMapArray(
+            _npz(**{LOCATION: np.full((ROWS, COLS), 0.7, np.float32)}),
+            LOCATION, [ROWS, COLS],
+        )
+        threshold = float(repr(float(np.float32(0.7))))
+        assert threshold != 0.7
+        for side in ("above", "below"):
+            png = renderScalarMapTile(
+                array, _meta(), SIZE_X, SIZE_Y, 256, 0, 0, 0, 0, "viridis",
+                0, 1, threshold, side,
+            )
+            rgba = np.asarray(Image.open(io.BytesIO(png)))
+            assert (rgba[:SIZE_Y, :SIZE_X, 3] == 255).all(), side
 
     @pytest.mark.parametrize("version", [(1, 0), (2, 0), (3, 0)])
     def testNpyHeaderLengthIsCappedBeforeItIsRead(self, version):
@@ -521,7 +553,7 @@ class TestScalarMapHelpers:
 
     def testFortranOrderMember(self):
         good = np.asfortranarray(
-            np.arange(ROWS * COLS, dtype=np.float64).reshape(ROWS, COLS)
+            np.arange(ROWS * COLS, dtype=np.float32).reshape(ROWS, COLS)
         )
         array = readScalarMapArray(_npz(**{LOCATION: good}), LOCATION,
                                    [ROWS, COLS])
@@ -651,6 +683,57 @@ class TestScalarMapCache:
             assert len(results[key]) == 2
             for array in results[key]:
                 assert (array == index).all()
+
+    def testDecodesAcrossFilesAreBounded(self, monkeypatch):
+        # Each decode holds its raw bytes and the float32 copy before the
+        # cache budget counts them; maps shown together must not each hold
+        # that at once.
+        stats = {}
+        calls = self._countingReader(monkeypatch, stats=stats)
+        count = MAX_CONCURRENT_SCALAR_MAP_DECODES * 3
+        barrier = threading.Barrier(count)
+        results = []
+
+        def load(index):
+            barrier.wait()
+            results.append(scalarMap.loadScalarMapArray(
+                {"_id": "%024x" % index, "size": 10}, _meta(), LOCATION
+            ))
+
+        threads = [
+            threading.Thread(target=load, args=(index,))
+            for index in range(count)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        assert len(calls) == count
+        assert len(results) == count
+        assert stats["peak"] == MAX_CONCURRENT_SCALAR_MAP_DECODES
+
+        # A failed decode gives its slot back: more failures than slots,
+        # then a good load, all finish.
+        def failThenLoad():
+            monkeypatch.setattr(scalarMap, "MAX_SCALAR_MAP_CELLS", 1)
+            for index in range(MAX_CONCURRENT_SCALAR_MAP_DECODES + 1):
+                with pytest.raises(ValueError, match="larger than"):
+                    scalarMap.loadScalarMapArray(
+                        {"_id": "%024x" % (100 + index), "size": 10},
+                        _meta(), LOCATION,
+                    )
+            monkeypatch.setattr(
+                scalarMap, "MAX_SCALAR_MAP_CELLS", ROWS * COLS
+            )
+            results.append(scalarMap.loadScalarMapArray(
+                {"_id": "%024x" % 200, "size": 10}, _meta(), LOCATION
+            ))
+
+        thread = threading.Thread(target=failThenLoad)
+        thread.start()
+        thread.join(10)
+        assert not thread.is_alive()
+        assert len(results) == count + 1
 
     def testCacheStaysWithinBudget(self, monkeypatch):
         self._countingReader(monkeypatch)

@@ -47,6 +47,10 @@ vi.mock("@/store/scalarMaps", async () => {
   };
 });
 
+vi.mock("@/store/sync", async () => ({
+  default: (await import("vue")).reactive({ datasetLoading: false }),
+}));
+
 vi.mock("@/utils/log", () => ({ logError: vi.fn() }));
 vi.mock("@/utils/errors", () => ({
   extractErrorMessage: (error: any) => error?.message ?? String(error),
@@ -55,6 +59,7 @@ vi.mock("@/utils/errors", () => ({
 import ScalarMapsPanel from "./ScalarMapsPanel.vue";
 import scalarMapsStore from "@/store/scalarMaps";
 import store from "@/store";
+import sync from "@/store/sync";
 
 // Uniform 0..200: percentile i is 2i.
 const PERCENTILES = Array.from({ length: 101 }, (_, i) => 2 * i);
@@ -115,6 +120,7 @@ describe("ScalarMapsPanel", () => {
     mocks.setThresholdValue.mockClear();
     (store as any).dataset = { id: "ds1" };
     (store as any).isLoggedIn = true;
+    (sync as any).datasetLoading = false;
     (store as any).girderUser = { _id: "u1" };
     (scalarMapsStore as any).currentMaps = [MAP];
     (scalarMapsStore as any).display = { a: display() };
@@ -301,6 +307,20 @@ describe("ScalarMapsPanel", () => {
     (scalarMapsStore as any).currentMaps = [];
     await nextTick();
     expect(vm.deleteDialog).toBe(false);
+    await vm.confirmDelete();
+    expect(mocks.deleteMap).not.toHaveBeenCalled();
+  });
+
+  it("closes a pending confirmation when a dataset view starts loading and sends no DELETE while it loads", async () => {
+    const vm = mount().vm as any;
+    vm.askDelete(MAP);
+    expect(vm.deleteDialog).toBe(true);
+    // Browser Back to another view: the load starts while store.dataset and
+    // the listed maps are still the dataset being left.
+    (sync as any).datasetLoading = true;
+    await nextTick();
+    expect(vm.deleteDialog).toBe(false);
+    vm.askDelete(MAP);
     await vm.confirmDelete();
     expect(mocks.deleteMap).not.toHaveBeenCalled();
   });

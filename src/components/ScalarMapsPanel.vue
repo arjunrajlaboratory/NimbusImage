@@ -282,6 +282,7 @@
 import { computed, ref, watch } from "vue";
 import store from "@/store";
 import scalarMapsStore, { defaultScalarMapDisplay } from "@/store/scalarMaps";
+import sync from "@/store/sync";
 import {
   IScalarMap,
   IScalarMapDisplay,
@@ -473,9 +474,12 @@ async function confirmDelete() {
   // Only a map of the dataset on screen: the confirmation names one of them.
   // Never a map already being deleted (the store would join that request,
   // but this session did not start it).
+  // Nor while a dataset view loads: `store.dataset`, and so `currentMaps`,
+  // is still the outgoing dataset's until the fetch completes.
   if (
     !map ||
     deleting.value ||
+    sync.datasetLoading ||
     !scalarMapsStore.currentMaps.some(
       (candidate) => candidate.itemId === map.itemId,
     )
@@ -509,11 +513,13 @@ function closeDeleteDialog() {
 }
 
 // The dialog is teleported, so nothing else closes it with its context: end
-// the confirmation when the dataset changes, when the palette is hidden
+// the confirmation when a dataset view starts loading (Back/Forward sets
+// `sync.datasetLoading` while `store.dataset` is still the one being left)
+// or the dataset changes, when the palette is hidden
 // (navigating Home can hide it without changing the dataset), and when the
 // map it names leaves the list (a job's re-list removed it, or another tab
 // deleted it), which would otherwise leave a Delete that does nothing.
-watch(() => store.dataset?.id, closeDeleteDialog);
+watch(() => [store.dataset?.id, sync.datasetLoading], closeDeleteDialog);
 
 watch(
   () => props.visible,

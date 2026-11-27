@@ -291,6 +291,22 @@ describe("ScalarMapOverlay", () => {
     expect(map.createLayer).not.toHaveBeenCalled();
   });
 
+  it("deletes its layers as soon as it is disabled, and a pending slider update cannot redraw them", async () => {
+    const { wrapper, map, osmLayers } = mount();
+    expect(osmLayers).toHaveLength(1);
+    // A slider change schedules a debounced URL update...
+    mocks.maps.display.a = display({ min: 2 });
+    await nextTick();
+    // ...then a dataset view starts loading (ImageViewer disables us).
+    await wrapper.setProps({ disabled: true });
+    expect(map.deleteLayer).toHaveBeenCalledWith(osmLayers[0]);
+    vi.advanceTimersByTime(200);
+    expect(map.createLayer).toHaveBeenCalledTimes(1);
+    expect(osmLayers[0].url).not.toHaveBeenCalledWith(
+      expect.stringContaining("min=2"),
+    );
+  });
+
   it("does not delete layers again from a map that already exited them", () => {
     const parts = makeMap();
     const { wrapper } = mount(parts);

@@ -2,7 +2,7 @@
 (codebaseDocumentation/HOTSPOT_REGIONS_WORKER.md §5.8, §8.2).
 
 No model: a map is an item in the dataset folder whose `nimbusScalarMap`
-metadata describes it; its single file is an .npz of float arrays.
+metadata describes it; its single file is an .npz of float32 arrays.
 Rendering and the array cache live in `helpers/scalarMap.py`.
 """
 

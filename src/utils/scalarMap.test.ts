@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   SLIDER_POSITIONS,
   displayValueRange,
@@ -7,6 +7,7 @@ import {
   formatShare,
   isValidScalarMap,
   percentileBounds,
+  scalarMapLocationIndex,
   scalarMapLocationKey,
   scalarMapSummary,
   scalarMapTitle,
@@ -281,6 +282,21 @@ describe("scalarMap display helpers", () => {
   it("finds the location key for a viewer position, or null", () => {
     expect(scalarMapLocationKey(meta(), 1, 2, 3)).toBe("xy1_z2_t3");
     expect(scalarMapLocationKey(meta(), 1, 0, 0)).toBeNull();
+  });
+
+  it("indexes a map's locations once and looks positions up without a scan", () => {
+    const m = meta();
+    const index = scalarMapLocationIndex(m);
+    expect(scalarMapLocationIndex(m)).toBe(index);
+    // A later lookup reads the index, not the array.
+    const find = vi.spyOn(m.locations, "find");
+    const iterate = vi.spyOn(m.locations, Symbol.iterator as any);
+    expect(scalarMapLocationKey(m, 1, 2, 3)).toBe("xy1_z2_t3");
+    expect(scalarMapLocationKey(m, 1, 0, 0)).toBeNull();
+    expect(find).not.toHaveBeenCalled();
+    expect(iterate).not.toHaveBeenCalled();
+    // A new locations array (a re-list or metadata edit) gets its own index.
+    expect(scalarMapLocationKey({ ...m, locations: [] }, 1, 2, 3)).toBeNull();
   });
 
   it("formats values and shares", () => {

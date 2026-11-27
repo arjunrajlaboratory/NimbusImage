@@ -1,3 +1,4 @@
+import { toRaw } from "vue";
 import {
   IScalarMap,
   IScalarMapMeta,
@@ -397,6 +398,33 @@ export function workerThresholdForms(
   ];
 }
 
+// One position -> key index per `locations` array, built on first use. The
+// overlay and the panel look the key up on every XY/Z/Time change, so a
+// lookup must not scan the locations. A re-list or metadata edit brings a
+// new array and so a new index.
+const locationIndexes = new WeakMap<object, Map<string, string>>();
+
+/** The map's position -> location key index, cached per `locations`. */
+export function scalarMapLocationIndex(
+  meta: IScalarMapMeta,
+): Map<string, string> {
+  // Read through the (reactive) meta so callers track a replaced array.
+  const locations = toRaw(meta.locations);
+  let index = locationIndexes.get(locations);
+  if (!index) {
+    index = new Map();
+    for (const location of locations) {
+      const position = `${location.XY}_${location.Z}_${location.Time}`;
+      // The first listed location wins, as a scan would find it.
+      if (!index.has(position)) {
+        index.set(position, location.key);
+      }
+    }
+    locationIndexes.set(locations, index);
+  }
+  return index;
+}
+
 /** The map's location key for a viewer position, or null without data. */
 export function scalarMapLocationKey(
   meta: IScalarMapMeta,
@@ -404,12 +432,7 @@ export function scalarMapLocationKey(
   z: number,
   time: number,
 ): string | null {
-  return (
-    meta.locations.find(
-      (location) =>
-        location.XY === xy && location.Z === z && location.Time === time,
-    )?.key ?? null
-  );
+  return scalarMapLocationIndex(meta).get(`${xy}_${z}_${time}`) ?? null;
 }
 
 // The descriptive fields are not validated (the server leaves them free and

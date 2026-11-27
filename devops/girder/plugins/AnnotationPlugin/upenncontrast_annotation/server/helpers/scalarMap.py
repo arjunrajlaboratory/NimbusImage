@@ -6,8 +6,9 @@ A scalar map is an item in a dataset folder whose metadata key
 (`numpy.savez_compressed`) holding one 2-D float array per location key
 (`xy{XY}_z{Z}_t{Time}`). Geometry: `array[row, col]` covers image pixels
 `x in [originPx[0] + col * gridSpacingPx, originPx[0] + (col + 1) *
-gridSpacingPx)` and the same in y with `row` and `originPx[1]`. NaN marks
-cells outside the map's support.
+gridSpacingPx)` and the same in y with `row` and `originPx[1]`. Arrays are
+float32 (or float16); every cell is finite or NaN, and NaN marks cells
+outside the map's support. Anything else is refused when the array is read.
 
 Everything here is pure numpy and raises ValueError; the API layer
 (`server/api/scalarMap.py`) maps that to HTTP errors.
@@ -51,6 +52,11 @@ MAX_SCALAR_MAP_FILE_BYTES = 512 * 1024 * 1024
 FILE_READ_CHUNK_BYTES = 8 * 1024 * 1024
 # Process-wide budget for decoded arrays across every map and location.
 MAX_SCALAR_MAP_CACHE_BYTES = 512 * 1024 * 1024
+# Archive reads and decodes in flight at once, across all files. Each holds
+# its member's raw bytes and the float32 copy (up to 2 x 128 MiB) before the
+# cache budget accounts for any of it, so N maps shown at once would
+# otherwise hold N times that.
+MAX_CONCURRENT_SCALAR_MAP_DECODES = 2
 # Alpha of pixels on the unselected side of a threshold: visible enough to
 # keep context, faint enough that would-be regions stand out.
 THRESHOLD_DIM_ALPHA = 64
@@ -319,8 +325,8 @@ def colorizeScalarValues(values, colormap, vmin, vmax, threshold=None,
     if not vmin < vmax:
         raise ValueError("min must be less than max")
     # Finite min and max can still be too far apart to subtract
-    # (-1e308, 1e308); an infinite span would turn an infinite cell into
-    # inf / inf = NaN, whose integer cast is CPU-dependent.
+    # (-1e308, 1e308); with an infinite span, a cell far from min overflows
+    # too and inf / inf = NaN, whose integer cast is CPU-dependent.
     span = float(vmax) - float(vmin)
     if not math.isfinite(span):
         raise ValueError("max - min must be a finite number")
@@ -328,9 +334,6 @@ def colorizeScalarValues(values, colormap, vmin, vmax, threshold=None,
         raise ValueError("thresholdSide must be 'above' or 'below'")
     lut = colormapLut(colormap)
     valid = ~np.isnan(values)
-    # A +-inf cell is a valid value past one end and gets that end's color,
-    # like any other out-of-range value: with a finite span the quotient is
-    # +-inf (never NaN), which np.clip brings to 1 or 0.
     with np.errstate(over="ignore", invalid="ignore"):
         fraction = np.clip(
             (np.where(valid, values, vmin) - vmin) / span, 0, 1
@@ -500,11 +503,12 @@ def readScalarMapArray(source, locationKey, expectedShape):
 
     The source is opened strictly as a ZIP (a bare .npy is refused, not
     decoded), and the one explicit member `<locationKey>.npy` is both
-    checked (2-D float16/32/64, the metadata's shape, the cell cap) and
-    decoded, reading only as many bytes as its checked header allows. Only
-    that member is decompressed; the archive is never held in memory. The
-    central directory (entry count and size) and the member's .npy header
-    length are capped before either is parsed."""
+    checked (2-D float16 or float32, the metadata's shape, the cell cap)
+    and decoded, reading only as many bytes as its checked header allows.
+    Only that member is decompressed; the archive is never held in memory.
+    The central directory (entry count and size) and the member's .npy
+    header length are capped before either is parsed. A member holding
+    +-inf is refused: cells are finite, or NaN for no data."""
     if isinstance(source, (bytes, bytearray)):
         source = io.BytesIO(source)
     memberName = locationKey + ".npy"
@@ -525,15 +529,18 @@ def readScalarMapArray(source, locationKey, expectedShape):
                 )
             with archive.open(memberName) as member:
                 shape, fortranOrder, dtype = _readNpyHeader(member)
-                # float16/32/64 only: a 16-byte long double would double
-                # the decode buffer for precision float32 drops anyway.
-                if (
-                    dtype.kind != "f" or dtype.itemsize > 8
-                    or len(shape) != 2
-                ):
+                if dtype.kind != "f" or len(shape) != 2:
                     raise ValueError(
                         "The map array for %s is not a 2-D float array"
                         % locationKey
+                    )
+                # float16 and float32 only. float64 is refused rather than
+                # rounded: a threshold equal to a float64 cell (0.7) would
+                # then miss its float32 rounding (0.699999988).
+                if dtype.itemsize > 4:
+                    raise ValueError(
+                        "The map array for %s is %s; save scalar maps as "
+                        "float32" % (locationKey, dtype.name)
                     )
                 if list(shape) != list(expectedShape):
                     raise ValueError(
@@ -553,6 +560,14 @@ def readScalarMapArray(source, locationKey, expectedShape):
     if received != expectedBytes:
         raise ValueError("The map array for %s is truncated" % locationKey)
     flat = np.frombuffer(raw, dtype=dtype)
+    # Checked before the float32 copy exists. Bilinear sampling weighs
+    # every neighbor, and 0 * inf is NaN, so an inf cell would blank its
+    # neighbors' pixels.
+    if np.isinf(flat).any():
+        raise ValueError(
+            "The map array for %s has infinite values; cells must be finite, "
+            "or NaN for no data" % locationKey
+        )
     array = (
         flat.reshape(shape[::-1]).T if fortranOrder else flat.reshape(shape)
     )
@@ -638,6 +653,11 @@ _loadLocks = {}
 # file id -> invalidation count. A load started before an invalidation of
 # its file must not put its result in the cache afterwards.
 _fileEpochs = {}
+# Bounds archive reads across files (the per-file lock bounds them within
+# one). Taken after the per-file lock, so waiters for one file still
+# single-flight and a cache hit never waits on it, and released before
+# _cachePut; a holder waits on nothing else, so it cannot deadlock.
+_decodeSlots = threading.BoundedSemaphore(MAX_CONCURRENT_SCALAR_MAP_DECODES)
 
 
 def _cacheGet(key):
@@ -700,7 +720,8 @@ def _checkShape(array, meta, locationKey):
 def loadScalarMapArray(fileDoc, meta, locationKey):
     """The float32 array of `locationKey` from the map's file, through the
     process-wide byte-bounded LRU. At most one load per file runs at a
-    time; concurrent requests for that file wait and re-check the cache."""
+    time; concurrent requests for that file wait and re-check the cache.
+    At most MAX_CONCURRENT_SCALAR_MAP_DECODES loads run across files."""
     fileId = str(fileDoc["_id"])
     identity = scalarMapFileIdentity(fileDoc)
     key = (fileId, identity, locationKey)
@@ -715,7 +736,7 @@ def loadScalarMapArray(fileDoc, meta, locationKey):
         with entry[0]:
             array = _cacheGet(key)
             if array is None:
-                with _openMapFile(fileDoc) as source:
+                with _decodeSlots, _openMapFile(fileDoc) as source:
                     array = readScalarMapArray(
                         source, locationKey, meta["shape"]
                     )

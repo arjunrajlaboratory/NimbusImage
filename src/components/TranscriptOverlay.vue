@@ -53,9 +53,7 @@ const props = defineProps<{
   sizeX: number;
   sizeY: number;
   maxLevel: number;
-  // Unrolled views place frames on a grid the molecules know nothing about,
-  // and while a dataset view loads ImageViewer hides the image tiles the
-  // molecules sit on. ImageViewer sets this in both cases.
+  // Unrolled views place frames on a grid the molecules know nothing about.
   disabled: boolean;
 }>();
 

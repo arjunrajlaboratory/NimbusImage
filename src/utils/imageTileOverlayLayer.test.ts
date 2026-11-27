@@ -207,3 +207,25 @@ describe("orderLayersAboveImages", () => {
     ]);
   });
 });
+
+describe("createImageTileOverlayLayer", () => {
+  it("keeps a partial edge pixel at coarse levels instead of cropping it away", () => {
+    const parts = viewer();
+    parts.named("overlay");
+    createImageTileOverlayLayer({
+      map: parts.map,
+      annotationLayer: parts.stack[2],
+      sizeX: 65536,
+      sizeY: 210,
+      maxLevel: 8,
+      tileSize: 256,
+      opacity: 0.7,
+    });
+    const params = parts.map.createLayer.mock.calls[0][1];
+    // 256x downsampling: 210 rows are less than one pixel, still drawn.
+    expect(params.tilesMaxBounds(0)).toEqual({ x: 256, y: 1 });
+    expect(params.tilesMaxBounds(5)).toEqual({ x: 8192, y: 27 });
+    // Full resolution is exactly the image.
+    expect(params.tilesMaxBounds(8)).toEqual({ x: 65536, y: 210 });
+  });
+});

@@ -51,11 +51,15 @@ export function createImageTileOverlayLayer(
       y: Math.ceil(sizeY / tileSize / scale),
     };
   };
+  // Crop each level to the image, rounding a partial last pixel up as the
+  // image layer does (ImageViewer's tile bounds use Math.ceil). Rounding
+  // down cropped an edge the server rendered, and an edge smaller than one
+  // coarse pixel (210 px at 256x) to nothing, so the overlay vanished there.
   params.layer.tilesMaxBounds = (level: number) => {
     const scale = Math.pow(2, maxLevel - level);
     return {
-      x: Math.floor(sizeX / scale),
-      y: Math.floor(sizeY / scale),
+      x: Math.ceil(sizeX / scale),
+      y: Math.ceil(sizeY / scale),
     };
   };
   // Tiles arrive through <img> requests: normal sessions use Girder's auth
