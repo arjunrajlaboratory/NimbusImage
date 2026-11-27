@@ -11,7 +11,17 @@ const mocks = vi.hoisted(() => ({
   updateDisplay: vi.fn(),
   setThresholdPercent: vi.fn(),
   setThresholdValue: vi.fn(),
+  requestTileRetry: vi.fn(),
+  locationKey: null as any,
 }));
+
+// Spy on the per-card position lookup (the only part of a card that reads
+// the viewer's XY/Z/Time) while keeping its real behavior.
+vi.mock("@/utils/scalarMap", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/utils/scalarMap")>();
+  mocks.locationKey = vi.fn(actual.scalarMapLocationKey);
+  return { ...actual, scalarMapLocationKey: mocks.locationKey };
+});
 
 vi.mock("@/store", async () => ({
   default: (await import("vue")).reactive({
@@ -35,6 +45,8 @@ vi.mock("@/store/scalarMaps", async () => {
       scalarMapsError: null as string | null,
       loading: false,
       deletingMapIds: [] as string[],
+      tileFailedMapIds: [] as string[],
+      requestScalarMapTileRetry: mocks.requestTileRetry,
       refreshScalarMaps: mocks.refreshMaps,
       ensureScalarMapColormapStops: mocks.ensureColormapStops,
       deleteScalarMap: mocks.deleteMap,
@@ -127,7 +139,22 @@ describe("ScalarMapsPanel", () => {
     (scalarMapsStore as any).colormapStops = null;
     (scalarMapsStore as any).scalarMapsError = null;
     (scalarMapsStore as any).deletingMapIds = [];
+    (scalarMapsStore as any).tileFailedMapIds = [];
+    (store as any).xy = 0;
+    (store as any).z = 0;
+    (store as any).time = 0;
+    mocks.requestTileRetry.mockClear();
+    mocks.locationKey.mockClear();
   });
+
+  // Renders the slots of the stubbed Vuetify children, so the card bodies
+  // (and their position lookups) actually render.
+  function mountWithCards(visible = true) {
+    return shallowMount(ScalarMapsPanel, {
+      props: { visible },
+      global: { renderStubDefaultSlot: true },
+    });
+  }
 
   // The store's contract (scalarMaps.test.ts): an item id is in
   // `deletingMapIds` from the DELETE until it settles.
@@ -406,5 +433,54 @@ describe("ScalarMapsPanel", () => {
     (store as any).isLoggedIn = false;
     (store as any).girderUser = null;
     expect((mount().vm as any).canDelete).toBe(false);
+  });
+  it("Refresh lists the maps again and requests failed tiles again", () => {
+    (mount().vm as any).refresh();
+    expect(mocks.requestTileRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshMaps).toHaveBeenLastCalledWith(true);
+  });
+
+  it("warns on a map's card when some of its tiles failed to load", async () => {
+    const wrapper = mountWithCards();
+    expect(wrapper.find(".tiles-failed").exists()).toBe(false);
+    (scalarMapsStore as any).tileFailedMapIds = ["a"];
+    await nextTick();
+    expect(wrapper.find(".tiles-failed").text()).toContain("Press Refresh");
+  });
+
+  it("does no per-frame rendering while hidden, and shows current values when reopened", async () => {
+    const wrapper = mountWithCards(false);
+    expect(wrapper.find(".map-card").exists()).toBe(true);
+    expect(wrapper.find(".threshold-readout").exists()).toBe(false);
+    mocks.locationKey.mockClear();
+    // Scrubbing with the palette closed reads no position.
+    (store as any).z = 1;
+    await nextTick();
+    (store as any).time = 1;
+    await nextTick();
+    expect(mocks.locationKey).not.toHaveBeenCalled();
+    // Reopened at a position without data: says so at once.
+    await wrapper.setProps({ visible: true });
+    expect(wrapper.find(".no-data-here").exists()).toBe(true);
+    expect(wrapper.find(".threshold-readout").exists()).toBe(true);
+    // Open, a scrub re-reads the position.
+    mocks.locationKey.mockClear();
+    (store as any).z = 0;
+    (store as any).time = 0;
+    await nextTick();
+    expect(mocks.locationKey).toHaveBeenCalled();
+    expect(wrapper.find(".no-data-here").exists()).toBe(false);
+  });
+
+  it("keeps the delete confirmation working with the card bodies gated", async () => {
+    const wrapper = mountWithCards();
+    const vm = wrapper.vm as any;
+    vm.askDelete(MAP);
+    await nextTick();
+    expect(vm.deleteDialog).toBe(true);
+    expect(wrapper.text()).toContain("Delete saved map?");
+    await vm.confirmDelete();
+    expect(mocks.deleteMap).toHaveBeenCalledWith("a");
+    expect(vm.deleteDialog).toBe(false);
   });
 });

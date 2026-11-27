@@ -167,6 +167,17 @@ def scalarMapMeta(item):
     return meta
 
 
+def isScalarMapFileSet(fileDocs):
+    """Whether an item's files can back a map: exactly one, stored in an
+    assetstore. A Girder link file (createLinkFile: `assetstoreId` None and
+    a `linkUrl`) cannot be opened as a file. The list route and the tile
+    and delete routes apply this same rule, so an item is listed exactly
+    when its tiles render. Needs each file's `assetstoreId`."""
+    return (
+        len(fileDocs) == 1 and fileDocs[0].get("assetstoreId") is not None
+    )
+
+
 def scalarMapFileIdentity(fileDoc):
     """A string that changes whenever the map's file contents change: a
     re-upload gets a new file id, and Girder's in-place content replacement
@@ -273,8 +284,9 @@ def sampleScalarMap(array, originPx, gridSpacingPx, xs, ys):
     array, is NaN; otherwise NaN neighbors drop out of the bilinear weights
     and the remaining weights are renormalized, so a NaN neighbor never
     poisons a valid point and the map's support keeps its cell edges. A
-    value is clamped to the range of its contributing samples, so a flat
-    region samples exactly to its value."""
+    value is clamped to the range of its contributing samples (finite, with
+    positive weight), so a point whose contributing cells all equal v
+    samples to exactly v."""
     rows, cols = array.shape
     cCell, c0, c1, fx, insideX = _axisSamples(
         xs, originPx[0], gridSpacingPx, cols
@@ -295,7 +307,12 @@ def sampleScalarMap(array, originPx, gridSpacingPx, xs, ys):
         (r1, c1, fy * fx),
     ):
         values = array[np.ix_(rowIdx, colIdx)].astype(np.float64)
-        valid = ~np.isnan(values)
+        # Only a finite sample with positive weight contributes. A
+        # zero-weight neighbor (a pixel level with a cell center on one
+        # axis, or in the half cell before the first center, where the
+        # fraction is clamped to 0) must not widen the clamp bounds, or a
+        # point whose contributing cells all equal v rounds a hair off v.
+        valid = np.isfinite(values) & (w > 0)
         w = np.where(valid, w, 0.0)
         total += np.where(valid, values, 0.0) * w
         weight += w

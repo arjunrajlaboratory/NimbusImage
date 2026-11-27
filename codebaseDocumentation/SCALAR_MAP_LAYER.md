@@ -14,7 +14,7 @@ running the worker again to create regions.
 
 A saved map is a Girder **item directly in the dataset folder** whose metadata
 key `nimbusScalarMap` describes it (version 1, §5.8) and which holds **exactly
-one file**: an `.npz` with one float32 array per location (`xy{XY}_z{Z}_t{Time}`).
+one file**, stored in an assetstore (not a Girder link file): an `.npz` with one float32 array per location (`xy{XY}_z{Z}_t{Time}`).
 There is no model and no collection: the items are the records. The worker
 writes them; the layer only reads them (and can delete one).
 
@@ -39,9 +39,11 @@ deployment. Unlike the spatial plugin's routes, the client does not check
   an estimate over every position of the map. Pixels on the other side are
   dimmed. Below it are the two forms the worker accepts (`Threshold type` +
   `Threshold`), ready to copy.
-- **Refresh** (header) lists the maps again. The list also refreshes on its
-  own whenever a dataset is opened, when the palette is shown, and shortly
-  after any job on the dataset ends, whatever its outcome.
+- **Refresh** (header) lists the maps again and requests again any tile
+  that failed to load (a map with such tiles says so on its card; hiding and
+  showing the map also retries them). The list also refreshes on its own
+  whenever a dataset is opened, when the palette is shown, and shortly after
+  any job on the dataset ends, whatever its outcome.
 - **Delete** (with confirmation) is hidden for logged-out sessions and share
   links; the server enforces WRITE and its message is shown on refusal.
 - A map with no array for the current XY/Z/Time shows a note and draws
@@ -58,9 +60,9 @@ Files: `server/api/scalarMap.py` (routes), `server/helpers/scalarMap.py`
 
 | Route | Access | Returns |
 |---|---|---|
-| `GET scalar_map?datasetId=` | READ on the folder | `[{itemId, updated, revision, meta}]`, oldest first. One `Item().find` on the folder plus one batched `File().find` (`$in`). Items whose metadata does not validate, or that do not hold exactly one file, are skipped. |
+| `GET scalar_map?datasetId=` | READ on the folder | `[{itemId, updated, revision, meta}]`, oldest first. One `Item().find` on the folder plus one batched `File().find` (`$in`). Items whose metadata does not validate, or that do not hold exactly one assetstore-backed file (a Girder link file, `assetstoreId: null` plus `linkUrl`, cannot be opened), are skipped. The file query projects `assetstoreId` so the list and `_mapFile` share one predicate, `isScalarMapFileSet`. |
 | `GET scalar_map/{itemId}/tiles/{z}/{x}/{y}` | READ, cookie auth (GeoJS loads tiles through `<img>`); share links send `token=` | PNG. Params: `location`, `sizeX`, `sizeY`, `maxLevel`, `tileSize` (256/512/1024), `colormap`, `min`, `max`, `threshold?`, `thresholdSide?`. |
-| `DELETE scalar_map/{itemId}` | WRITE | Removes the item and drops its cached arrays. 400 for an item the list would skip: invalid metadata, or not exactly one file (the same check and message as the tile route, `_mapFile`). |
+| `DELETE scalar_map/{itemId}` | WRITE | Removes the item and drops its cached arrays. 400 for an item the list would skip: invalid metadata, or not exactly one stored file (the same check and message as the tile route, `_mapFile`). |
 
 `revision` (`scalarMapRevision`) is
 `<file id>-<size>-<file created, %Y%m%d%H%M%S%f>[-<sha512 prefix>]-<metadata digest>`.
@@ -188,7 +190,12 @@ metadata can change under a cached array.
   interpolated value can never legitimately leave it, and the clamp makes a
   flat region sample exactly to its value (without it, a constant 100 map at
   12.5 px spacing came out a hair off 100 in 266 of 2,500 pixels, dimmed by a
-  threshold of 100 on either side).
+  threshold of 100 on either side). Only finite samples with **positive**
+  weight contribute, to the sum and to the clamp bounds: a zero-weight
+  neighbor (a pixel level with a cell center on one axis, or in the half
+  cell before the first center) used to widen the bounds, so a value next
+  to a NaN came out one ULP off its cell. The invariant: a pixel whose
+  contributing cells all equal v samples to exactly v.
 - **Color.** The colormap's anchor table from `server/helpers/colormaps.py`
   (the same tables color-by-property uses) is interpolated to a 256-entry
   LUT; values clamp to `[min, max]`. Omitted `min`/`max` default to
@@ -245,8 +252,12 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
 - **When the list is fetched.** `refreshScalarMaps()` runs when a dataset is
   opened in the viewer (a new dataset, a reload, or a return to it), when the
   palette is shown, about a second after any job on the open dataset ends,
-  and from Refresh/Retry (forced). A non-forced call shares the request
-  already in flight for the same dataset.
+  and from Refresh/Retry. Opening a dataset, a job's end and Refresh/Retry
+  force a new request; only the palette being shown shares the request
+  already in flight for the same dataset. Opening was not forced at first:
+  leaving the viewer and reopening the same dataset before the earlier list
+  settled joined that request, whose answer could predate a map saved since,
+  and the Map Layers button stayed hidden.
 - **After a job.** `jobs.ts` calls `scheduleScalarMapsRefresh()` on every
   terminal state, not only success: the worker deletes the previous map
   before uploading the new one, so a run that fails or is canceled in between
@@ -294,6 +305,22 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
   share-link token re-sync immediately. Colormap, range and threshold change
   the existing layer's URL after a 150 ms debounce. Opacity is
   `layer.opacity()` only.
+- **Failed tiles.** GeoJS keeps a rejected tile in its cache and never asks
+  for it again, so a transient failure (a 500, a network blip) left a hole
+  that the palette's Refresh did not fill (a re-list with the same revision
+  leaves the URL as it was). `hookTileFailures` (shared util, opt-in; the
+  transcript density layer does not use it) wraps `_getTileCached`, never
+  the pre-cache `_getTile` (nimbus-geojs skill), hooks each tile once, and
+  reports only a tile still in the layer's cache when it rejects (the fetch
+  queue also rejects queued tiles a pan purged, which are simply created
+  again). The overlay then marks the map in the store's `tileFailedMapIds`
+  (the card shows a warning). Refresh commits `requestScalarMapTileRetry`;
+  the overlay resets the cache of every marked layer and draws the map, so
+  those tiles are requested again. The mark lives as long as the layer
+  whose tile failed: it is cleared by the retry, a new tile URL, and the
+  layer's deletion (hidden, deleted, unlisted, disabled, unmount), and the
+  store prunes it on a re-list that drops the item, a delete, and another
+  dataset's list. A deleted layer's late failure marks nothing.
 - A hidden map's layer is deleted. A location the map has no array for hides
   the layer and requests nothing. Layers of deleted maps or another dataset
   are deleted on the next sync; all are deleted on unmount, and only while
@@ -393,8 +420,10 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
   mounted). Its "no data at the current position" check and the overlay's
   tile location both go through `scalarMapLocationKey`, an O(1) lookup in a
   position index built once per `locations` array (`scalarMapLocationIndex`),
-  so an XY/Z/Time scrub never scans a map's locations, even with the palette
-  hidden.
+  so an XY/Z/Time scrub never scans a map's locations. The card bodies (the
+  only part that reads the position) render only while the palette is shown
+  (`visible`), so a closed palette does no per-frame rendering; reopening it
+  renders current values at once. The delete dialog is outside the cards.
 - **Delete confirmations are sessions.** The palette lives as long as the
   app, so a dialog can outlive its dataset (browser Back/Forward) and a
   request can outlive its dialog (Escape while deleting); the dialog is
@@ -446,11 +475,13 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **The button does not flash.** `loading` counts as available only during the first list for a dataset; a re-list of a dataset known to have no maps keeps the button hidden. A failed re-list keeps the last good list, and a retry keeps the error (and the button) until it lands. — *"offers the palette during the first list only, not on a re-list of a dataset with no maps"*, *"keeps the last good list and stays offered while a failed re-list is retried"*
 - [ ] **The palette lists only while shown.** — *"lists maps only while shown, and again for a new dataset"*
 - [ ] **Concurrent callers share one request.** Opening a dataset with the palette open must not send two. — *"shares a request in flight for the same dataset unless forced"*, *"lists again for every call once the previous one finished"*
+- [ ] **Reopening a dataset forces a fresh lookup**, never joining a request from before the viewer was left (its answer may predate a newly saved map). — *"forces a fresh map lookup when the viewer reopens a dataset, never joining a request from before it left"*, *"ignores an answer that lands after a newer (forced) request"*
 
 ### Access
 
 - [ ] **List and tiles need READ; delete needs WRITE and refuses non-maps.** — *"testListReturnsOnlyValidMapsAndEnforcesRead"*, *"testTileEnforcesRead"*, *"testDeleteNeedsWriteAndRefusesNonMaps"*
 - [ ] **Delete removes only what the list shows.** An item with map metadata but no file or a second file is refused with the tile route's 400 (one `_mapFile` check), not removed. — *"testDeleteRefusesAnItemTheListSkips"*
+- [ ] **A map whose one file is a Girder link file is not listed, and its tile and delete are the same 400** (not a 500 from `File().open()`): the list's batched file query and `_mapFile` share `isScalarMapFileSet` (one assetstore-backed file). — *"testLinkFileMapIsNotListedAndItsTileAndDeleteAre400"*
 - [ ] **Revalidated tiles re-check READ.** A 304 is answered only after the access check. — *"testTilesRevalidateWithEtag"*
 - [ ] **Share views put their token on the tile URL.** — *"adds the threshold, version and share-view token only when set"*
 - [ ] **Delete is offered only to sessions that can write.** — *"offers delete only to sessions that can write"*
@@ -461,6 +492,7 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **Sampling is bilinear and NaN-aware**, and off-array, off-image and NaN pixels are transparent. — *"testSamplingMatchesBruteForce"*, *"testNanNeighborDoesNotPoisonValidPixel"*, *"testOutsideArrayIsNan"*, *"testTileColorsNanAndOutside"*, *"testTileAtLowerLevel"*
 - [ ] **The threshold comparison is inclusive on both sides**, matching the worker and the panel's tie readout. — *"testThresholdIsInclusive"*, *"testTileThresholdBothSides"*
 - [ ] **A flat region equal to the threshold is selected on both sides.** Sampling clamps to the range of the contributing samples; without it a constant map came out a hair off its value and was dimmed. — *"testFlatRegionAtTheThresholdIsSelectedOnBothSides"*, *"testInterpolationStaysWithinItsSamples"*
+- [ ] **A pixel whose finite, positive-weight neighbors all equal v samples to exactly v (bitwise)**, over integer and fractional spacings, several origins, NaN neighbors on each side and float32 values. A zero-weight neighbor must not widen the clamp bounds (it did, next to a NaN, at cell-center-aligned pixels and along the left and top half-cell band). — *"testPointWhoseContributingCellsAllEqualVIsExactlyV"*
 - [ ] **A constant map renders.** Its range is widened to `[v - pad, v + pad]`, `pad = max(0.5, abs(v) * 1e-6)`, by the server's default and by the client's default and Reset (the client used to send `min == max`, a 400 on every tile; a fixed 0.5 pad is a no-op from 2^53). — *"testDefaultRangeOfConstantMap"*, *"testConstantMapDefaultRange"*, *"widens a constant map's range by the server's rule"*, *"widens a constant map's default range and its reset range"*, *"keeps a constant map's range open at large magnitudes"*
 - [ ] **A replaced file is never served stale**, by the server cache, the ETag or the client URL. — *"testCacheNotStaleAfterFileReplaced"*, *"re-syncs at once when the file's revision or the share-view token changes"*
 - [ ] **A same-size in-place replacement on an assetstore without checksums is not stale.** The file identity includes the file's `created`, which Girder rewrites on in-place replacement. — *"testSameSizeReplacementWithoutChecksumIsNotStale"*
@@ -493,6 +525,8 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 
 - [ ] **One layer per shown map, with the shared heat-map setup; deleted when hidden, deleted, or unmounted.** — *"creates one layer per visible map with the shared heat-map setup"*, *"removes a layer when its map is hidden or deleted, and on unmount"*
 - [ ] **Layers are not deleted twice from a map that already exited them.** — *"does not delete layers again from a map that already exited them"*
+- [ ] **A failed tile marks its map, and Refresh requests it again.** The hook is attached after GeoJS caches the tile, once per tile; the retry resets only marked layers and draws the map. — *"marks a map whose tile fails to load, and a retry request makes that tile load again"*, *"Refresh lists the maps again and requests failed tiles again"*, *"warns on a map's card when some of its tiles failed to load"*
+- [ ] **No false or stale failed-tile marks.** Tiles that load never mark; a purged tile, a tile of a previous URL and a deleted layer's tile failing late mark nothing; a new URL, hiding and unmounting clear the mark; the store drops it with the item or the dataset. — *"never marks a map whose tiles load, and a retry request leaves its layer alone"*, *"ignores a failure from a tile the cache no longer holds (a new URL, or a purge)"*, *"clears the mark with a new URL, and when the map is hidden or the overlay unmounts"*, *"keeps a map's failed-tiles mark only while the map is listed"*
 - [ ] **TranscriptOverlay is unchanged by the shared layer util** (apart from the edge rounding below). — *"creates heat-map layers that keep only the current level"*, *"draws one heat map per gene in its own color and deletes removed ones"*
 - [ ] **Overlays stay above display layers added after them** (scalar maps and transcript heat maps and points), and under the annotation stack; nothing moves when the order is already right. — *"keeps overlays above display layers added after them"*, *"keeps several overlays in their order and any registered layer counts"*, *"does nothing when the order is already right"*, *"orders the annotation stack above the images as before when there is no overlay"*
 - [ ] **A new overlay is placed below the overview raster and worker preview at once**, not only at the next viewer draw, and that draw then moves nothing. — *"places a new overlay below the overview raster at once, without a viewer draw"*, *"goes under the annotation layer before the viewer has ordered the map"*
@@ -514,6 +548,7 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **The range thumbs stay one position apart** instead of a collapsed range being dropped. — *"keeps the range thumbs at least one position apart instead of dropping the update"*, *"keeps the range one position wide instead of dropping a collapsed range"*
 - [ ] **A delete confirmation belongs to its dataset, its palette and its session.** A dataset view starting to load, a dataset switch, hiding the palette or the target leaving the list closes it; nothing is deleted while a view loads (the outgoing dataset's maps are still listed then); a map not on screen is never deleted; and a late result never closes or writes into a later confirmation. — *"closes a pending confirmation when a dataset view starts loading and sends no DELETE while it loads"*, *"closes a pending confirmation on a dataset switch and never deletes the previous dataset's map"*, *"ends a confirmation when the palette is hidden"*, *"ends a confirmation when its map leaves the list"*, *"applies a delete's result only to the confirmation that started it"*
 - [ ] **Closing a confirmation does not end its DELETE.** Reopening the same map's confirmation mid-delete shows it still deleting and cannot send a second DELETE. — *"sends one DELETE when the confirmation is closed mid-delete, reopened and confirmed"*
+- [ ] **A closed palette does no per-frame rendering** (card bodies gated on `visible`), reopening shows current values at once, and the delete dialog still works. — *"does no per-frame rendering while hidden, and shows current values when reopened"*, *"keeps the delete confirmation working with the card bodies gated"*
 - [ ] **A map missing descriptive fields still shows sensibly** ("Untitled map", absent parts left out) and is not rejected. — *"falls back for a map missing its descriptive fields"*
 
 ### Symmetric pairs — change one, check the other
@@ -528,7 +563,8 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 | the tile URL's `threshold` | the copyable worker value (one `exactNumberString`) |
 | ImageViewer hiding image tiles while a view loads | the scalar map overlay drawn over them (`imageOverlaysDisabled`; transcripts are gated on unroll only) |
 | the tile ETag inputs | the client's URL inputs (revision, token, every display parameter) |
-| `TranscriptOverlay` density layers | `ScalarMapOverlay` layers (one shared setup util) |
+| `TranscriptOverlay` density layers | `ScalarMapOverlay` layers (one shared setup util; only the scalar map layer hooks tile failures) |
+| a tile failure marking a map | every way its layer's cache empties (retry, new URL, layer deleted), each clearing the mark |
 | the app-bar button's availability | the command-palette entry's `isAvailable` |
 | a job that succeeds | a job that fails or is canceled (both re-list) |
 | the annotation stack in the viewer's ordering step | the registered overlays (raised first) |

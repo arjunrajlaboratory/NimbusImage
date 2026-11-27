@@ -1035,7 +1035,11 @@ const scalarMapsAvailable = computed(() => scalarMapsStore.scalarMapsAvailable);
 // Listed again every time a dataset is opened in the viewer (a new dataset,
 // a reload of it, or coming back to it), not once per dataset id: a worker
 // may have saved a map since, and with none listed the button that would
-// reveal it is hidden. One cheap GET, shared with the palette's own listing.
+// reveal it is hidden. Forced: a request still in flight from before (the
+// user left the viewer and came back before it settled) may predate a map
+// saved since, so it is superseded, never joined. The palette's own listing
+// joins this one when it runs after it (a child's watcher normally does; if
+// not, the cost is one extra GET whose answer the generation guard drops).
 // (Reads `route` directly: `routeName` is declared further down.)
 watch(
   [
@@ -1047,7 +1051,7 @@ watch(
   ],
   ([dataset, inViewer]) => {
     if (dataset && inViewer) {
-      scalarMapsStore.refreshScalarMaps();
+      scalarMapsStore.refreshScalarMaps(true);
     }
   },
   { immediate: true },

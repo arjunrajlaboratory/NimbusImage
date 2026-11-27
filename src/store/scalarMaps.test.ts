@@ -516,4 +516,33 @@ describe("scalarMaps store", () => {
       max: 100,
     });
   });
+  it("keeps a map's failed-tiles mark only while the map is listed", async () => {
+    mocks.listMaps.mockResolvedValueOnce([scalarMap("a"), scalarMap("b")]);
+    await scalarMapsStore.refreshScalarMaps();
+    scalarMapsStore.setScalarMapTilesFailed({ itemId: "a", failed: true });
+    scalarMapsStore.setScalarMapTilesFailed({ itemId: "a", failed: true });
+    scalarMapsStore.setScalarMapTilesFailed({ itemId: "b", failed: true });
+    expect(scalarMapsStore.tileFailedMapIds).toEqual(["a", "b"]);
+    // A re-list of the same maps keeps the marks (the layers are unchanged).
+    mocks.listMaps.mockResolvedValueOnce([scalarMap("a"), scalarMap("b")]);
+    await scalarMapsStore.refreshScalarMaps(true);
+    expect(scalarMapsStore.tileFailedMapIds).toEqual(["a", "b"]);
+    // A re-list that drops "b" drops its mark; a delete drops "a"'s.
+    mocks.listMaps.mockResolvedValueOnce([scalarMap("a")]);
+    await scalarMapsStore.refreshScalarMaps(true);
+    expect(scalarMapsStore.tileFailedMapIds).toEqual(["a"]);
+    await scalarMapsStore.deleteScalarMap("a");
+    expect(scalarMapsStore.tileFailedMapIds).toEqual([]);
+    // Another dataset starts with none, even for a shared item id.
+    mocks.listMaps.mockResolvedValueOnce([scalarMap("a")]);
+    await scalarMapsStore.refreshScalarMaps(true);
+    scalarMapsStore.setScalarMapTilesFailed({ itemId: "a", failed: true });
+    mocks.main.dataset = { id: "ds2" };
+    mocks.listMaps.mockResolvedValueOnce([scalarMap("a")]);
+    await scalarMapsStore.refreshScalarMaps();
+    expect(scalarMapsStore.tileFailedMapIds).toEqual([]);
+    scalarMapsStore.setScalarMapTilesFailed({ itemId: "a", failed: true });
+    scalarMapsStore.setScalarMapTilesFailed({ itemId: "a", failed: false });
+    expect(scalarMapsStore.tileFailedMapIds).toEqual([]);
+  });
 });

@@ -195,6 +195,26 @@ describe("App", () => {
     mockRouter.push = vi.fn();
   });
 
+  it("forces a fresh map lookup when the viewer reopens a dataset, never joining a request from before it left", async () => {
+    (store as any).dataset = { id: "ds1", name: "Dataset" };
+    const providedRoute = routeProvider({ ...mockRoute, name: "datasetview" });
+    const route = providedRoute[routeLocationKey as symbol];
+    const wrapper = mountComponent({}, renderAppBarStubs, providedRoute);
+    expect(scalarMapsStore.refreshScalarMaps).toHaveBeenCalledTimes(1);
+    expect(scalarMapsStore.refreshScalarMaps).toHaveBeenLastCalledWith(true);
+    // Leave the viewer while that list request is still in flight...
+    Object.assign(route, { name: "root" });
+    await nextTick();
+    expect(scalarMapsStore.refreshScalarMaps).toHaveBeenCalledTimes(1);
+    // ...and come back to the same dataset: a new request, not a join of
+    // the earlier one, whose answer may predate a map saved since.
+    Object.assign(route, { name: "datasetview" });
+    await nextTick();
+    expect(scalarMapsStore.refreshScalarMaps).toHaveBeenCalledTimes(2);
+    expect(scalarMapsStore.refreshScalarMaps).toHaveBeenLastCalledWith(true);
+    wrapper.unmount();
+  });
+
   it("offers Map Layers only with saved maps, and keeps it reachable after a failed lookup", async () => {
     const wrapper = mountWithAppBar();
     expect(scalarMapsStore.refreshScalarMaps).toHaveBeenCalledTimes(1);

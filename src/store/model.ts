@@ -1258,6 +1258,8 @@ export interface IGeoJSOsmLayer extends IGeoJSLayer {
   _getTileCached?: (
     ...args: unknown[]
   ) => IGeoJSTile & { catch: (callback: (reason?: unknown) => void) => void };
+  // The tile cache; `get(hash, true)` reads without touching its LRU order.
+  cache?: { get: (hash: string, noMove?: boolean) => unknown };
   _options?: {
     minLevel?: number;
     maxLevel?: number;

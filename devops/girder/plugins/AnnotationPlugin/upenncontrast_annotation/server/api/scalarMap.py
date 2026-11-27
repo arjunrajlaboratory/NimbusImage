@@ -31,6 +31,7 @@ from ..helpers.scalarMap import (
     SCALAR_MAP_META_KEY,
     defaultDisplayRange,
     invalidateScalarMapFiles,
+    isScalarMapFileSet,
     isScalarMapMeta,
     loadScalarMapArray,
     locationKeys,
@@ -69,13 +70,14 @@ class ScalarMap(Resource):
             raise RestException(str(exc), code=400)
 
     def _mapFile(self, item):
-        """The map item's one file, or 400: an item with no file or a second
-        one is not a map (the list route skips it), whatever its metadata
-        says."""
+        """The map item's one file, or 400: an item with no file, a second
+        one or a link file is not a map (the list route skips it), whatever
+        its metadata says."""
         files = list(Item().childFiles(item, limit=2))
-        if len(files) != 1:
+        if not isScalarMapFileSet(files):
             raise RestException(
-                "A scalar map item must hold exactly one file", code=400
+                "A scalar map item must hold exactly one stored file",
+                code=400,
             )
         return files[0]
 
@@ -84,7 +86,8 @@ class ScalarMap(Resource):
         Description("List the scalar maps saved in a dataset")
         .notes("One entry per item directly in the dataset folder whose "
                "meta.%s is a valid version-1 map and that holds exactly one "
-               "file: {itemId, updated, revision, meta}. revision changes "
+               "file, stored in an assetstore (not a link): {itemId, "
+               "updated, revision, meta}. revision changes "
                "whenever the map's file changes; put it in tile URLs. Other "
                "items are skipped." % SCALAR_MAP_META_KEY)
         .param("datasetId", "The dataset (folder) id", required=True)
@@ -111,7 +114,10 @@ class ScalarMap(Resource):
         if items:
             for fileDoc in File().find(
                 {"itemId": {"$in": [item["_id"] for item in items]}},
-                fields=["_id", "itemId", "size", "created", "sha512"],
+                fields=[
+                    "_id", "itemId", "size", "created", "sha512",
+                    "assetstoreId",
+                ],
             ):
                 filesByItem[fileDoc["itemId"]].append(fileDoc)
         return [
@@ -125,7 +131,7 @@ class ScalarMap(Resource):
                 "meta": item["meta"][SCALAR_MAP_META_KEY],
             }
             for item in items
-            if len(filesByItem[item["_id"]]) == 1
+            if isScalarMapFileSet(filesByItem[item["_id"]])
         ]
 
     # GeoJS loads OSM tiles through <img> requests, which cannot attach the
@@ -251,7 +257,7 @@ class ScalarMap(Resource):
     @describeRoute(
         Description("Delete a scalar map item")
         .notes("Only an item the list route returns: valid "
-               "meta.%s and exactly one file." % SCALAR_MAP_META_KEY)
+               "meta.%s and exactly one stored file." % SCALAR_MAP_META_KEY)
         .param("itemId", "The map item id", paramType="path")
         .errorResponse("The item is not a scalar map", 400)
         .errorResponse("Write access denied", 403)

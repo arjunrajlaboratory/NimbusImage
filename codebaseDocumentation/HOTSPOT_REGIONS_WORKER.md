@@ -328,8 +328,8 @@ folder and describe it in the item's metadata. Part B reads only this.
   The server validates this object (`validateScalarMapMeta`): version 1,
   `gridSpacingPx > 0`, finite numbers, `valueRange` with min ≤ max, at least
   one location, unique keys matching `xy\d+_z\d+_t\d+`, and at most 32M
-  cells. An item that fails, or that holds more or fewer than one file, is
-  not listed. Each `.npz` member must be a 2-D float32 (or float16) array
+  cells. An item that fails, or that holds anything but one file stored in
+  an assetstore (a Girder link file does not count), is not listed. Each `.npz` member must be a 2-D float32 (or float16) array
   of exactly `shape`, finite or NaN, stored or deflated, with an
   `.npy` header of at most 10,000 bytes (anything `np.savez` writes). The
   archive may hold at most 16,384 entries and a 2 MiB central directory,
@@ -411,9 +411,9 @@ limits) are in `SCALAR_MAP_LAYER.md`.
 
 | Route | Returns |
 |---|---|
-| `GET scalar_map?datasetId=` (READ on the dataset) | `[{itemId, updated, revision, meta}]` for every valid map item directly in the dataset folder that holds exactly one file. One `Item().find` plus one batched `File().find`. `revision` changes whenever the file changes; clients put it in tile URLs. |
+| `GET scalar_map?datasetId=` (READ on the dataset) | `[{itemId, updated, revision, meta}]` for every valid map item directly in the dataset folder that holds exactly one assetstore-backed file. One `Item().find` plus one batched `File().find`. `revision` changes whenever the file changes; clients put it in tile URLs. |
 | `GET scalar_map/{itemId}/tiles/{z}/{x}/{y}` (READ) | PNG tile. Params: `location` key, `sizeX`, `sizeY`, `tileSize` (256/512/1024), `maxLevel`, `colormap` (viridis/magma/inferno/gray), `min`, `max`, `threshold?`, `thresholdSide?` (`above`/`below`). `Cache-Control: private, max-age=0, must-revalidate` with an ETag; a 304 is sent only after the READ check. |
-| `DELETE scalar_map/{itemId}` (WRITE) | removes the map item and its cached arrays; 400 for an item the list would skip (invalid metadata, or not exactly one file). |
+| `DELETE scalar_map/{itemId}` (WRITE) | removes the map item and its cached arrays; 400 for an item the list would skip (invalid metadata, or not exactly one stored file). |
 
 Tile rendering:
 

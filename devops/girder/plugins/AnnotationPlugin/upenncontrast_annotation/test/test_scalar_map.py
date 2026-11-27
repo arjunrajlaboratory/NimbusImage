@@ -519,6 +519,62 @@ class TestScalarMapHelpers:
         assert values[valid].min() >= np.nanmin(array)
         assert values[valid].max() <= np.nanmax(array)
 
+    @pytest.mark.parametrize("spacing", [1, 3, 8, 6.25, 9.7, 12.5])
+    @pytest.mark.parametrize("origin", [(0, 0), (5.5, -3.0), (-2.25, 7.75)])
+    def testPointWhoseContributingCellsAllEqualVIsExactlyV(
+        self, spacing, origin
+    ):
+        # The invariant behind every "pixel exactly at the threshold" fix:
+        # a sample whose finite, positive-weight neighbors all equal v is
+        # bitwise v. Few distinct float32 values and many NaNs make such
+        # points common, including NaN neighbors on each side; exact cell
+        # centers on each axis give neighbors of exactly zero weight.
+        rng = np.random.default_rng(int(spacing * 100) + int(origin[0]))
+        rows, cols = 6, 7
+        levels = np.float32([0.1, 1 / 3, 100.7, -2.6, 7e-8])
+        array = rng.choice(levels, (rows, cols)).astype(np.float32)
+        array[rng.random((rows, cols)) < 0.25] = np.nan
+        centersX = origin[0] + (np.arange(cols) + 0.5) * spacing
+        centersY = origin[1] + (np.arange(rows) + 0.5) * spacing
+        xs = np.concatenate([
+            centersX, rng.uniform(origin[0], origin[0] + cols * spacing, 40),
+        ])
+        ys = np.concatenate([
+            centersY, rng.uniform(origin[1], origin[1] + rows * spacing, 40),
+        ])
+        result = sampleScalarMap(array, origin, spacing, xs, ys)
+        checked = 0
+        for i, py in enumerate(ys):
+            for j, px in enumerate(xs):
+                u = (px - origin[0]) / spacing
+                v = (py - origin[1]) / spacing
+                if not (0 <= u < cols and 0 <= v < rows):
+                    continue
+                if np.isnan(array[int(v), int(u)]):
+                    continue
+                cu = min(max(u - 0.5, 0), cols - 1)
+                cv = min(max(v - 0.5, 0), rows - 1)
+                c0, r0 = int(math.floor(cu)), int(math.floor(cv))
+                c1, r1 = min(c0 + 1, cols - 1), min(r0 + 1, rows - 1)
+                fx, fy = cu - c0, cv - r0
+                contributing = {
+                    float(array[r, c]) for r, c, w in (
+                        (r0, c0, (1 - fy) * (1 - fx)),
+                        (r0, c1, (1 - fy) * fx),
+                        (r1, c0, fy * (1 - fx)),
+                        (r1, c1, fy * fx),
+                    )
+                    if w > 0 and np.isfinite(array[r, c])
+                }
+                if len(contributing) != 1:
+                    continue
+                expected = np.float64(contributing.pop())
+                assert result[i, j].tobytes() == expected.tobytes(), (
+                    px, py, result[i, j], expected
+                )
+                checked += 1
+        assert checked > 100
+
     def testRevisionCoversTheWholeMetadata(self):
         fileDoc = {"_id": "a" * 24, "size": 10}
         base = scalarMapRevision(fileDoc, _meta())
@@ -1192,6 +1248,39 @@ class TestScalarMapEndpoints:
                               method="DELETE", user=admin)
         assertStatus(resp, 400)
         assert Item().load(empty["_id"], force=True) is not None
+
+    def testLinkFileMapIsNotListedAndItsTileAndDeleteAre400(
+        self, server, admin, fsAssetstore
+    ):
+        # Valid map metadata on an item whose one file is a Girder URL link
+        # (no assetstore): File().open() cannot read it, so the item must
+        # not be listed, and its tile and delete give the same 400 as an
+        # item with no file rather than a 500.
+        folder = _privateDataset(admin)
+        array = np.zeros((ROWS, COLS), dtype=np.float32)
+        good = _uploadMap(admin, folder, {LOCATION: array}, _meta())
+        linked = Item().createItem("linked", admin, folder)
+        Item().setMetadata(linked, {"nimbusScalarMap": _meta()})
+        linkFile = File().createLinkFile(
+            "map.npz", linked, "item", "https://example.com/map.npz", admin,
+            size=100,
+        )
+        assert linkFile["assetstoreId"] is None
+
+        resp = server.request("/scalar_map", user=admin,
+                              params={"datasetId": str(folder["_id"])})
+        assertStatusOk(resp)
+        assert [entry["itemId"] for entry in resp.json] == [
+            str(good["_id"])
+        ]
+        tileResp = _tile(server, linked, admin)
+        assertStatus(tileResp, 400)
+        assert "exactly one stored file" in _message(tileResp)
+        resp = server.request("/scalar_map/%s" % linked["_id"],
+                              method="DELETE", user=admin)
+        assertStatus(resp, 400)
+        assert _message(resp) == _message(tileResp)
+        assert Item().load(linked["_id"], force=True) is not None
 
     def testDefaultRangeOfConstantMap(self, server, admin, fsAssetstore):
         folder = _privateDataset(admin)

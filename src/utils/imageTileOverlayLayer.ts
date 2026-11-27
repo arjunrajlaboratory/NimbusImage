@@ -84,6 +84,51 @@ export function createImageTileOverlayLayer(
   return layer;
 }
 
+// Tiles already given a failure hook (cache hits return the same tile).
+const hookedTiles = new WeakSet<object>();
+
+/**
+ * Report tile requests that fail and stay failed. GeoJS has no tile-error
+ * event: a failed fetch leaves the REJECTED tile in the layer's cache, and
+ * later draws reuse it, so the hole stays until the cache is reset. The
+ * tile's promise interface is the only signal, and attaching a handler
+ * queues the tile's fetch, which the queue drops (rejecting the tile) unless
+ * the tile is already the cache's entry: so this wraps `_getTileCached`
+ * (which returns only after `cache.add`), never `_getTile`, and hooks each
+ * tile once (nimbus-geojs skill, "Tile promise handlers queue the fetch";
+ * ImageViewer's annotation overview raster does the same).
+ *
+ * `onFailure` runs only for a tile still in the layer's cache when it
+ * rejects. The fetch queue also rejects a queued tile that a pan or zoom
+ * purged from the cache, and that one is simply created again when next
+ * needed; and a tile from before a `reset()` or a URL change (both empty the
+ * cache) that fails late is no longer what the layer draws.
+ *
+ * Opt-in per layer (the scalar map layer); the transcript density layer does
+ * not use it.
+ */
+export function hookTileFailures(
+  layer: IGeoJSOsmLayer,
+  onFailure: () => void,
+): void {
+  const getTileCached = layer._getTileCached;
+  if (typeof getTileCached !== "function") {
+    return;
+  }
+  layer._getTileCached = (...args: unknown[]) => {
+    const tile = getTileCached.apply(layer, args);
+    if (!hookedTiles.has(tile)) {
+      hookedTiles.add(tile);
+      tile.catch(() => {
+        if (layer.cache?.get(tile.toString(), true) === tile) {
+          onFailure();
+        }
+      });
+    }
+    return tile;
+  };
+}
+
 // Layers drawn over the image and under the annotation stack (heat maps,
 // transcript points). ImageViewer keeps them there whenever it adds image
 // layers; see orderLayersAboveImages.

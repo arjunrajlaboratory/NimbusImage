@@ -17,6 +17,7 @@ import {
 import {
   createImageTileOverlayLayer,
   deleteLayerIfHeld,
+  hookTileFailures,
 } from "@/utils/imageTileOverlayLayer";
 import { scalarMapLocationKey } from "@/utils/scalarMap";
 
@@ -30,6 +31,12 @@ import { scalarMapLocationKey } from "@/utils/scalarMap";
  *
  * Opacity is a restyle. Range, colormap, threshold and location change the
  * tile URL of the existing layer; slider-driven URL changes are debounced.
+ *
+ * A tile that fails to load stays failed in GeoJS's cache, so the map is
+ * marked in the store (`tileFailedMapIds`, shown on its palette card) and
+ * the palette's Refresh (`requestScalarMapTileRetry`) resets the cache of
+ * every marked layer, which requests those tiles again. Hiding and showing
+ * the map does too: hiding deletes the layer.
  */
 
 const props = defineProps<{
@@ -48,6 +55,12 @@ const TILE_SIZE = 256;
 const URL_DEBOUNCE_MS = 150;
 
 const layers = new Map<string, { layer: IGeoJSOsmLayer; url: string }>();
+
+function clearTilesFailed(itemId: string) {
+  if (scalarMapsStore.tileFailedMapIds.includes(itemId)) {
+    scalarMapsStore.setScalarMapTilesFailed({ itemId, failed: false });
+  }
+}
 
 /** The tile URL a map should show now, or null to show nothing. */
 function desiredUrl(map: IScalarMap): string | null {
@@ -87,6 +100,8 @@ function dropLayer(itemId: string) {
     deleteLayerIfHeld(props.map, entry.layer);
     layers.delete(itemId);
   }
+  // Its failed tiles went with the layer; a new layer requests them again.
+  clearTilesFailed(itemId);
 }
 
 function dropAllLayers() {
@@ -119,7 +134,7 @@ function sync() {
       continue;
     }
     if (!entry) {
-      entry = {
+      const created = {
         layer: createImageTileOverlayLayer({
           map: props.map,
           annotationLayer: props.annotationLayer,
@@ -131,10 +146,22 @@ function sync() {
         }),
         url: "",
       };
-      layers.set(map.itemId, entry);
+      const itemId = map.itemId;
+      // Only a tile the layer's cache still holds reports (the helper checks;
+      // a reset or a new URL empties the cache), and only while this layer
+      // is the map's: a deleted layer's cache still holds its tiles.
+      hookTileFailures(created.layer, () => {
+        if (layers.get(itemId) === created) {
+          scalarMapsStore.setScalarMapTilesFailed({ itemId, failed: true });
+        }
+      });
+      entry = created;
+      layers.set(itemId, entry);
     }
     if (entry.url !== url) {
+      // GeoJS empties the tile cache on a URL change: a new set of tiles.
       entry.url = url;
+      clearTilesFailed(map.itemId);
       entry.layer.url(url);
     }
     if (!entry.layer.visible()) {
@@ -202,6 +229,28 @@ watch(structureSignature, () => {
 });
 
 watch(urlSignature, () => scheduleSync());
+
+// The palette's Refresh: empty the tile cache of every layer with a failed
+// tile, so the next draw requests those tiles again (GeoJS never retries a
+// rejected tile it holds). reset() drops the drawn tiles too, and only a map
+// draw reaches the layer's fetch (_update), as in ImageViewer's overview
+// raster retry.
+watch(
+  () => scalarMapsStore.tileRetryRequests,
+  () => {
+    let reset = false;
+    layers.forEach((entry, itemId) => {
+      if (scalarMapsStore.tileFailedMapIds.includes(itemId)) {
+        clearTilesFailed(itemId);
+        entry.layer.reset();
+        reset = true;
+      }
+    });
+    if (reset) {
+      props.map.draw();
+    }
+  },
+);
 
 watch(opacitySignature, () => {
   layers.forEach(({ layer }, itemId) => {

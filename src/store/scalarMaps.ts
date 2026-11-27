@@ -28,7 +28,8 @@ export const DEFAULT_SCALAR_MAP_TOP_PERCENT = 20;
 // successful delete, so no response captured earlier can land afterwards.
 let listRequestGeneration = 0;
 // The current list request, shared by callers asking for the same dataset
-// (opening a dataset and opening the palette both list it).
+// without `force` (showing the palette joins the list its dataset's opening
+// started; the opening itself always forces, see App.vue).
 let listInFlight: {
   datasetId: string;
   generation: number;
@@ -143,6 +144,24 @@ export class ScalarMaps extends VuexModule {
   // the server answers. Several maps may be deleting at once; a second
   // delete of the same map joins the first.
   deletingMapIds: string[] = [];
+  // Item ids whose overlay layer had a tile request fail. GeoJS keeps a
+  // rejected tile in its cache and never asks for it again, so the map stays
+  // blank there until the layer's cache is reset. A state per item: absent
+  // (no failure known) or present (some tile of the layer now on the map
+  // failed). Written only through `setScalarMapTilesFailed`:
+  // - set by ScalarMapOverlay when a tile of the map's CURRENT layer and URL
+  //   rejects (a late failure from a layer or URL already replaced is
+  //   ignored there);
+  // - cleared by ScalarMapOverlay whenever that layer's cache is emptied: a
+  //   retry (`requestScalarMapTileRetry`, the palette's Refresh), a new tile
+  //   URL (slider, location, revision, token), and the layer being deleted
+  //   (map hidden, deleted, unlisted, another dataset, disabled, unmount);
+  // - pruned here when a re-list or a delete drops the item.
+  // So it lives exactly as long as the GeoJS layer whose tiles failed.
+  tileFailedMapIds: string[] = [];
+  // Bumped by `requestScalarMapTileRetry`; ScalarMapOverlay watches it and
+  // resets the tile cache of every layer listed in `tileFailedMapIds`.
+  tileRetryRequests = 0;
 
   get currentMaps(): IScalarMap[] {
     return this.mapsDatasetId !== null &&
@@ -238,6 +257,9 @@ export class ScalarMaps extends VuexModule {
     this.mapsDatasetId = payload.datasetId;
     this.maps = maps;
     this.display = display;
+    this.tileFailedMapIds = sameDataset
+      ? this.tileFailedMapIds.filter((itemId) => itemId in display)
+      : [];
   }
 
   @Mutation
@@ -386,6 +408,26 @@ export class ScalarMaps extends VuexModule {
     const display = { ...this.display };
     delete display[itemId];
     this.display = display;
+    this.tileFailedMapIds = this.tileFailedMapIds.filter((id) => id !== itemId);
+  }
+
+  /** Mark or clear a map's failed tiles (see `tileFailedMapIds`). */
+  @Mutation
+  setScalarMapTilesFailed(payload: { itemId: string; failed: boolean }) {
+    const listed = this.tileFailedMapIds.includes(payload.itemId);
+    if (payload.failed && !listed) {
+      this.tileFailedMapIds = [...this.tileFailedMapIds, payload.itemId];
+    } else if (!payload.failed && listed) {
+      this.tileFailedMapIds = this.tileFailedMapIds.filter(
+        (id) => id !== payload.itemId,
+      );
+    }
+  }
+
+  /** Ask the overlay to request every failed tile again. */
+  @Mutation
+  requestScalarMapTileRetry() {
+    this.tileRetryRequests++;
   }
 
   /**

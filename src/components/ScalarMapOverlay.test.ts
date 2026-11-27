@@ -30,6 +30,18 @@ vi.mock("@/store/scalarMaps", async () => {
   mocks.maps = reactive({
     currentMaps: [] as any[],
     display: {} as Record<string, any>,
+    tileFailedMapIds: [] as string[],
+    tileRetryRequests: 0,
+    // The store's contract (scalarMaps.test.ts).
+    setScalarMapTilesFailed(payload: { itemId: string; failed: boolean }) {
+      const ids = mocks.maps.tileFailedMapIds as string[];
+      const listed = ids.includes(payload.itemId);
+      if (payload.failed && !listed) {
+        ids.push(payload.itemId);
+      } else if (!payload.failed && listed) {
+        ids.splice(ids.indexOf(payload.itemId), 1);
+      }
+    },
   });
   return { default: mocks.maps };
 });
@@ -82,7 +94,13 @@ function makeMap() {
     deleteLayer: vi.fn((layer: any) => {
       held.splice(held.indexOf(layer), 1);
     }),
+    draw: vi.fn(),
     createLayer: vi.fn((_kind: string, params: Record<string, any>) => {
+      // GeoJS's tile factory, create-then-cache: `_getTile` builds a tile,
+      // `_getTileCached` adds it to the cache afterwards. Records whether the
+      // tile was already cached when a failure hook was attached (attaching
+      // one queues the fetch, which GeoJS drops for an uncached tile).
+      const cache = new Map<string, any>();
       const layer: any = {
         params,
         _visible: params.visible,
@@ -93,7 +111,35 @@ function makeMap() {
           layer._visible = value;
           return layer;
         }),
-        url: vi.fn(),
+        // GeoJS's url() empties the tile cache.
+        url: vi.fn(() => cache.clear()),
+        reset: vi.fn(() => cache.clear()),
+        cache: { get: (hash: string) => cache.get(hash) ?? null },
+        catchAttachedWhileInCache: [] as boolean[],
+        failureHandlers: new Map<any, () => void>(),
+        _getTile: vi.fn((index: any) => {
+          const hash = `${index.level}_${index.y}_${index.x}`;
+          const tile: any = {
+            toString: () => hash,
+            catch: (callback: () => void) => {
+              layer.catchAttachedWhileInCache.push(cache.get(hash) === tile);
+              layer.failureHandlers.set(tile, callback);
+            },
+          };
+          return tile;
+        }),
+        _getTileCached: vi.fn((index: any) => {
+          const hash = `${index.level}_${index.y}_${index.x}`;
+          let tile = cache.get(hash);
+          if (!tile) {
+            tile = layer._getTile(index);
+            cache.set(hash, tile);
+          }
+          return tile;
+        }),
+        // Reject a tile's request, as a failed <img> load does.
+        failTile: (tile: any) => layer.failureHandlers.get(tile)?.(),
+        purge: (tile: any) => cache.delete(tile.toString()),
         opacity: vi.fn(),
         zIndex: vi.fn(),
         node: () => ({ css: vi.fn() }),
@@ -131,6 +177,8 @@ describe("ScalarMapOverlay", () => {
     mocks.store.time = 0;
     mocks.maps.currentMaps = [scalarMap("a")];
     mocks.maps.display = { a: display() };
+    mocks.maps.tileFailedMapIds = [];
+    mocks.maps.tileRetryRequests = 0;
   });
 
   afterEach(() => {
@@ -315,5 +363,96 @@ describe("ScalarMapOverlay", () => {
     wrapper.unmount();
     mounted.splice(0);
     expect(parts.map.deleteLayer).not.toHaveBeenCalled();
+  });
+  describe("failed tiles", () => {
+    const TILE = { x: 0, y: 0, level: 0 };
+
+    it("marks a map whose tile fails to load, and a retry request makes that tile load again", async () => {
+      const { map, osmLayers } = mount();
+      const layer = osmLayers[0];
+      const tile = layer._getTileCached(TILE);
+      // Hooked once, and only after GeoJS cached the tile.
+      layer._getTileCached(TILE);
+      expect(layer.catchAttachedWhileInCache).toEqual([true]);
+      layer.failTile(tile);
+      expect(mocks.maps.tileFailedMapIds).toEqual(["a"]);
+
+      // The palette's Refresh.
+      mocks.maps.tileRetryRequests++;
+      await nextTick();
+      expect(layer.reset).toHaveBeenCalledTimes(1);
+      expect(map.draw).toHaveBeenCalledTimes(1);
+      expect(mocks.maps.tileFailedMapIds).toEqual([]);
+      // The next draw asks for the tile again: a new request.
+      const retried = layer._getTileCached(TILE);
+      expect(retried).not.toBe(tile);
+      expect(layer._getTile).toHaveBeenCalledTimes(2);
+      expect(map.createLayer).toHaveBeenCalledTimes(1);
+      // ...and a late failure of the old tile does not mark the map again.
+      layer.failTile(tile);
+      expect(mocks.maps.tileFailedMapIds).toEqual([]);
+      layer.failTile(retried);
+      expect(mocks.maps.tileFailedMapIds).toEqual(["a"]);
+    });
+
+    it("never marks a map whose tiles load, and a retry request leaves its layer alone", async () => {
+      const { map, osmLayers } = mount();
+      const layer = osmLayers[0];
+      layer._getTileCached(TILE);
+      layer._getTileCached({ x: 1, y: 0, level: 0 });
+      expect(mocks.maps.tileFailedMapIds).toEqual([]);
+      mocks.maps.tileRetryRequests++;
+      await nextTick();
+      expect(layer.reset).not.toHaveBeenCalled();
+      expect(map.draw).not.toHaveBeenCalled();
+    });
+
+    it("ignores a failure from a tile the cache no longer holds (a new URL, or a purge)", async () => {
+      const { osmLayers } = mount();
+      const layer = osmLayers[0];
+      // The fetch queue rejects a queued tile a pan purged from the cache.
+      const purged = layer._getTileCached(TILE);
+      layer.purge(purged);
+      layer.failTile(purged);
+      expect(mocks.maps.tileFailedMapIds).toEqual([]);
+      // A tile of the previous URL that fails after a slider change.
+      const old = layer._getTileCached(TILE);
+      mocks.maps.display.a = display({ min: 2 });
+      await nextTick();
+      vi.advanceTimersByTime(200);
+      layer.failTile(old);
+      expect(mocks.maps.tileFailedMapIds).toEqual([]);
+    });
+
+    it("clears the mark with a new URL, and when the map is hidden or the overlay unmounts", async () => {
+      const { wrapper, osmLayers } = mount();
+      const failOne = (layer: any) =>
+        layer.failTile(layer._getTileCached(TILE));
+      failOne(osmLayers[0]);
+      expect(mocks.maps.tileFailedMapIds).toEqual(["a"]);
+      // A new tile URL is a new set of tiles.
+      mocks.maps.display.a = display({ colormap: "magma" });
+      await nextTick();
+      vi.advanceTimersByTime(200);
+      expect(mocks.maps.tileFailedMapIds).toEqual([]);
+      failOne(osmLayers[0]);
+      const pending = osmLayers[0]._getTileCached({ x: 1, y: 0, level: 0 });
+      // Hidden: the layer and its failed tiles are deleted; shown again, a
+      // fresh layer requests everything.
+      mocks.maps.display.a = display({ visible: false, colormap: "magma" });
+      await nextTick();
+      expect(mocks.maps.tileFailedMapIds).toEqual([]);
+      // A request of the deleted layer failing late marks nothing.
+      osmLayers[0].failTile(pending);
+      expect(mocks.maps.tileFailedMapIds).toEqual([]);
+      mocks.maps.display.a = display({ colormap: "magma" });
+      await nextTick();
+      expect(osmLayers).toHaveLength(2);
+      failOne(osmLayers[1]);
+      expect(mocks.maps.tileFailedMapIds).toEqual(["a"]);
+      wrapper.unmount();
+      mounted.splice(0);
+      expect(mocks.maps.tileFailedMapIds).toEqual([]);
+    });
   });
 });

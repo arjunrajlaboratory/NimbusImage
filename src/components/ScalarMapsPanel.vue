@@ -3,7 +3,7 @@
     <div class="d-flex align-center mb-1">
       <span class="text-caption text-medium-emphasis">Saved maps</span>
       <v-spacer />
-      <v-tooltip text="List saved maps again">
+      <v-tooltip text="List saved maps again and reload failed tiles">
         <template v-slot:activator="{ props: activatorProps }">
           <v-btn
             v-bind="activatorProps"
@@ -13,7 +13,7 @@
             aria-label="Refresh saved maps"
             :loading="scalarMapsStore.loading"
             :disabled="scalarMapsStore.loading"
-            @click="scalarMapsStore.refreshScalarMaps(true)"
+            @click="refresh"
           />
         </template>
       </v-tooltip>
@@ -28,7 +28,7 @@
         size="small"
         :loading="scalarMapsStore.loading"
         :disabled="scalarMapsStore.loading"
-        @click="scalarMapsStore.refreshScalarMaps(true)"
+        @click="refresh"
         >Retry map lookup</v-btn
       >
     </div>
@@ -86,12 +86,21 @@
         />
       </div>
 
-      <template v-if="displayOf(map).visible">
+      <!-- Only while the palette is shown: FloatingPalette keeps it mounted
+           (display:none) when closed, and the body reads the viewer's
+           position, so every scrub would re-render every shown map's card. -->
+      <template v-if="visible && displayOf(map).visible">
         <p
           v-if="!hasDataHere(map)"
           class="text-caption text-warning mt-1 mb-0 no-data-here"
         >
           This map has no data at the current position.
+        </p>
+        <p
+          v-if="scalarMapsStore.tileFailedMapIds.includes(map.itemId)"
+          class="text-caption text-warning mt-1 mb-0 tiles-failed"
+        >
+          Some tiles of this map failed to load. Press Refresh to try again.
         </p>
 
         <div class="text-caption mt-2">
@@ -354,6 +363,14 @@ function update(
   scalarMapsStore.updateScalarMapDisplay({ itemId: map.itemId, changes });
 }
 
+// Refresh lists the maps again and requests every failed tile again: GeoJS
+// keeps a failed tile and never asks for it on its own, and a re-list that
+// finds the same revision leaves the tile URL as it was.
+function refresh() {
+  scalarMapsStore.requestScalarMapTileRetry();
+  scalarMapsStore.refreshScalarMaps(true);
+}
+
 function hasDataHere(map: IScalarMap): boolean {
   return scalarMapLocationKey(map.meta, store.xy, store.z, store.time) !== null;
 }
@@ -572,6 +589,7 @@ defineExpose({
   askDelete,
   confirmDelete,
   canDelete,
+  refresh,
 });
 </script>
 
