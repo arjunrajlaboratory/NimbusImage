@@ -229,6 +229,25 @@ describe("DatasetInfo", () => {
     expect(mockRouter.push).toHaveBeenCalledWith({ name: "root" });
   });
 
+  it("removeDataset ignores a second click while the delete is in flight", async () => {
+    // The confirm button stays on screen until the action resolves; a second
+    // click must not send a second delete for the same dataset.
+    let finish: (deleted: boolean) => void = () => {};
+    mockDeleteDataset.mockClear();
+    mockDeleteDataset.mockReturnValue(
+      new Promise<boolean>((resolve) => (finish = resolve)),
+    );
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.removeDataset();
+    vm.removeDataset();
+    expect(mockDeleteDataset).toHaveBeenCalledTimes(1);
+    expect(vm.removingDataset).toBe(true);
+    finish(false);
+    await flushPromises();
+    expect(vm.removingDataset).toBe(false);
+  });
+
   it("removeDataset stays on the page when the dataset was not deleted", async () => {
     // deleteDataset resolves to false when it is refused (nobody logged in)
     // or fails; leaving would tell the user the dataset is gone.

@@ -197,7 +197,7 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
   // explains why must not sit dimmed underneath it.
   z-index: 10000;
   // Being above dialogs, the stack must not take clicks meant for them: only
-  // a notification (its dismiss button) is interactive, progress bars are not.
+  // a notification's dismiss button is interactive.
   pointer-events: none;
   display: flex;
   flex-direction: column;
@@ -269,7 +269,6 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
 }
 
 .notification {
-  pointer-events: auto;
   @extend %floating-card;
   display: flex;
   align-items: flex-start;
@@ -307,6 +306,7 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
 }
 
 .notification-close {
+  pointer-events: auto;
   // Pull the button back toward the card edge so its tap target doesn't
   // inflate the padding visually.
   margin: -4px -6px 0 0;

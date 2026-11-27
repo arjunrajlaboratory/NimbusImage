@@ -1471,6 +1471,18 @@ describe("delete actions report whether they deleted", () => {
     );
   }
 
+  it("a refused delete shows the reason Girder gave, not the HTTP status line", async () => {
+    vi.spyOn(main.api, "deleteDataset").mockRejectedValue(
+      Object.assign(new Error("Request failed with status code 403"), {
+        response: { data: { message: "Admin access denied for folder." } },
+      }),
+    );
+    await expect(main.deleteDataset({ id: "ds1" } as any)).resolves.toBe(false);
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Admin access denied for folder." }),
+    );
+  });
+
   it("deleteDataset sends the delete first and clears the open dataset last", async () => {
     // Nothing may be awaited before the delete request (it must go out under
     // the session the user confirmed in), and the open dataset must survive

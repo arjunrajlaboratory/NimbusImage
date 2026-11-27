@@ -29,6 +29,7 @@ import McpOAuthAPI from "./McpOAuthAPI";
 import PropertiesAPI from "./PropertiesAPI";
 import ToolSuggestionsAPI from "./ToolSuggestionsAPI";
 import AgentAPI from "./AgentAPI";
+import { extractErrorMessage } from "@/utils/errors";
 import GirderAPI from "./GirderAPI";
 import ExportAPI from "./ExportAPI";
 import ProjectsAPI from "./ProjectsAPI";
@@ -831,7 +832,9 @@ async function deleteWithItsDatasetViews({
     progress.createNotification({
       type: NotificationType.ERROR,
       title: `Could not delete the ${what}`,
-      message: (error as Error)?.message || "The server refused the request.",
+      // Girder's own reason ("Admin access denied for folder ...") when it
+      // sent one: this toast is the only error the user sees.
+      message: extractErrorMessage(error),
       timeout: 10,
     });
     return false;

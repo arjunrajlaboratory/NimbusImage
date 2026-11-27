@@ -93,6 +93,7 @@
                       variant="flat"
                       color="error"
                       size="small"
+                      :loading="removingDataset"
                       @click="removeDataset"
                     >
                       Remove
@@ -430,6 +431,8 @@ const router = useRouter();
 
 // Local state
 const removeDatasetConfirm = ref(false);
+// True while the delete is in flight, so a second click cannot send another.
+const removingDataset = ref(false);
 const removeDatasetViewConfirm = ref(false);
 const viewToRemove = ref<IDatasetView | null>(null);
 const datasetViews = ref<IDatasetView[]>([]);
@@ -629,13 +632,22 @@ function toRoute(datasetView: IDatasetView) {
 }
 
 function removeDataset() {
-  store.deleteDataset(dataset.value!).then((deleted) => {
-    if (!deleted) {
-      return;
-    }
-    removeDatasetConfirm.value = false;
-    router.push({ name: "root" });
-  });
+  if (removingDataset.value || !dataset.value) {
+    return;
+  }
+  removingDataset.value = true;
+  store
+    .deleteDataset(dataset.value)
+    .then((deleted) => {
+      if (!deleted) {
+        return;
+      }
+      removeDatasetConfirm.value = false;
+      router.push({ name: "root" });
+    })
+    .finally(() => {
+      removingDataset.value = false;
+    });
 }
 
 function openRemoveConfigurationDialog(datasetView: IDatasetView) {
@@ -860,6 +872,7 @@ defineExpose({
   report,
   nameRules,
   removeDatasetConfirm,
+  removingDataset,
   removeDatasetViewConfirm,
   viewToRemove,
   datasetViews,

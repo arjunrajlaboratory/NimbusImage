@@ -278,6 +278,25 @@ describe("ConfigurationInfo", () => {
     expect(mockRouter.back).toHaveBeenCalled();
   });
 
+  it("remove ignores a second click while the delete is in flight", async () => {
+    // The confirm button stays on screen until the action resolves; a second
+    // click must not send a second delete for the same collection.
+    let finish: (deleted: boolean) => void = () => {};
+    mockDeleteConfiguration.mockClear();
+    mockDeleteConfiguration.mockReturnValue(
+      new Promise<boolean>((resolve) => (finish = resolve)),
+    );
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.remove();
+    vm.remove();
+    expect(mockDeleteConfiguration).toHaveBeenCalledTimes(1);
+    expect(vm.removing).toBe(true);
+    finish(false);
+    await flushPromises();
+    expect(vm.removing).toBe(false);
+  });
+
   it("remove stays on the page when the collection was not deleted", async () => {
     // deleteConfiguration resolves to false when it is refused (nobody logged
     // in) or fails; going back would tell the user the collection is gone.
