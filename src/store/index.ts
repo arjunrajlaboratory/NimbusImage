@@ -110,6 +110,7 @@ import {
 } from "@/utils/datasetLocation";
 import { quotaExceededMessage } from "@/utils/quota";
 import { normalizeScales } from "@/utils/scales";
+import { requestCompressedResponses } from "@/utils/responseCompression";
 import { memDiag } from "@/utils/memoryDiagnostics";
 import { TCompositionMode } from "@/utils/compositionModes";
 import {
@@ -236,6 +237,7 @@ function createGirderRestClient(options: {
   // because the v4 RestClient's `.get`/`.post`/etc. forward to an internal
   // axios instance and don't expose interceptors on the RestClient itself.
   const axios = (client as unknown as { _axios: AxiosInstance })._axios;
+  requestCompressedResponses(axios);
   axios.interceptors.response.use(
     (response) => response,
     (error) => {

@@ -67,7 +67,13 @@ def client() -> ni.NimbusClient:
         # Unreachable behind the auth middleware; a guard against ever
         # serving a request without a caller.
         raise ToolError("Not authenticated.")
-    nc = ni.connect(settings().api_url, token=access.claims["girder_token"])
+    # Next to Girder on the AWS private network, so compressing responses
+    # would cost more than it saves.
+    nc = ni.connect(
+        settings().api_url,
+        token=access.claims["girder_token"],
+        compress=False,
+    )
     _bound_requests(nc.girder._session)
     return nc
 

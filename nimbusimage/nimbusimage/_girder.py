@@ -158,6 +158,13 @@ class FastJsonGirderClient(girder_client.GirderClient):
         return loads_json(response) if jsonResp else response
 
 
+# Girder zstd-compresses a response only for requests with this parameter
+# (upenncontrast_annotation/server/helpers/compression.py). It pays off on a
+# laptop's link; next to Girder on the AWS private network (workers, the MCP
+# server) compressing costs more time than it saves.
+COMPRESSION_OPT_IN = {"compress": "zstd"}
+
+
 def _build_retry_session() -> requests.Session:
     """Build a requests.Session that retries transient 5xx with backoff."""
     retry_kwargs = dict(
@@ -185,6 +192,7 @@ def create_client(
     username: str | None = None,
     password: str | None = None,
     anonymous: bool = False,
+    compress: bool = False,
 ) -> FastJsonGirderClient:
     """Create and authenticate a GirderClient.
 
@@ -204,6 +212,10 @@ def create_client(
         password: Password for interactive auth.
         anonymous: Connect without credentials. Only public resources
             are accessible.
+        compress: Ask Girder to zstd-compress JSON and CSV responses
+            (needs a zstd module for urllib3: Python 3.14+, or
+            ``backports.zstd``). Faster over the internet, slower next to
+            Girder on a fast private network.
 
     Returns:
         Authenticated FastJsonGirderClient instance.
@@ -224,6 +236,9 @@ def create_client(
     # retries transient 5xx (NIM-006). girder_client uses gc._session for
     # every request when it is set.
     gc._session = _build_retry_session()
+    if compress:
+        # requests merges these into every request's own params.
+        gc._session.params.update(COMPRESSION_OPT_IN)
 
     if anonymous:
         if any(

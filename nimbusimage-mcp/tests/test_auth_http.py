@@ -72,7 +72,7 @@ def test_oauth_tokens_act_as_their_user(server, girder, monkeypatch):
     girder.add_oauth(OAUTH, "carol")
     tokens = []
 
-    def connect(api_url, token):
+    def connect(api_url, token, **kwargs):
         tokens.append(token)
         fake = MagicMock()
         fake.list_datasets.return_value = []
@@ -171,15 +171,18 @@ def test_tools_run_as_the_callers_session(server, girder, monkeypatch):
     fake = MagicMock()
     fake.list_datasets.return_value = [{"_id": "d1", "name": "Mine"}]
 
-    def connect(api_url, token):
-        calls.append((api_url, token))
+    def connect(api_url, token, **kwargs):
+        calls.append((api_url, token, kwargs))
         return fake
 
     monkeypatch.setattr(_common.ni, "connect", connect)
     result = call_tool(server, KEY, "ni_datasets_list", {})
     assert result["datasets"] == [{"id": "d1", "name": "Mine"}]
-    (api_url, token), = calls
+    (api_url, token, kwargs), = calls
     assert api_url == make_settings().api_url
+    # Next to Girder on the private network: compressing costs more than
+    # it saves, so the server is never asked to.
+    assert kwargs == {"compress": False}
     # The client carries the caller's Girder session, nothing else.
     assert girder.tokens[token]["key"] == KEY
 
@@ -192,7 +195,7 @@ def test_concurrent_callers_each_get_their_own_session(
     girder.add_key(other, "bob")
     seen = []
 
-    def connect(api_url, token):
+    def connect(api_url, token, **kwargs):
         fake = MagicMock()
         fake.list_datasets.return_value = [{"_id": token, "name": "x"}]
         seen.append(token)

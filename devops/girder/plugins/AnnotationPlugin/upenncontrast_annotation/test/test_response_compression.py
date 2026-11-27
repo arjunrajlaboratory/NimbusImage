@@ -1,8 +1,9 @@
-"""API responses are zstd-compressed by Girder when the client accepts zstd
-(server/helpers/compression.py)."""
+"""API responses are zstd-compressed by Girder when the request opts in with
+?compress=zstd and the client accepts zstd (server/helpers/compression.py)."""
 import io
 import json
 
+import cherrypy
 import pytest
 
 from girder.models.upload import Upload
@@ -10,6 +11,8 @@ from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from upenncontrast_annotation.server.helpers.compression import (
     _zstdCompress,
+    compressResponse,
+    takeCompressionOptIn,
     zstd,
 )
 from upenncontrast_annotation.server.models.annotation import Annotation
@@ -24,17 +27,24 @@ ANNOTATION_COUNT = 2500
 
 # What current Chrome and Firefox send over HTTPS.
 BROWSER_ACCEPT_ENCODING = "gzip, deflate, br, zstd"
+# What the frontend and the nimbusimage package add to every request.
+OPT_IN = {"compress": "zstd"}
 
 
-def _listAnnotations(server, admin, datasetId, acceptEncoding=None):
+def _listAnnotations(
+    server, admin, datasetId, acceptEncoding=None, optIn=True
+):
     headers = []
     if acceptEncoding is not None:
         headers.append(("Accept-Encoding", acceptEncoding))
+    params = {"datasetId": str(datasetId), "limit": 0}
+    if optIn:
+        params.update(OPT_IN)
     resp = server.request(
         path="/upenn_annotation",
         method="GET",
         user=admin,
-        params={"datasetId": str(datasetId), "limit": 0},
+        params=params,
         additionalHeaders=headers,
         isJson=False,
     )
@@ -68,6 +78,34 @@ class TestResponseCompression:
         assert len(body) < len(plain) / 3
         assert zstd.decompress(body) == plain
         assert len(json.loads(plain)) == ANNOTATION_COUNT
+
+    # A worker: its urllib3 accepts zstd, but it doesn't opt in.
+    def testAcceptingZstdWithoutOptInIsUncompressed(
+        self, admin, server, dataset
+    ):
+        resp, body = _listAnnotations(
+            server, admin, dataset["_id"], BROWSER_ACCEPT_ENCODING,
+            optIn=False,
+        )
+
+        assert "Content-Encoding" not in resp.headers
+        assert "Accept-Encoding" not in resp.headers.get("Vary", "")
+        assert len(json.loads(body)) == ANNOTATION_COUNT
+
+    def testOtherOptInValueIsUncompressed(self, admin, server, dataset):
+        resp = server.request(
+            path="/upenn_annotation",
+            user=admin,
+            params={
+                "datasetId": str(dataset["_id"]), "limit": 0,
+                "compress": "gzip",
+            },
+            additionalHeaders=[("Accept-Encoding", BROWSER_ACCEPT_ENCODING)],
+            isJson=False,
+        )
+
+        assertStatusOk(resp)
+        assert "Content-Encoding" not in resp.headers
 
     def testNoAcceptEncodingIsUncompressed(self, admin, server, dataset):
         resp, body = _listAnnotations(server, admin, dataset["_id"])
@@ -108,6 +146,7 @@ class TestResponseCompression:
         def version(headers):
             resp = server.request(
                 path="/system/version",
+                params=OPT_IN,
                 additionalHeaders=headers,
                 isJson=False,
             )
@@ -136,6 +175,7 @@ class TestResponseCompression:
             resp = server.request(
                 path=f"/file/{upload['_id']}/download",
                 user=admin,
+                params=OPT_IN,
                 additionalHeaders=[
                     ("Accept-Encoding", BROWSER_ACCEPT_ENCODING), *headers
                 ],
@@ -162,6 +202,7 @@ class TestResponseCompression:
                 path="/export/csv",
                 method="POST",
                 user=admin,
+                params=OPT_IN,
                 body=json.dumps({
                     "datasetId": str(datasetFolder["_id"]),
                     "propertyPaths": [],
@@ -188,6 +229,7 @@ class TestResponseCompression:
             server,
             folder,
             user=admin,
+            params=OPT_IN,
             additionalHeaders=[("Accept-Encoding", BROWSER_ACCEPT_ENCODING)],
         )
 
@@ -216,3 +258,23 @@ def testClosingCompressedBodyClosesEndpointBody():
     compressed.close()
 
     assert closed == [True]
+
+
+@pytest.mark.parametrize(
+    "value, compressed",
+    [("zstd", True), ("gzip", False), ("", False), (["zstd", "zstd"], False)],
+)
+def testOptInParamIsRemovedBeforeTheEndpoint(monkeypatch, value, compressed):
+    # Endpoints without autoDescribeRoute receive every query parameter, so
+    # the opt-in must never reach them, whatever its value.
+    request = cherrypy._cprequest.Request(None, None)
+    # Its own map: Request's class-level one is shared by every request.
+    request.hooks = cherrypy._cprequest.HookMap(cherrypy._cprequest.hookpoints)
+    request.params = {"datasetId": "abc", "compress": value}
+    monkeypatch.setattr(cherrypy.serving, "request", request)
+
+    takeCompressionOptIn()
+
+    assert request.params == {"datasetId": "abc"}
+    attached = [hook.callback for hook in request.hooks["before_finalize"]]
+    assert (compressResponse in attached) is compressed

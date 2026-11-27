@@ -65,6 +65,11 @@ Or pass credentials explicitly:
 client = ni.connect("http://localhost:8080/api/v1", api_key="your-api-key")
 ```
 
+`ni.connect()` asks the server to zstd-compress large JSON and CSV responses,
+which makes big reads several times smaller over the internet. Code running next
+to the server on a fast private network (a worker, a server-side service) should
+pass `compress=False`: there, compressing costs more time than it saves.
+
 ## Quick start
 
 ```python

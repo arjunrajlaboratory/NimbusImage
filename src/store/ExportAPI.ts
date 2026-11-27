@@ -2,6 +2,7 @@ import { DeflateOptions, Zip, ZipDeflate } from "fflate";
 
 import { RestClientInstance } from "@/girder";
 import { downloadToClient } from "@/utils/download";
+import { withCompressionOptIn } from "@/utils/responseCompression";
 
 export interface IExportOptions {
   datasetId: string;
@@ -116,7 +117,9 @@ export default class ExportAPI {
       params.set("token", token);
     }
 
-    const url = `${this.client.apiRoot}/export/json?${params.toString()}`;
+    const url = withCompressionOptIn(
+      `${this.client.apiRoot}/export/json?${params.toString()}`,
+    );
 
     downloadToClient({
       href: url,
@@ -193,11 +196,14 @@ export default class ExportAPI {
       headers["Girder-Token"] = token;
     }
 
-    const response = await fetch(`${this.client.apiRoot}/${path}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    });
+    const response = await fetch(
+      withCompressionOptIn(`${this.client.apiRoot}/${path}`),
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      },
+    );
 
     if (!response.ok) {
       throw new Error(`${failureMessage}: ${response.statusText}`);

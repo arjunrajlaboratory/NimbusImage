@@ -784,31 +784,45 @@ the container's cgroup `anon` memory (`/sys/fs/cgroup/memory.stat`), which is
 what the OOM killer acts on and counts every process in the container, the
 celery workers included. Sample it while the request runs and abort past a cap.
 
-## API responses are zstd-compressed by Content-Type
+## API responses are zstd-compressed only on request
 
-`server/helpers/compression.py` installs a CherryPy `before_finalize` tool on the
-API root. Every response under `/api/v1` whose `Content-Type` is JSON, GeoJSON,
-CSV or TSV is zstd-encoded when the client sends `zstd` in `Accept-Encoding`, and
-sent uncompressed otherwise (there is no gzip). Browsers, and recent urllib3
-2.x when a zstd module imports (`compression.zstd` on Python 3.14+, else
-`backports.zstd`; older 2.x looked for `zstandard`), ask for it and decode it
-transparently. The worker images checked in 2026-11 (worker-base,
-image-processing-base and a few workers, all urllib3 2.7 on Python 3.14) do.
+`server/helpers/compression.py` installs a CherryPy `before_handler` tool on the
+API root. It removes the `compress` query parameter from every request under
+`/api/v1`, so no endpoint ever sees it, and when the value is `zstd` it attaches a
+`before_finalize` hook to that request. The hook zstd-encodes the response when its
+`Content-Type` is JSON, GeoJSON, CSV or TSV and the client's `Accept-Encoding`
+includes `zstd`. Everything else is sent uncompressed (there is no gzip).
+
+**Why opt-in:** compression pays off only on links slower than Girder produces a
+big list (~250 MB/s locally). Browsers and laptops are on such links: the
+709K-annotation page load got 31% faster at 25 MB/s and 14% at ~110 MB/s.
+Workers and the MCP server reach Girder over the AWS private network, where it
+cost 5-15% (0.05-0.2 s per 100K annotations). Girder↔MongoDB zstd made prod
+reads 17-32% slower the same way (AWSDeploy #137). `Accept-Encoding` can't
+separate the two: urllib3 2.6+ advertises zstd whenever a zstd module imports
+(`compression.zstd` on Python 3.14+, else `backports.zstd`), which covers the
+worker images. So the browser (`src/utils/responseCompression.ts`) and
+`ni.connect()` send the parameter, and `annotation_client`,
+`ni.worker_context()` and the MCP server (`connect(compress=False)`) don't. It
+is a query parameter rather than a header because a custom header would have to
+be added to Girder's CORS allow-list, or every cross-origin preflight fails.
 What follows for endpoint authors:
 
 - **Content-Type decides.** Return binary as `application/octet-stream` (or its
   real image type) so it isn't compressed. Never set `Content-Encoding` yourself
   unless you compress the body yourself; the tool skips any response that has it.
+- **Don't name an endpoint parameter `compress`.** The tool removes it before the
+  handler runs.
 - **Streamed bodies cost more.** They get two compression threads and hold ~10 MB
   of job buffers while in flight, plus the compressed output of each chunk (all of
   it when an export yields one chunk). Buffered bodies compress on the request
   thread.
-- **The streaming chunk check above only holds without `Accept-Encoding`.** The
-  compressor emits mostly empty chunks. pytest-girder's `server.request` sends no
+- **The streaming chunk check above only holds uncompressed.** The compressor
+  emits mostly empty chunks. pytest-girder's `server.request` sends no
   `Accept-Encoding`, and it bypasses CherryPy's WSGI response and the ASGI bridge,
   so close and empty-chunk behavior can't be tested through it.
-- **Debugging with curl:** pass `--compressed`, or omit `Accept-Encoding`, to read
-  a body.
+- **Debugging with curl:** a request without `compress=zstd` is never compressed;
+  with it, pass `--compressed`.
 
 ## Returning a large JSON body from numpy (orjson + raw response)
 

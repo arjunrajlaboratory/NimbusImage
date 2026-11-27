@@ -69,6 +69,7 @@ class NimbusClient:
         password: str | None = None,
         frontend_url: str = DEFAULT_FRONTEND_URL,
         anonymous: bool = False,
+        compress: bool = True,
     ):
         self._gc = create_client(
             api_url=api_url,
@@ -77,6 +78,7 @@ class NimbusClient:
             username=username,
             password=password,
             anonymous=anonymous,
+            compress=compress,
         )
         self._api_url = api_url or os.environ.get(
             "NI_API_URL", self._gc.urlBase

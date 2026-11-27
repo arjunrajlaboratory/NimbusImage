@@ -24,7 +24,9 @@ def test_stateless_requests_any_instance(monkeypatch):
     girder.add_key(KEY, "alice")
     fake = MagicMock()
     fake.list_datasets.return_value = []
-    monkeypatch.setattr(_common.ni, "connect", lambda api_url, token: fake)
+    monkeypatch.setattr(
+        _common.ni, "connect", lambda api_url, token, **kwargs: fake
+    )
     settings = make_settings()
 
     def instance():
