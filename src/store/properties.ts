@@ -49,7 +49,11 @@ import jobs, {
   createErrorEventCallback,
 } from "./jobs";
 import { logError, logWarning } from "@/utils/log";
-import { findIndexOfPath, serializePropertyPath } from "@/utils/paths";
+import {
+  arePathEquals,
+  findIndexOfPath,
+  serializePropertyPath,
+} from "@/utils/paths";
 import type { TPropertyValueEntry } from "./PropertiesAPI";
 
 // Virtual property paths (server-side value providers, SPATIAL_PLUGIN.md
@@ -892,6 +896,18 @@ export class Properties extends VuexModule {
         `Displayed property columns clamped to ${MAX_DISPLAYED_PROPERTY_PATHS}; ` +
           "hide columns to make room for others.",
       );
+    }
+    // Keep the array when nothing changed. updateDisplayedFromComputedProperties
+    // runs on every propertyValues write, and the lazy-mode visible fetch
+    // watches this array: a fresh copy re-ran the fetch after each merge, which
+    // refetched forever for visible annotations the property has no value for.
+    if (
+      unique.length === this.displayedPropertyPaths.length &&
+      unique.every((path, index) =>
+        arePathEquals(path, this.displayedPropertyPaths[index]),
+      )
+    ) {
+      return;
     }
     this.displayedPropertyPaths = unique;
   }

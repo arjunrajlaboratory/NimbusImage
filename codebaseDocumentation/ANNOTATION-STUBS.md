@@ -1189,6 +1189,11 @@ What shipped:
   **sample** (`fetchPropertyPathsSample`, reuses `find` with a 512-doc limit — no new
   endpoint) and loads values only for the **visible set × displayed columns**
   (`ensureVisiblePropertyValues`, coupled to `updateVisibility` in `AnnotationViewer`).
+  Its only re-run triggers are `updateVisibility`, a real displayed-path change,
+  `fetchPropertyValues` and the virtual-table refresh. "Missing" is never a fixed
+  point (there is no negative cache, so ids the server has no value for stay
+  missing), so a value merge must not re-fire it: see PR #1467, where a fresh
+  displayed-path array per merge made it refetch in a loop.
   `computedPropertyPaths` sources from the sample in lazy mode (via the new pure
   `collectLeafPaths`), so the path picker / prune-watcher don't depend on the full map.
 - **Pure helpers** `collectLeafPaths`, `idsMissingPaths`, `scopedMergePropertyValues` in
