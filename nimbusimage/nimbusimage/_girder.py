@@ -8,7 +8,6 @@ and error handling are centralized.
 from __future__ import annotations
 
 import enum
-import inspect
 import json
 import math
 import os
@@ -38,14 +37,6 @@ _RETRY_TOTAL = 5
 _RETRY_STATUS_FORCELIST = (502, 503, 504)
 _RETRY_BACKOFF_FACTOR = 0.5
 _RETRY_BACKOFF_JITTER = 0.5
-
-# backoff_jitter was added in urllib3 2.0. Passing it on urllib3 1.26.x
-# raises TypeError at construction, so gate it by feature detection rather
-# than version parsing. Backoff still applies without jitter on older
-# urllib3 — we just lose the thundering-herd spread.
-_RETRY_SUPPORTS_JITTER = (
-    "backoff_jitter" in inspect.signature(Retry.__init__).parameters
-)
 
 
 try:
@@ -158,18 +149,23 @@ class FastJsonGirderClient(girder_client.GirderClient):
         return loads_json(response) if jsonResp else response
 
 
+# Girder zstd-compresses a response only for requests with this parameter
+# (upenncontrast_annotation/server/helpers/compression.py). It pays off on a
+# laptop's link; next to Girder on the AWS private network (workers, the MCP
+# server) compressing costs more time than it saves.
+COMPRESSION_OPT_IN = {"compress": "zstd"}
+
+
 def _build_retry_session() -> requests.Session:
     """Build a requests.Session that retries transient 5xx with backoff."""
-    retry_kwargs = dict(
+    retry = Retry(
         total=_RETRY_TOTAL,
         status_forcelist=_RETRY_STATUS_FORCELIST,
         backoff_factor=_RETRY_BACKOFF_FACTOR,
+        backoff_jitter=_RETRY_BACKOFF_JITTER,
         respect_retry_after_header=True,
         raise_on_status=False,
     )
-    if _RETRY_SUPPORTS_JITTER:
-        retry_kwargs["backoff_jitter"] = _RETRY_BACKOFF_JITTER
-    retry = Retry(**retry_kwargs)
     adapter = HTTPAdapter(max_retries=retry)
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
@@ -185,6 +181,7 @@ def create_client(
     username: str | None = None,
     password: str | None = None,
     anonymous: bool = False,
+    compress: bool = False,
 ) -> FastJsonGirderClient:
     """Create and authenticate a GirderClient.
 
@@ -204,6 +201,11 @@ def create_client(
         password: Password for interactive auth.
         anonymous: Connect without credentials. Only public resources
             are accessible.
+        compress: Ask Girder to zstd-compress JSON and CSV responses.
+            Faster over the internet, slower next to Girder on a fast
+            private network. urllib3 decodes them with Python 3.14's
+            ``compression.zstd``, or ``backports.zstd`` (installed with
+            ``urllib3[zstd]``) on older Pythons.
 
     Returns:
         Authenticated FastJsonGirderClient instance.
@@ -224,6 +226,9 @@ def create_client(
     # retries transient 5xx (NIM-006). girder_client uses gc._session for
     # every request when it is set.
     gc._session = _build_retry_session()
+    if compress:
+        # requests merges these into every request's own params.
+        gc._session.params.update(COMPRESSION_OPT_IN)
 
     if anonymous:
         if any(

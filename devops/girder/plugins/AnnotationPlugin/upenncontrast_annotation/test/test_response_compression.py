@@ -1,0 +1,297 @@
+"""API responses are zstd-compressed by Girder when the request opts in with
+?compress=zstd and the client accepts zstd (server/helpers/compression.py)."""
+import io
+import json
+
+import cherrypy
+import pytest
+
+from girder.models.upload import Upload
+from pytest_girder.assertions import assertStatus, assertStatusOk
+
+from upenncontrast_annotation.server.helpers.compression import (
+    _zstdCompress,
+    compressResponse,
+    takeCompressionOptIn,
+    zstd,
+)
+from upenncontrast_annotation.server.models.annotation import Annotation
+
+from . import girder_utilities as utilities
+from . import upenn_testing_utilities as upenn_utilities
+from .test_export import createDatasetWithData
+from .test_raster import requestTile
+
+# Several raw Mongo batches, so the streamed list arrives in many chunks.
+ANNOTATION_COUNT = 2500
+
+# What current Chrome and Firefox send over HTTPS.
+BROWSER_ACCEPT_ENCODING = "gzip, deflate, br, zstd"
+# What the frontend and the nimbusimage package add to every request.
+OPT_IN = {"compress": "zstd"}
+
+
+def _listAnnotations(
+    server, admin, datasetId, acceptEncoding=None, optIn=True
+):
+    headers = []
+    if acceptEncoding is not None:
+        headers.append(("Accept-Encoding", acceptEncoding))
+    params = {"datasetId": str(datasetId), "limit": 0}
+    if optIn:
+        params.update(OPT_IN)
+    resp = server.request(
+        path="/upenn_annotation",
+        method="GET",
+        user=admin,
+        params=params,
+        additionalHeaders=headers,
+        isJson=False,
+    )
+    assertStatusOk(resp)
+    return resp, b"".join(resp.body)
+
+
+@pytest.fixture
+def dataset(admin):
+    folder = utilities.createFolder(
+        admin, "compressed", upenn_utilities.datasetMetadata
+    )
+    Annotation().createMultiple([
+        upenn_utilities.getSampleAnnotation(folder["_id"])
+        for _ in range(ANNOTATION_COUNT)
+    ])
+    return folder
+
+
+@pytest.mark.usefixtures("unbindLargeImage", "unbindAnnotation")
+@pytest.mark.plugin("upenncontrast_annotation")
+class TestResponseCompression:
+    def testStreamedListIsCompressed(self, admin, server, dataset):
+        _, plain = _listAnnotations(server, admin, dataset["_id"])
+        resp, body = _listAnnotations(
+            server, admin, dataset["_id"], BROWSER_ACCEPT_ENCODING
+        )
+
+        assert resp.headers["Content-Encoding"] == "zstd"
+        assert "Accept-Encoding" in resp.headers["Vary"]
+        assert len(body) < len(plain) / 3
+        assert zstd.decompress(body) == plain
+        assert len(json.loads(plain)) == ANNOTATION_COUNT
+
+    # A worker: its urllib3 accepts zstd, but it doesn't opt in.
+    def testAcceptingZstdWithoutOptInIsUncompressed(
+        self, admin, server, dataset
+    ):
+        resp, body = _listAnnotations(
+            server, admin, dataset["_id"], BROWSER_ACCEPT_ENCODING,
+            optIn=False,
+        )
+
+        assert "Content-Encoding" not in resp.headers
+        assert "Accept-Encoding" not in resp.headers.get("Vary", "")
+        assert len(json.loads(body)) == ANNOTATION_COUNT
+
+    def testOtherOptInValueIsUncompressed(self, admin, server, dataset):
+        resp = server.request(
+            path="/upenn_annotation",
+            user=admin,
+            params={
+                "datasetId": str(dataset["_id"]), "limit": 0,
+                "compress": "gzip",
+            },
+            additionalHeaders=[("Accept-Encoding", BROWSER_ACCEPT_ENCODING)],
+            isJson=False,
+        )
+
+        assertStatusOk(resp)
+        assert "Content-Encoding" not in resp.headers
+
+    def testNoAcceptEncodingIsUncompressed(self, admin, server, dataset):
+        resp, body = _listAnnotations(server, admin, dataset["_id"])
+
+        assert "Content-Encoding" not in resp.headers
+        assert len(json.loads(body)) == ANNOTATION_COUNT
+
+    # No gzip fallback, and never CherryPy's 406 for an unmet encoding.
+    @pytest.mark.parametrize(
+        "acceptEncoding",
+        ["gzip, deflate, br", "br", "identity", "gzip, zstd;q=0"],
+    )
+    def testZstdNotAcceptedIsUncompressed(
+        self, admin, server, dataset, acceptEncoding
+    ):
+        resp, body = _listAnnotations(
+            server, admin, dataset["_id"], acceptEncoding
+        )
+
+        assert "Content-Encoding" not in resp.headers
+        assert "Accept-Encoding" in resp.headers["Vary"]
+        assert len(json.loads(body)) == ANNOTATION_COUNT
+
+    # CherryPy raises a 400 for a bad q-value, after the handler ran: while
+    # sorting several codings, or on reading a lone coding's qvalue.
+    @pytest.mark.parametrize("acceptEncoding", ["gzip;q=x, zstd", "zstd;q=x"])
+    def testMalformedAcceptEncodingIsUncompressedNot400(
+        self, admin, server, dataset, acceptEncoding
+    ):
+        resp, body = _listAnnotations(
+            server, admin, dataset["_id"], acceptEncoding
+        )
+
+        assert "Content-Encoding" not in resp.headers
+        assert len(json.loads(body)) == ANNOTATION_COUNT
+
+    def testBufferedJsonIsCompressed(self, server):
+        def version(headers):
+            resp = server.request(
+                path="/system/version",
+                params=OPT_IN,
+                additionalHeaders=headers,
+                isJson=False,
+            )
+            assertStatusOk(resp)
+            return resp, b"".join(resp.body)
+
+        _, plain = version([])
+        resp, body = version([("Accept-Encoding", "ZSTD")])
+
+        assert resp.headers["Content-Encoding"] == "zstd"
+        assert int(resp.headers["Content-Length"]) == len(body)
+        assert zstd.decompress(body) == plain
+
+    def testJsonFileDownload(self, admin, server, fsAssetstore):
+        # The download streams with the uncompressed Content-Length preset.
+        folder = utilities.createFolder(
+            admin, "compressed_file", upenn_utilities.datasetMetadata
+        )
+        data = json.dumps([{"value": i} for i in range(2000)]).encode()
+        upload = Upload().uploadFromFile(
+            io.BytesIO(data), len(data), "values.json", "folder", folder,
+            user=admin, mimeType="application/json",
+        )
+
+        def download(headers):
+            resp = server.request(
+                path=f"/file/{upload['_id']}/download",
+                user=admin,
+                params=OPT_IN,
+                additionalHeaders=[
+                    ("Accept-Encoding", BROWSER_ACCEPT_ENCODING), *headers
+                ],
+                isJson=False,
+            )
+            return resp, b"".join(resp.body)
+
+        resp, body = download([])
+        assertStatusOk(resp)
+        assert resp.headers["Content-Encoding"] == "zstd"
+        assert "Content-Length" not in resp.headers
+        assert zstd.decompress(body) == data
+
+        resp, body = download([("Range", "bytes=0-9")])
+        assertStatus(resp, 206)
+        assert "Content-Encoding" not in resp.headers
+        assert body == data[:10]
+
+    def testCsvExportIsCompressed(self, admin, server):
+        datasetFolder, _, _ = createDatasetWithData(admin)
+
+        def export(headers):
+            resp = server.request(
+                path="/export/csv",
+                method="POST",
+                user=admin,
+                params=OPT_IN,
+                body=json.dumps({
+                    "datasetId": str(datasetFolder["_id"]),
+                    "propertyPaths": [],
+                }),
+                type="application/json",
+                additionalHeaders=headers,
+                isJson=False,
+            )
+            assertStatusOk(resp)
+            return resp, b"".join(resp.body)
+
+        _, plain = export([])
+        resp, body = export([("Accept-Encoding", BROWSER_ACCEPT_ENCODING)])
+
+        assert resp.headers["Content-Encoding"] == "zstd"
+        assert zstd.decompress(body) == plain
+        assert len(plain.decode().splitlines()) == 3
+
+    def testPngTileIsNotCompressed(self, admin, server):
+        folder = utilities.createFolder(
+            admin, "compressed_tile", upenn_utilities.datasetMetadata
+        )
+        resp = requestTile(
+            server,
+            folder,
+            user=admin,
+            params=OPT_IN,
+            additionalHeaders=[("Accept-Encoding", BROWSER_ACCEPT_ENCODING)],
+        )
+
+        assertStatusOk(resp)
+        assert resp.headers["Content-Type"].startswith("image/png")
+        assert "Content-Encoding" not in resp.headers
+
+
+def testClosingCompressedBodyClosesEndpointBody():
+    # Streaming endpoints stop prefetch threads and close cursors when
+    # their generator is closed; CherryPy only closes the wrapper.
+    closed = []
+
+    def endpointBody():
+        try:
+            for _ in range(10):
+                yield b"[]" * 1000
+        finally:
+            closed.append(True)
+
+    # Something else still holds the endpoint's generator, as CherryPy's
+    # encode tool does, so dropping it alone wouldn't finalize it.
+    body = endpointBody()
+    compressed = _zstdCompress(body, 2)
+    next(compressed)
+    compressed.close()
+
+    assert closed == [True]
+
+
+@pytest.mark.parametrize(
+    "value, compressed",
+    [("zstd", True), ("gzip", False), ("", False), (["zstd", "zstd"], False)],
+)
+def testOptInParamIsRemovedBeforeTheEndpoint(monkeypatch, value, compressed):
+    # Endpoints without autoDescribeRoute receive every query parameter, so
+    # the opt-in must never reach them, whatever its value.
+    request = cherrypy._cprequest.Request(None, None)
+    # Its own map: Request's class-level one is shared by every request.
+    request.hooks = cherrypy._cprequest.HookMap(cherrypy._cprequest.hookpoints)
+    request.params = {"datasetId": "abc", "compress": value}
+    request.query_string = "datasetId=abc&compress=zstd&sort=a%2Cb&empty="
+    monkeypatch.setattr(cherrypy.serving, "request", request)
+
+    takeCompressionOptIn()
+
+    assert request.params == {"datasetId": "abc"}
+    # Endpoints that read the raw query string don't see it either.
+    assert request.query_string == "datasetId=abc&sort=a%2Cb&empty="
+    attached = [hook.callback for hook in request.hooks["before_finalize"]]
+    assert (compressResponse in attached) is compressed
+
+
+def testRequestWithoutOptInIsUntouched(monkeypatch):
+    request = cherrypy._cprequest.Request(None, None)
+    request.hooks = cherrypy._cprequest.HookMap(cherrypy._cprequest.hookpoints)
+    request.params = {"datasetId": "abc"}
+    request.query_string = "datasetId=abc&b=%2C"
+    monkeypatch.setattr(cherrypy.serving, "request", request)
+
+    takeCompressionOptIn()
+
+    assert request.params == {"datasetId": "abc"}
+    assert request.query_string == "datasetId=abc&b=%2C"
+    assert not list(request.hooks["before_finalize"])

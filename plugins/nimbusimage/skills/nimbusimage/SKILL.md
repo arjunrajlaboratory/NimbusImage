@@ -95,6 +95,8 @@ client = ni.connect("http://localhost:8080/api/v1", token="session-token")
 client = ni.connect("http://localhost:8080/api/v1", username="...", password="...")
 ```
 
+`ni.connect()` asks the server to compress large responses, which makes big reads several times smaller over the internet. In code that runs next to the server on a fast private network (a worker container, a server-side service), pass `compress=False`, or use `ni.worker_context()`, which never asks: there, compressing costs more time than it saves.
+
 ### Setting up environment variables (recommend to users)
 
 The recommended setup uses an **API key**, which is persistent and doesn't expire (unlike session tokens).

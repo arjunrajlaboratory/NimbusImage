@@ -44,6 +44,7 @@ def connect(
     username: str | None = None,
     password: str | None = None,
     anonymous: bool = False,
+    compress: bool = True,
 ) -> NimbusClient:
     """Connect to a NimbusImage server.
 
@@ -58,6 +59,12 @@ def connect(
         anonymous: Connect without credentials. Only public
             datasets are accessible (e.g., for measurements on
             published data).
+        compress: Ask the server to zstd-compress large JSON and CSV
+            responses, which makes big reads several times smaller
+            over the internet. Pass False when running next to the
+            server on a fast private network (a worker, a server-side
+            service), where compressing costs more than it saves.
+            The ``urllib3[zstd]`` dependency provides the decoder.
 
     Returns:
         Authenticated NimbusClient.
@@ -65,6 +72,7 @@ def connect(
     return NimbusClient(
         api_url=api_url, token=token, api_key=api_key,
         username=username, password=password, anonymous=anonymous,
+        compress=compress,
     )
 
 

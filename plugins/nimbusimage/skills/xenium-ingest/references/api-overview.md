@@ -37,6 +37,12 @@ ni.connect() → NimbusClient
     └── client.collection(id)
 ```
 
+`ni.connect()` asks the server to zstd-compress large JSON/CSV responses
+(`compress=True`). Pass `compress=False` for code that runs next to the
+server on a fast private network, such as a worker or a server-side service:
+there, compressing costs more time than it saves. `ni.worker_context()` never
+asks.
+
 ## Data models (all Pydantic BaseModel)
 
 | Class | Key fields | Aliases |

@@ -134,6 +134,8 @@ See `TOOLS.md` for detailed documentation on adding new tools.
 - Histograms cached per-layer for performance
 - Resource metadata cached in `girderResources` module
 
+**Response compression (opt-in):** API responses under `/api/v1` with JSON, GeoJSON, CSV or TSV content types are zstd-compressed by the plugin (`server/helpers/compression.py`) only when the request carries `?compress=zstd` **and** `Accept-Encoding` includes zstd. The frontend adds the parameter to every axios request and to its `fetch`/download-link exports (`src/utils/responseCompression.ts`); `ni.connect()` adds it unless passed `compress=False`. Workers (`annotation_client`, `ni.worker_context`) and the MCP server don't, because on the AWS private network compressing costs more than it saves (5-15% slower in local tests; the same effect made Girder↔MongoDB zstd slower on prod, AWSDeploy #137). Girder removes the parameter before any endpoint sees it. See the `nimbus-backend` skill for what this means for new endpoints.
+
 **API Endpoint Reference:**
 
 Plugin endpoints are registered in `__init__.py` (lines 159-173). Endpoint names differ from what you might expect:

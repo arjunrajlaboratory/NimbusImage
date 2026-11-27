@@ -924,6 +924,19 @@ import store from "@/store";
 const result = await store.api.someMethod();
 ```
 
+### Requests that bypass axios must opt in to compression themselves
+
+Girder zstd-compresses a JSON/CSV response only when the request carries
+`?compress=zstd` (see nimbus-backend, "API responses are zstd-compressed only on
+request"). Every app client is built by `createRestClient` in
+`src/store/index.ts`, which adds it to every axios request, so the API classes
+get it for free. Build any new client through it: the share-link client was
+once a bare `new RestClient`, so shared views went out uncompressed. A `fetch()` or a download link built from
+`client.apiRoot` doesn't go through axios: wrap its URL in
+`withCompressionOptIn` (`src/utils/responseCompression.ts`), as the CSV, GeoJSON
+and JSON exports in `ExportAPI.ts` do, or a large export goes out uncompressed.
+Image tiles and binary regions don't need it.
+
 ### Your own rights come from the server's effective level, never an ACL row
 
 Don't decide what the current user may do by finding `store.girderUser._id` in an access list's `users`. That list holds only **direct** entries. Someone with access through a Girder group, or a site admin, has no row there, so the UI hides controls the server would allow. Codex caught this on the Share dialog (PR #1406). The access endpoints return `currentUserLevel` (Girder `getAccessLevel`) for this. For a Girder document already in hand, its `_accessLevel` is the same value. Two follow-ons:

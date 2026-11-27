@@ -22,7 +22,35 @@ describe("ExportAPI", () => {
     api = new ExportAPI(createMockClient());
   });
 
+  describe("exportJson", () => {
+    it("downloads a compressed JSON export with the token", async () => {
+      const { downloadToClient } = await import("@/utils/download");
+      api.exportJson({ datasetId: "ds1", filename: "ds1.json" });
+
+      const { href, download } = (downloadToClient as any).mock.calls[0][0];
+      const url = new URL(href);
+      expect(url.pathname).toBe("/api/v1/export/json");
+      expect(url.searchParams.get("token")).toBe("test-token");
+      expect(url.searchParams.get("compress")).toBe("zstd");
+      expect(download).toBe("ds1.json");
+    });
+  });
+
   describe("exportCsv", () => {
+    it("asks for a compressed response", async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        blob: () => Promise.resolve(new Blob(["csv"])),
+      });
+      global.URL.createObjectURL = vi.fn().mockReturnValue("blob:mock-url");
+      global.URL.revokeObjectURL = vi.fn();
+      await api.exportCsv({ datasetId: "ds1" });
+
+      expect((global.fetch as any).mock.calls[0][0]).toBe(
+        "http://localhost:8080/api/v1/export/csv?compress=zstd",
+      );
+    });
+
     beforeEach(() => {
       const mockBlob = new Blob(["csv-content"], { type: "text/csv" });
       global.fetch = vi.fn().mockResolvedValue({
@@ -85,7 +113,9 @@ describe("ExportAPI", () => {
       });
 
       const [url, init] = (global.fetch as any).mock.calls[0];
-      expect(url).toBe("http://localhost:8080/api/v1/export/geojson");
+      expect(url).toBe(
+        "http://localhost:8080/api/v1/export/geojson?compress=zstd",
+      );
       expect(init.method).toBe("POST");
       expect(init.headers["Girder-Token"]).toBe("test-token");
       expect(JSON.parse(init.body)).toEqual({

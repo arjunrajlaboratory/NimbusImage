@@ -25,7 +25,9 @@ def test_no_credentials_in_logs(tmp_path, caplog, monkeypatch):
     fake = MagicMock()
     fake.list_datasets.return_value = [{"_id": "d1", "name": "Mine"}]
     fake.dataset.side_effect = ValueError("No large image in patient-1234")
-    monkeypatch.setattr(_common.ni, "connect", lambda api_url, token: fake)
+    monkeypatch.setattr(
+        _common.ni, "connect", lambda api_url, token, **kwargs: fake
+    )
 
     caplog.set_level(logging.DEBUG)
     secret_tag = "patient-1234"
@@ -70,7 +72,9 @@ def test_no_oauth_credentials_in_logs(caplog, monkeypatch):
     session = girder.oauth[oauth_token]["girder_token"]
     fake = MagicMock()
     fake.list_datasets.return_value = []
-    monkeypatch.setattr(_common.ni, "connect", lambda api_url, token: fake)
+    monkeypatch.setattr(
+        _common.ni, "connect", lambda api_url, token, **kwargs: fake
+    )
     caplog.set_level(logging.DEBUG)
     settings = make_settings()
     app = build_app(settings, NimbusVerifier(
