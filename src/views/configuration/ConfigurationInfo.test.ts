@@ -241,8 +241,33 @@ describe("ConfigurationInfo", () => {
     expect(vm.viewToRemove).toBeNull();
   });
 
+  it("removeDatasetView closes the dialog after the view is deleted", async () => {
+    mockDeleteDatasetView.mockResolvedValue(true);
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.openRemoveDatasetDialog({ id: "view-1" });
+    vm.removeDatasetView();
+    await flushPromises();
+    expect(vm.removeDatasetViewConfirm).toBe(false);
+    expect(vm.viewToRemove).toBeNull();
+  });
+
+  it("removeDatasetView keeps the dialog open when the view was not deleted", async () => {
+    // deleteDatasetView resolves to false when it is refused (nobody logged
+    // in); closing would tell the user the dataset was removed.
+    mockDeleteDatasetView.mockResolvedValue(false);
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    const view = { id: "view-1" };
+    vm.openRemoveDatasetDialog(view);
+    vm.removeDatasetView();
+    await flushPromises();
+    expect(vm.removeDatasetViewConfirm).toBe(true);
+    expect(vm.viewToRemove).toEqual(view);
+  });
+
   it("remove calls deleteConfiguration and $router.back()", async () => {
-    mockDeleteConfiguration.mockResolvedValue(undefined);
+    mockDeleteConfiguration.mockResolvedValue(true);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     vm.remove();
@@ -251,6 +276,39 @@ describe("ConfigurationInfo", () => {
       (store as any).configuration,
     );
     expect(mockRouter.back).toHaveBeenCalled();
+  });
+
+  it("remove ignores a second click while the delete is in flight", async () => {
+    // The confirm button stays on screen until the action resolves; a second
+    // click must not send a second delete for the same collection.
+    let finish: (deleted: boolean) => void = () => {};
+    mockDeleteConfiguration.mockClear();
+    mockDeleteConfiguration.mockReturnValue(
+      new Promise<boolean>((resolve) => (finish = resolve)),
+    );
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.remove();
+    vm.remove();
+    expect(mockDeleteConfiguration).toHaveBeenCalledTimes(1);
+    expect(vm.removing).toBe(true);
+    finish(false);
+    await flushPromises();
+    expect(vm.removing).toBe(false);
+  });
+
+  it("remove stays on the page when the collection was not deleted", async () => {
+    // deleteConfiguration resolves to false when it is refused (nobody logged
+    // in) or fails; going back would tell the user the collection is gone.
+    mockDeleteConfiguration.mockResolvedValue(false);
+    mockRouter.back.mockClear();
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.removeConfirm = true;
+    vm.remove();
+    await flushPromises();
+    expect(mockRouter.back).not.toHaveBeenCalled();
+    expect(vm.removeConfirm).toBe(true);
   });
 
   it("removeConfirm dialog toggles state", () => {

@@ -328,6 +328,22 @@ describe("AddDatasetToCollection", () => {
     expect(vm.option.type).toBe("upload");
   });
 
+  it("addDatasetToCollection keeps the selection when a view was not created", async () => {
+    // createDatasetView resolves to null when it is refused (nobody logged
+    // in); emitting would report datasets that were not added.
+    mockCreateDatasetView.mockResolvedValue(null);
+
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.addDatasetOptionType = "add";
+    vm.option.datasets = [{ id: "ds1", name: "Dataset 1" }];
+
+    await vm.addDatasetToCollection();
+
+    expect(wrapper.emitted("addedDatasets")).toBeFalsy();
+    expect(vm.option.datasets).toEqual([{ id: "ds1", name: "Dataset 1" }]);
+  });
+
   it("addDatasetToCollection in upload mode uses uploadedDatasetId", async () => {
     mockCreateDatasetView.mockResolvedValue({ id: "view1" });
 

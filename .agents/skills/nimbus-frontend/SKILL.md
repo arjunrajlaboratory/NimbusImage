@@ -188,6 +188,27 @@ Note the *array* convention differs: `annotations` is a plain reactive array of
 
 Editing any `src/store/*.ts` while `pnpm run dev` runs corrupts the store: vuex-module-decorators registers getters at import time with no HMR accept handler, so a hot re-import double-registers → `[vuex] duplicate getter key` cascade and broken state (e.g. annotations stuck at 0). **Hard-reload the page after every store-module edit** before trusting any in-browser behavior. Component `.vue` edits HMR fine — prefer putting temporary instrumentation in `.vue` files.
 
+### Plain Methods Do Not Exist Inside an `@Action`
+
+Inside an `@Action`, `this` is the module accessor built by `getModule`: it carries state, getters, mutations and actions only. An undecorated class method (`private helper() {...}`) is not on it, so `this.helper()` throws `TypeError: this.helper is not a function`, which a bare `@Action` then reports as `ERR_ACTION_ACCESS_UNDEFINED`. `tsc` and lint stay green because the class type does have the method. `createNotLoggedInNotification` shipped this way: ten logged-out guards rejected instead of showing their warning.
+
+- Put a helper that needs no module state in a **module-level function** above the class and call it without `this`. Make it an `@Action` only if it needs `this`.
+- A test that mocks `@/store` cannot see this. Dispatch the real action (`src/store/notLoggedIn.test.ts`, `src/store/colorByProperty.test.ts`).
+- Guard branches are the usual hiding place: the logged-out or no-dataset path is the one nobody runs by hand.
+
+### Logged-Out Users: Refuse and Warn, or Apply and Stay Silent
+
+An action has two honest choices for a guest. Mixing them tells the user an action failed when it worked.
+
+- **Refuse**: return before changing anything and call `createNotLoggedInNotification()` (`addLayer`, `deleteDataset`, `createDatasetView`). Actions that need the server belong here.
+- **Apply for the session**: change the local configuration and call `syncConfiguration`, which skips the save for a guest without warning. Edits to the open configuration belong here (layers, tools, snapshots, visibility settings).
+
+Three traps this produced on one PR:
+
+- **A refusal resolves; it does not reject.** A caller that runs its success path on any resolution (`.then(() => router.back())`, close a dialog, emit) reports a success that did not happen. When a caller acts on the outcome, make the action resolve to a boolean or `null` and check it. `if (promise)` on a dispatch is always true.
+- **"Deleted" must mean the thing itself is gone.** `deleteDataset` and `deleteConfiguration` also clean up dataset views. Joining both in one `Promise.all` reports failure after the dataset was deleted; one `Promise.allSettled` reports success after the delete failed. Decide the result from the delete request alone, and start the cleanup only after it succeeds (`deleteWithItsDatasetViews`).
+- **Notifications render from `ProgressBarGroup`, mounted once in `App.vue`** above dialogs. Mounted inside a page component, a notification raised anywhere else is created and never shown.
+
 ### Actions That Throw Need `@Action({ rawError: true })`
 
 `vuex-module-decorators` wraps **any** error thrown from a bare `@Action` in a generic `Error("ERR_ACTION_ACCESS_UNDEFINED: Are you trying to access this.someMutation()...")`, discarding the original message — unless the action is declared `@Action({ rawError: true })`. This is a library-wide behavior, not specific to one module.

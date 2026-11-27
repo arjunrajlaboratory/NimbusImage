@@ -29,6 +29,7 @@ import McpOAuthAPI from "./McpOAuthAPI";
 import PropertiesAPI from "./PropertiesAPI";
 import ToolSuggestionsAPI from "./ToolSuggestionsAPI";
 import AgentAPI from "./AgentAPI";
+import { extractErrorMessage } from "@/utils/errors";
 import GirderAPI from "./GirderAPI";
 import ExportAPI from "./ExportAPI";
 import ProjectsAPI from "./ProjectsAPI";
@@ -765,6 +766,94 @@ async function followJobToEnd(
       );
     }
   }
+}
+
+// Warn that an action was refused because nobody is logged in. This is a
+// module-level function, not a method of Main: inside an @Action `this` is the
+// module accessor, which carries only state, getters, mutations and actions,
+// so a plain method called as `this.method()` is not a function there.
+function createNotLoggedInNotification() {
+  const title = "Authentication Required";
+  const message = "You must be logged in to perform this action.";
+  // One submission can refuse several actions at once (adding five datasets
+  // to a collection calls createDatasetView five times). Show the warning
+  // once while it is on screen, not once per refusal.
+  if (
+    progress.notifications.some(
+      (notification) =>
+        notification.title === title && notification.message === message,
+    )
+  ) {
+    return;
+  }
+  progress.createNotification({
+    type: NotificationType.WARNING,
+    title,
+    message,
+    timeout: 5,
+  });
+}
+
+// Delete a dataset or a collection together with the dataset views that point
+// at it. Resolves to whether the dataset or collection itself was deleted:
+// the caller navigates away on that answer, so it must not depend on the view
+// cleanup.
+// - Nothing is awaited before the delete request, so it goes out under the
+//   session the user confirmed in.
+// - The views are listed and deleted only after the delete succeeded. A
+//   refused or failed delete must leave them alone, or the page the user stays
+//   on would list views that are gone. Listing afterwards (the endpoint
+//   filters on the stored ids and does not load the parent) also picks up a
+//   view another tab added in the meantime.
+// - A failed delete is shown as a notification: the caller keeps its confirm
+//   dialog open, and the sync indicator is behind that dialog's scrim.
+// - View cleanup is best effort. A failure is flagged on the sync indicator.
+// - onDeleted, which clears what the calling page is showing, runs last: the
+//   page's confirm button stays clickable until this resolves, and a second
+//   click must still find the dataset or collection it names.
+async function deleteWithItsDatasetViews({
+  api,
+  what,
+  viewFilter,
+  deleteIt,
+  onDeleted,
+}: {
+  api: GirderAPI;
+  what: "dataset" | "collection";
+  viewFilter: { datasetId: string } | { configurationId: string };
+  deleteIt: () => Promise<unknown>;
+  onDeleted: () => Promise<void>;
+}): Promise<boolean> {
+  sync.setSaving(true);
+  try {
+    await deleteIt();
+  } catch (error) {
+    sync.setSaving(error as Error);
+    progress.createNotification({
+      type: NotificationType.ERROR,
+      title: `Could not delete the ${what}`,
+      // Girder's own reason ("Admin access denied for folder ...") when it
+      // sent one: this toast is the only error the user sees.
+      message: extractErrorMessage(error),
+      timeout: 10,
+    });
+    return false;
+  }
+  let cleanupError: Error | null = null;
+  try {
+    const views: IDatasetView[] = await api.findDatasetViews(viewFilter);
+    const failedCleanup = (
+      await Promise.allSettled(views.map(({ id }) => api.deleteDatasetView(id)))
+    ).find((result) => result.status === "rejected");
+    if (failedCleanup) {
+      cleanupError = (failedCleanup as PromiseRejectedResult).reason;
+    }
+  } catch (error) {
+    cleanupError = error as Error;
+  }
+  await onDeleted();
+  sync.setSaving(cleanupError ?? false);
+  return true;
 }
 
 @Module({ dynamic: true, store, name: "main" })
@@ -1556,18 +1645,6 @@ export class Main extends VuexModule {
     this.syncConfiguration("tools");
   }
 
-  /**
-   * Helper function to create a notification when user is not logged in
-   */
-  private createNotLoggedInNotification() {
-    progress.createNotification({
-      type: NotificationType.WARNING,
-      title: "Authentication Required",
-      message: "You must be logged in to perform this action.",
-      timeout: 5,
-    });
-  }
-
   @Action
   removeToolFromConfiguration(toolId: string) {
     if (this.selectedTool?.configuration.id === toolId) {
@@ -1817,7 +1894,7 @@ export class Main extends VuexModule {
   @Action
   async deleteLargeImage(largeImage: IGirderLargeImage) {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return;
     }
     if (!this.dataset?.id || !largeImage._id) {
@@ -2193,7 +2270,7 @@ export class Main extends VuexModule {
     configurationId: string;
   }) {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return null;
     }
     return this.api.createDatasetView({
@@ -2842,13 +2919,15 @@ export class Main extends VuexModule {
     return { ...(await request) };
   }
 
+  // Resolves to whether the view was deleted; a failed request still rejects.
   @Action
-  deleteDatasetView(datasetView: IDatasetView) {
+  async deleteDatasetView(datasetView: IDatasetView): Promise<boolean> {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
-      return;
+      createNotLoggedInNotification();
+      return false;
     }
-    return this.api.deleteDatasetView(datasetView.id);
+    await this.api.deleteDatasetView(datasetView.id);
+    return true;
   }
 
   @Action
@@ -2862,7 +2941,7 @@ export class Main extends VuexModule {
     path: IGirderSelectAble;
   }) {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return null;
     }
     try {
@@ -2987,7 +3066,7 @@ export class Main extends VuexModule {
     folderId: string;
   }) {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return null;
     }
     if (!this.dataset) {
@@ -3110,29 +3189,27 @@ export class Main extends VuexModule {
     }
   }
 
+  // Resolves to whether the collection itself was deleted, so a caller can
+  // tell a refusal or a failed delete from a delete before it navigates away
+  // (see deleteWithItsDatasetViews).
   @Action
-  async deleteConfiguration(configuration: IDatasetConfiguration) {
+  async deleteConfiguration(
+    configuration: IDatasetConfiguration,
+  ): Promise<boolean> {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
-      return;
+      createNotLoggedInNotification();
+      return false;
     }
-    try {
-      sync.setSaving(true);
-      const promises: Promise<any>[] = [];
-      promises.push(this.api.deleteConfiguration(configuration));
-      const views = await this.api.findDatasetViews({
-        configurationId: configuration.id,
-      });
-      for (const { id } of views) {
-        promises.push(this.api.deleteDatasetView(id));
-      }
-      await Promise.allSettled(promises);
-      await this.context.dispatch("ressourceDeleted", configuration.id);
-      this.deleteConfigurationImpl(configuration);
-      sync.setSaving(false);
-    } catch (error) {
-      sync.setSaving(error as Error);
-    }
+    return deleteWithItsDatasetViews({
+      api: this.api,
+      what: "collection",
+      viewFilter: { configurationId: configuration.id },
+      deleteIt: () => this.api.deleteConfiguration(configuration),
+      onDeleted: async () => {
+        await this.context.dispatch("ressourceDeleted", configuration.id);
+        this.deleteConfigurationImpl(configuration);
+      },
+    });
   }
 
   @Mutation
@@ -3147,28 +3224,20 @@ export class Main extends VuexModule {
     }
   }
 
+  // Resolves to whether the dataset was deleted (see deleteConfiguration).
   @Action
-  async deleteDataset(dataset: IDataset) {
+  async deleteDataset(dataset: IDataset): Promise<boolean> {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
-      return;
+      createNotLoggedInNotification();
+      return false;
     }
-    try {
-      sync.setSaving(true);
-      const promises: Promise<any>[] = [];
-      promises.push(this.api.deleteDataset(dataset));
-      const views = await this.api.findDatasetViews({
-        datasetId: dataset.id,
-      });
-      for (const { id } of views) {
-        promises.push(this.api.deleteDatasetView(id));
-      }
-      await Promise.all(promises);
-      this.deleteDatasetImpl(dataset);
-      sync.setSaving(false);
-    } catch (error) {
-      sync.setSaving(error as Error);
-    }
+    return deleteWithItsDatasetViews({
+      api: this.api,
+      what: "dataset",
+      viewFilter: { datasetId: dataset.id },
+      deleteIt: () => this.api.deleteDataset(dataset),
+      onDeleted: async () => this.deleteDatasetImpl(dataset),
+    });
   }
 
   @Action
@@ -3410,10 +3479,16 @@ export class Main extends VuexModule {
     const throwOnError =
       typeof payload === "string" ? false : payload.throwOnError ?? false;
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
       if (throwOnError) {
+        createNotLoggedInNotification();
         throw new Error("Authentication is required to save configuration");
       }
+      // Every caller of this has already applied its change to the local
+      // configuration. A guest keeps that change for the session and it is
+      // not saved, so there is nothing to warn about: "you must be logged in
+      // to perform this action" would be false for an action that worked.
+      // Actions that need the server refuse before changing anything and
+      // warn themselves (addLayer, deleteDataset).
       return;
     }
     if (!this.configuration) {
@@ -3466,9 +3541,8 @@ export class Main extends VuexModule {
   @Action
   scheduleAnnotationBrowserSave() {
     // Anonymous viewers can filter and gate; their state just stays
-    // session-only. Without this, syncConfiguration's own isLoggedIn branch
-    // fires createNotLoggedInNotification, so every lasso drag or filter tweak
-    // popped a login notification for a read-only visitor.
+    // session-only, so there is no save to schedule (syncConfiguration would
+    // skip it anyway).
     if (!this.isLoggedIn) {
       return;
     }
@@ -3728,7 +3802,7 @@ export class Main extends VuexModule {
   @Action
   async renameConfiguration(newName: string) {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return;
     }
     if (!this.configuration) {
@@ -3747,7 +3821,7 @@ export class Main extends VuexModule {
   @Action
   async addLayer() {
     if (!this.isLoggedIn) {
-      this.createNotLoggedInNotification();
+      createNotLoggedInNotification();
       return;
     }
     if (!this.configuration || !this.dataset) {

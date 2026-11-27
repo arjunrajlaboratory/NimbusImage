@@ -183,18 +183,26 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
 
 <style lang="scss" scoped>
 .progress-container {
-  position: absolute;
+  // Fixed to the viewport: this is mounted once in App.vue so it shows on
+  // every page. In the viewer the image fills the window, so the offsets below
+  // still place it relative to the image's bottom-left corner.
+  position: fixed;
   // Sit just above the bottom-left button cluster (palette / lock / fit-to-window
   // at bottom:10px in ImageViewer) and align to its left edge, so progress bars
   // and notifications never land on top of the left palette stack (Tools panel).
   bottom: 56px;
   left: 10px;
-  z-index: 2000;
+  // Above Vuetify dialogs and their scrim (2400, plus 10 per stacked overlay):
+  // a refused action can leave its confirm dialog open, and the warning that
+  // explains why must not sit dimmed underneath it.
+  z-index: 10000;
+  // Being above dialogs, the stack must not take clicks meant for them: only
+  // a notification's dismiss button is interactive.
+  pointer-events: none;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-width: 400px;
-  max-width: 400px;
+  width: min(400px, calc(100vw - 20px));
   // Animate the palette-driven shift via transform (GPU-composited, doesn't
   // trigger layout) rather than `left`.
   transition: transform 0.2s ease;
@@ -298,6 +306,7 @@ defineExpose({ hasNotifications, dismissNotification, progressGroups });
 }
 
 .notification-close {
+  pointer-events: auto;
   // Pull the button back toward the card edge so its tap target doesn't
   // inflate the padding visually.
   margin: -4px -6px 0 0;

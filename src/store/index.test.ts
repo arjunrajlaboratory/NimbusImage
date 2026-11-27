@@ -1412,3 +1412,163 @@ describe("sync indicator: balanced saves", () => {
     expect(sync.saving).toBe(true);
   });
 });
+
+// DatasetInfo and ConfigurationInfo navigate away only when these resolve to
+// true, so the value has to mean "the dataset or collection itself is gone".
+// The cleanup of its views is best effort: failing it flags the sync indicator
+// but must not keep the user on the page of something already deleted, and a
+// failed delete must not be reported as a success because the cleanup worked.
+describe("delete actions report whether they deleted", () => {
+  let originalIdentity: typeof main.girderUser;
+  let setSaving: ReturnType<typeof vi.spyOn>;
+  let createNotification: ReturnType<typeof vi.spyOn>;
+  const boom = new Error("boom");
+  const cleanupFailures: [string, () => void][] = [
+    [
+      "listing its views fails",
+      () => vi.spyOn(main.api, "findDatasetViews").mockRejectedValue(boom),
+    ],
+    [
+      "deleting one of its views fails",
+      () => vi.spyOn(main.api, "deleteDatasetView").mockRejectedValue(boom),
+    ],
+  ];
+  beforeEach(() => {
+    originalIdentity = main.girderUser;
+    (rootStore.state as any).main.girderUser = { _id: "u1" };
+    vi.spyOn(main.api, "findDatasetViews").mockResolvedValue([
+      { id: "view1" },
+    ] as any);
+    vi.spyOn(main.api, "deleteDatasetView").mockResolvedValue(undefined as any);
+    vi.spyOn(main.api, "deleteDataset").mockResolvedValue(undefined as any);
+    vi.spyOn(main.api, "deleteConfiguration").mockResolvedValue(
+      undefined as any,
+    );
+    setSaving = vi.spyOn(sync, "setSaving").mockImplementation(() => {});
+    createNotification = vi
+      .spyOn(progress, "createNotification")
+      .mockReturnValue("id" as any);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    (rootStore.state as any).main.girderUser = originalIdentity;
+  });
+
+  // A failed delete keeps the user on the page, behind an open confirm
+  // dialog: its views must be untouched (the page still lists them) and the
+  // reason must be shown where the user can see it.
+  function expectFailedDeleteReported(what: string) {
+    expect(main.api.findDatasetViews).not.toHaveBeenCalled();
+    expect(main.api.deleteDatasetView).not.toHaveBeenCalled();
+    expect(setSaving).toHaveBeenLastCalledWith(boom);
+    expect(createNotification).toHaveBeenCalledTimes(1);
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        title: `Could not delete the ${what}`,
+        message: "boom",
+      }),
+    );
+  }
+
+  it("a refused delete shows the reason Girder gave, not the HTTP status line", async () => {
+    vi.spyOn(main.api, "deleteDataset").mockRejectedValue(
+      Object.assign(new Error("Request failed with status code 403"), {
+        response: { data: { message: "Admin access denied for folder." } },
+      }),
+    );
+    await expect(main.deleteDataset({ id: "ds1" } as any)).resolves.toBe(false);
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Admin access denied for folder." }),
+    );
+  });
+
+  it("deleteDataset sends the delete first and clears the open dataset last", async () => {
+    // Nothing may be awaited before the delete request (it must go out under
+    // the session the user confirmed in), and the open dataset must survive
+    // until the view cleanup is done: the page's confirm button stays
+    // clickable until the action resolves and reads that dataset.
+    const dataset = { id: "ds1" } as any;
+    const state = (rootStore.state as any).main;
+    state.dataset = dataset;
+    let datasetDuringCleanup: unknown = "not called";
+    vi.spyOn(main.api, "deleteDatasetView").mockImplementation((async () => {
+      datasetDuringCleanup = state.dataset;
+    }) as any);
+    try {
+      await expect(main.deleteDataset(state.dataset)).resolves.toBe(true);
+      const order = (method: "deleteDataset" | "findDatasetViews") =>
+        vi.mocked(main.api[method]).mock.invocationCallOrder[0];
+      expect(order("deleteDataset")).toBeLessThan(order("findDatasetViews"));
+      expect(toRaw(datasetDuringCleanup)).toBe(dataset);
+      expect(state.dataset).toBeNull();
+    } finally {
+      state.dataset = null;
+    }
+  });
+
+  it("deleteDataset resolves to true after deleting, and removes its views", async () => {
+    await expect(main.deleteDataset({ id: "ds1" } as any)).resolves.toBe(true);
+    expect(main.api.findDatasetViews).toHaveBeenCalledWith({
+      datasetId: "ds1",
+    });
+    expect(main.api.deleteDatasetView).toHaveBeenCalledWith("view1");
+    expect(setSaving).toHaveBeenLastCalledWith(false);
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it("deleteDataset resolves to false when the delete request fails", async () => {
+    vi.spyOn(main.api, "deleteDataset").mockRejectedValue(boom);
+    await expect(main.deleteDataset({ id: "ds1" } as any)).resolves.toBe(false);
+    expectFailedDeleteReported("dataset");
+  });
+
+  it.each(cleanupFailures)(
+    "deleteDataset still resolves to true when %s",
+    async (_name, failCleanup) => {
+      failCleanup();
+      await expect(main.deleteDataset({ id: "ds1" } as any)).resolves.toBe(
+        true,
+      );
+      expect(setSaving).toHaveBeenLastCalledWith(boom);
+    },
+  );
+
+  it("deleteConfiguration resolves to true after deleting, and removes its views", async () => {
+    await expect(
+      main.deleteConfiguration({ id: "config1" } as any),
+    ).resolves.toBe(true);
+    expect(main.api.findDatasetViews).toHaveBeenCalledWith({
+      configurationId: "config1",
+    });
+    expect(main.api.deleteDatasetView).toHaveBeenCalledWith("view1");
+    expect(setSaving).toHaveBeenLastCalledWith(false);
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it("deleteConfiguration resolves to false when the delete request fails", async () => {
+    vi.spyOn(main.api, "deleteConfiguration").mockRejectedValue(boom);
+    await expect(
+      main.deleteConfiguration({ id: "config1" } as any),
+    ).resolves.toBe(false);
+    expectFailedDeleteReported("collection");
+  });
+
+  it.each(cleanupFailures)(
+    "deleteConfiguration still resolves to true when %s",
+    async (_name, failCleanup) => {
+      failCleanup();
+      await expect(
+        main.deleteConfiguration({ id: "config1" } as any),
+      ).resolves.toBe(true);
+      expect(setSaving).toHaveBeenLastCalledWith(boom);
+    },
+  );
+
+  it("deleteDatasetView resolves to true after deleting", async () => {
+    await expect(main.deleteDatasetView({ id: "view1" } as any)).resolves.toBe(
+      true,
+    );
+    expect(main.api.deleteDatasetView).toHaveBeenCalledWith("view1");
+  });
+});

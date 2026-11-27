@@ -398,6 +398,12 @@ async function addDatasetToCollection() {
   );
   const datasetViews = await Promise.all(promises);
 
+  // createDatasetView resolves to null when it is refused (nobody logged in).
+  // Keep the selection then, instead of reporting datasets that were not added.
+  if (datasetViews.some((datasetView) => !datasetView)) {
+    return;
+  }
+
   emit("addedDatasets", datasetIds, datasetViews);
 
   option.value = defaultDatasetUploadOption();

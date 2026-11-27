@@ -330,7 +330,6 @@ function mountComponent(propsData: Record<string, unknown> = {}) {
         AnnotationViewer: true,
         ImageOverview: true,
         ScaleSettings: true,
-        ProgressBarGroup: true,
         LayerInfoGrid: true,
       },
     },

@@ -19,7 +19,7 @@ vi.mock("@/store", () => ({
         _modelType: "folder",
       }),
     },
-    createDatasetView: vi.fn().mockResolvedValue(undefined),
+    createDatasetView: vi.fn().mockResolvedValue({ id: "view-1" }),
   },
 }));
 
@@ -101,5 +101,15 @@ describe("ImportConfiguration", () => {
       configurationId: "c1",
       datasetId: "ds-1",
     });
+    expect(mockRouter.back).toHaveBeenCalledTimes(1);
+  });
+
+  it("submit stays on the page when a view was not created", async () => {
+    // createDatasetView resolves to null when it is refused (nobody logged
+    // in); going back would report an import that did not happen.
+    vi.mocked(store.createDatasetView).mockResolvedValueOnce(null as any);
+    const wrapper = mountComponent();
+    await (wrapper.vm as any).submit([{ id: "c1", name: "Config1" }]);
+    expect(mockRouter.back).not.toHaveBeenCalled();
   });
 });

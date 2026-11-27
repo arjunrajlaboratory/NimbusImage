@@ -4,7 +4,6 @@
     v-mousetrap="mousetrapAnnotations"
     :style="{ '--scale-bar-color': scalebarColor }"
   >
-    <progress-bar-group />
     <render-coverage-indicator />
     <v-dialog v-model="scaleDialog">
       <v-card>
@@ -281,7 +280,6 @@ import LineScanPanel from "@/components/LineScanPanel.vue";
 import ObjectSegmentationPanel from "@/components/ObjectSegmentationPanel.vue";
 import ImageOverview from "@/components/ImageOverview.vue";
 import ScaleSettings from "@/components/ScaleSettings.vue";
-import ProgressBarGroup from "@/components/ProgressBarGroup.vue";
 import RenderCoverageIndicator from "@/components/RenderCoverageIndicator.vue";
 import LayerInfoGrid from "./LayerInfoGrid.vue";
 import { ITileHistogram } from "@/store/images";

@@ -43,7 +43,12 @@
             <v-btn variant="text" size="small" @click="removeConfirm = false"
               >Cancel</v-btn
             >
-            <v-btn variant="flat" color="error" size="small" @click="remove"
+            <v-btn
+              variant="flat"
+              color="error"
+              size="small"
+              :loading="removing"
+              @click="remove"
               >Remove</v-btn
             >
           </v-card-actions>
@@ -261,6 +266,8 @@ const alert = ref<any>(null);
 
 // Local state
 const removeConfirm = ref(false);
+// True while the delete is in flight, so a second click cannot send another.
+const removing = ref(false);
 const removeDatasetViewConfirm = ref(false);
 const viewToRemove = ref<IDatasetView | null>(null);
 const datasetViews = ref<IDatasetView[]>([]);
@@ -475,14 +482,14 @@ function removeDatasetView() {
   if (!viewToRemove.value) {
     return;
   }
-  const promise = store.deleteDatasetView(viewToRemove.value);
-  if (promise) {
-    promise.then(() => {
-      removeDatasetViewConfirm.value = false;
-      viewToRemove.value = null;
-      updateConfigurationViews();
-    });
-  }
+  store.deleteDatasetView(viewToRemove.value).then((deleted) => {
+    if (!deleted) {
+      return;
+    }
+    removeDatasetViewConfirm.value = false;
+    viewToRemove.value = null;
+    updateConfigurationViews();
+  });
 }
 
 function toSlice(slice: IDisplaySlice) {
@@ -499,10 +506,22 @@ function toSlice(slice: IDisplaySlice) {
 }
 
 function remove() {
-  store.deleteConfiguration(store.configuration!).then(() => {
-    removeConfirm.value = false;
-    router.back();
-  });
+  if (removing.value || !store.configuration) {
+    return;
+  }
+  removing.value = true;
+  store
+    .deleteConfiguration(store.configuration)
+    .then((deleted) => {
+      if (!deleted) {
+        return;
+      }
+      removeConfirm.value = false;
+      router.back();
+    })
+    .finally(() => {
+      removing.value = false;
+    });
 }
 
 function onAddedToProject() {
@@ -537,6 +556,7 @@ defineExpose({
   configuration,
   datasetViewItems,
   removeConfirm,
+  removing,
   removeDatasetViewConfirm,
   viewToRemove,
   datasetViews,

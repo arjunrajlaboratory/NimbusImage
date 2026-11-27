@@ -220,13 +220,46 @@ describe("DatasetInfo", () => {
   });
 
   it("removeDataset calls deleteDataset and navigates to root", async () => {
-    mockDeleteDataset.mockResolvedValue(undefined);
+    mockDeleteDataset.mockResolvedValue(true);
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     vm.removeDataset();
     await flushPromises();
     expect(mockDeleteDataset).toHaveBeenCalledWith((store as any).dataset);
     expect(mockRouter.push).toHaveBeenCalledWith({ name: "root" });
+  });
+
+  it("removeDataset ignores a second click while the delete is in flight", async () => {
+    // The confirm button stays on screen until the action resolves; a second
+    // click must not send a second delete for the same dataset.
+    let finish: (deleted: boolean) => void = () => {};
+    mockDeleteDataset.mockClear();
+    mockDeleteDataset.mockReturnValue(
+      new Promise<boolean>((resolve) => (finish = resolve)),
+    );
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.removeDataset();
+    vm.removeDataset();
+    expect(mockDeleteDataset).toHaveBeenCalledTimes(1);
+    expect(vm.removingDataset).toBe(true);
+    finish(false);
+    await flushPromises();
+    expect(vm.removingDataset).toBe(false);
+  });
+
+  it("removeDataset stays on the page when the dataset was not deleted", async () => {
+    // deleteDataset resolves to false when it is refused (nobody logged in)
+    // or fails; leaving would tell the user the dataset is gone.
+    mockDeleteDataset.mockResolvedValue(false);
+    mockRouter.push.mockClear();
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.removeDatasetConfirm = true;
+    vm.removeDataset();
+    await flushPromises();
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    expect(vm.removeDatasetConfirm).toBe(true);
   });
 
   it("openRemoveConfigurationDialog sets dialog state", () => {
@@ -246,6 +279,31 @@ describe("DatasetInfo", () => {
     vm.closeRemoveConfigurationDialog();
     expect(vm.removeDatasetViewConfirm).toBe(false);
     expect(vm.viewToRemove).toBeNull();
+  });
+
+  it("removeDatasetView closes the dialog after the view is deleted", async () => {
+    mockDeleteDatasetView.mockResolvedValue(true);
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    vm.openRemoveConfigurationDialog({ id: "view-1" });
+    vm.removeDatasetView();
+    await flushPromises();
+    expect(vm.removeDatasetViewConfirm).toBe(false);
+    expect(vm.viewToRemove).toBeNull();
+  });
+
+  it("removeDatasetView keeps the dialog open when the view was not deleted", async () => {
+    // deleteDatasetView resolves to false when it is refused (nobody logged
+    // in); closing would tell the user the view is gone.
+    mockDeleteDatasetView.mockResolvedValue(false);
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+    const view = { id: "view-1" };
+    vm.openRemoveConfigurationDialog(view);
+    vm.removeDatasetView();
+    await flushPromises();
+    expect(vm.removeDatasetViewConfirm).toBe(true);
+    expect(vm.viewToRemove).toEqual(view);
   });
 
   it("datasetViewItems maps views with cached config info", async () => {
