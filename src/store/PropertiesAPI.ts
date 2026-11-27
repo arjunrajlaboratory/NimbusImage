@@ -15,6 +15,7 @@ import {
   TPropertyValue,
 } from "./model";
 
+import { MAX_SAMPLED_PROPERTIES_PER_REQUEST } from "./constants";
 import { fetchAllPages } from "@/utils/fetch";
 import {
   uncomputedCountRequest,
@@ -206,19 +207,40 @@ export default class PropertiesAPI {
     }));
   }
 
-  // A bounded sample of value docs, used in lazy mode to discover the set of
-  // property paths without loading every value (structure is homogeneous).
-  async getPropertyValuesSample(
+  // Value docs covering each requested property (its oldest and newest),
+  // used in lazy mode to discover the property paths without loading every
+  // value. Properties without values are absent from the result. More
+  // properties than the server takes per request are split across requests,
+  // sent one at a time: a property without values makes its request scan the
+  // whole dataset.
+  async getPropertyValueSamples(
     datasetId: string,
-    limit: number,
+    propertyIds: string[],
   ): Promise<TPropertyValueEntry[]> {
-    const response = await this.client.get("annotation_property_values", {
-      params: { datasetId, limit, sort: "_id" },
-    });
-    return (response.data as TPropertyValueEntry[]).map((doc) => ({
-      annotationId: doc.annotationId,
-      values: doc.values ?? {},
-    }));
+    const documents: TPropertyValueEntry[] = [];
+    for (
+      let start = 0;
+      start < propertyIds.length;
+      start += MAX_SAMPLED_PROPERTIES_PER_REQUEST
+    ) {
+      const response = await this.client.post(
+        "annotation_property_values/sample",
+        {
+          datasetId,
+          propertyIds: propertyIds.slice(
+            start,
+            start + MAX_SAMPLED_PROPERTIES_PER_REQUEST,
+          ),
+        },
+      );
+      for (const doc of response.data as TPropertyValueEntry[]) {
+        documents.push({
+          annotationId: doc.annotationId,
+          values: doc.values ?? {},
+        });
+      }
+    }
+    return documents;
   }
 
   async deleteProperty(propertyId: string) {
