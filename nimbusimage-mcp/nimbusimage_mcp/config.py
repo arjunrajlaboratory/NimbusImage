@@ -52,6 +52,14 @@ class Settings:
     # metadata: the nimbus_mcp_oauth plugin's issuer (its mcp_oauth.issuer
     # setting), the site's bare origin.
     issuer_url: str
+    # Where users open the app, for links in tool results; defaults to the
+    # issuer, the site's origin (the app and Girder share it in
+    # production).
+    frontend_url: str | None = None
+    # Girder's REST root as the user's browser reaches it, for download
+    # links that the browser authenticates with Girder's auth cookie. Not
+    # api_url, which is often a private address. Unset: no download links.
+    browser_api_url: str | None = None
     host: str = "127.0.0.1"
     port: int = 8000
     # Optional JSON-lines call log (tool, user, seconds, bytes, error).
@@ -98,6 +106,12 @@ class Settings:
             issuer_url=_http_url("NI_MCP_ISSUER_URL", environ.get(
                 "NI_MCP_ISSUER_URL", "http://localhost:8080"
             ), bare_origin=True),
+            frontend_url=_http_url("NI_MCP_FRONTEND_URL", environ[
+                "NI_MCP_FRONTEND_URL"
+            ]) if environ.get("NI_MCP_FRONTEND_URL") else None,
+            browser_api_url=_http_url("NI_MCP_BROWSER_API_URL", environ[
+                "NI_MCP_BROWSER_API_URL"
+            ]) if environ.get("NI_MCP_BROWSER_API_URL") else None,
             host=host,
             port=port,
             call_log=environ.get("NI_MCP_CALL_LOG") or None,

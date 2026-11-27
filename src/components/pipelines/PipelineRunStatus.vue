@@ -1,5 +1,13 @@
 <template>
-  <div v-if="visible" class="pipeline-run-status px-3 py-2 mb-2">
+  <!-- Always rendered at one height, hidden while idle: the strip sits above
+       the list and the editor's Run button, so appearing (or growing when a
+       run starts) would shift them under the cursor and land the second click
+       of a double-click on a different control. -->
+  <div
+    class="pipeline-run-status px-3 py-2 mb-2"
+    :class="{ 'pipeline-run-status--idle': !visible }"
+    :aria-hidden="visible ? undefined : 'true'"
+  >
     <div class="d-flex align-center ga-2">
       <v-progress-circular
         v-if="controller.isRunning.value"
@@ -12,8 +20,11 @@
 
       <div class="flex-grow-1 min-width-0">
         <div class="text-body-2 text-truncate">{{ headline }}</div>
-        <div class="text-caption text-medium-emphasis text-truncate">
-          {{ detail }}
+        <!-- Kept when empty (a non-breaking space) so the height holds. -->
+        <div
+          class="pipeline-run-status__detail text-caption text-medium-emphasis text-truncate"
+        >
+          {{ detail || "\u00a0" }}
         </div>
       </div>
 
@@ -28,14 +39,15 @@
       </v-btn>
     </div>
 
-    <v-progress-linear
-      v-if="controller.isRunning.value"
-      :model-value="percent"
-      :indeterminate="percent === 0"
-      color="primary"
-      height="6"
-      class="mt-2"
-    />
+    <div class="pipeline-run-status__bar mt-2">
+      <v-progress-linear
+        v-if="controller.isRunning.value"
+        :model-value="percent"
+        :indeterminate="percent === 0"
+        color="primary"
+        height="6"
+      />
+    </div>
   </div>
 </template>
 
@@ -88,7 +100,7 @@ const doneCount = computed(() => {
   if (!pipeline.value) return 0;
   return controller
     .statusesFor(pipeline.value)
-    .filter((s) => ["success", "error", "cancelled"].includes(s.status)).length;
+    .filter((s) => ["success", "error", "canceled"].includes(s.status)).length;
 });
 
 const headline = computed(() => {
@@ -98,7 +110,7 @@ const headline = computed(() => {
     // Lead with the unit label so the counts read correctly at any value
     // ("Steps: 1 succeeded" rather than "1 steps succeeded").
     const unit = controller.lastRunWasBatch.value ? "Datasets" : "Steps";
-    return `${name} — ${unit}: ${r.succeeded} succeeded, ${r.failed} failed, ${r.cancelled} cancelled`;
+    return `${name} — ${unit}: ${r.succeeded} succeeded, ${r.failed} failed, ${r.canceled} canceled`;
   }
   return name;
 });
@@ -106,7 +118,7 @@ const headline = computed(() => {
 const detail = computed(() => {
   if (batch.value) {
     const b = batch.value;
-    return `Dataset ${b.completed + b.failed + b.cancelled} / ${b.total} · ${b.currentDatasetName}`;
+    return `Dataset ${b.completed + b.failed + b.canceled} / ${b.total} · ${b.currentDatasetName}`;
   }
   if (controller.isRunning.value) {
     const i = runningStepIndex.value;
@@ -124,7 +136,7 @@ const percent = computed(() => {
     const b = batch.value;
     return b.total === 0
       ? 0
-      : ((b.completed + b.failed + b.cancelled) / b.total) * 100;
+      : ((b.completed + b.failed + b.canceled) / b.total) * 100;
   }
   return enabledCount.value === 0
     ? 0
@@ -135,7 +147,7 @@ const resultIcon = computed(() => {
   const r = controller.result.value;
   if (!r) return "mdi-information-outline";
   if (r.failed > 0) return "mdi-close-circle";
-  if (r.cancelled > 0) return "mdi-cancel";
+  if (r.canceled > 0) return "mdi-cancel";
   return "mdi-check-circle";
 });
 
@@ -143,7 +155,7 @@ const resultColor = computed(() => {
   const r = controller.result.value;
   if (!r) return undefined;
   if (r.failed > 0) return "error";
-  if (r.cancelled > 0) return "warning";
+  if (r.canceled > 0) return "warning";
   return "success";
 });
 
@@ -155,6 +167,12 @@ defineExpose({ visible, headline, detail, percent });
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   border-radius: 6px;
   background-color: rgba(var(--v-theme-primary), 0.06);
+}
+.pipeline-run-status--idle {
+  visibility: hidden;
+}
+.pipeline-run-status__bar {
+  height: 6px;
 }
 .min-width-0 {
   min-width: 0;

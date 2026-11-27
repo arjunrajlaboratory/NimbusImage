@@ -23,7 +23,9 @@ setup(
         "Programming Language :: Python",
     ],
     install_requires=[
-        "girder[mount]>5",
+        # >=5.0.24 for EDIT_METADATA_FLAG, which resource/batch uses to
+        # match the _canEditMetadata field GET item/{id} returns.
+        "girder[mount]>=5.0.24",
         "girder-worker>5",
         "girder-plugin-worker>5",
         "girder-worker-utils",  # Doesn't follow Girder's version schema
@@ -38,8 +40,11 @@ setup(
         # pulling it in transitively.
         "numpy",
         "orjson",
-        # Wire compression to MongoDB (compressors=zstd in GIRDER_MONGO_URI).
-        # Without this extra, pymongo only warns and connects uncompressed.
+        # Lets a deployment add compressors=zstd to GIRDER_MONGO_URI; without
+        # this extra, pymongo only warns and connects uncompressed. Neither
+        # girder.env nor prod uses it: on prod (Atlas over VPC peering) it
+        # cut bytes 5-8x but made large reads 20-32% slower, since Atlas
+        # compresses at a fixed, slower level and the link isn't the limit.
         "pymongo[zstd]",
         # zstd API responses (helpers/compression.py); in the standard
         # library from Python 3.14

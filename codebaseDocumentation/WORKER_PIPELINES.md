@@ -555,7 +555,7 @@ Building a transient tool for an annotation step:
 ```ts
 function buildTransientTool(step: IAnnotationPipelineStep): IToolConfiguration {
   return {
-    id: step.id,                 // fine for jobIdForToolId bookkeeping
+    id: step.id,                 // fine for jobIdForToolInDataset bookkeeping
     name: step.name,
     hotkey: null,
     type: "segmentation",
@@ -597,12 +597,12 @@ Behavior (mirror `computeAnnotationsWithWorkerBatch`):
 2. Create a top-level progress entry `ProgressType.PIPELINE_COMPUTE` titled
    `Pipeline: <name>` with `total = enabledSteps.length` (new enum value in
    `src/store/model.ts` ProgressType, `:206-231`).
-3. Build a `cancel()` closure that sets an `isCancelled` flag and cancels the
+3. Build a `cancel()` closure that sets an `isCanceled` flag and cancels the
    currently-running job (`main.api.cancelJob(jobId)`); hand it to `onCancel`
    *before* the loop starts (avoids the timing bug documented in
    `BATCH_ANNOTATION_COMPUTE.md`).
 4. For each enabled step, in order:
-   - If `isCancelled`, mark remaining as canceled and break.
+   - If `isCanceled`, mark remaining as canceled and break.
    - Create a per-step progress entry (`ANNOTATION_COMPUTE` or
      `PROPERTY_COMPUTE`) titled `<pipeline>: <step.name>`.
    - **Annotation step:** `buildTransientTool(step)` → submit via the refactored
@@ -673,7 +673,7 @@ Behavior (mirror `computeAnnotationsWithWorkerBatch`):
 export interface IPipelineRunResult {
   succeeded: number;
   failed: number;
-  cancelled: number;
+  canceled: number;
   failedStepIndex: number | null;
 }
 ```
@@ -1186,8 +1186,8 @@ Linked steps (§3.4):
   *"submits a linked tool's interface defaults for parameters it has no value for"*,
   *"loads an uncached worker interface before filling defaults"*,
   *"does not refetch a worker interface the worker does not have"*,
-  *"does not submit a step cancelled while its worker interface loads"*,
-  *"cancels a job whose run was cancelled while it was being submitted"*.
+  *"does not submit a step canceled while its worker interface loads"*,
+  *"cancels a job whose run was canceled while it was being submitted"*.
 - Nothing is read from another configuration's property list (right after a
   switch, before this one's fetch lands): the runner neither computes a
   linked property found there nor materializes from a miss there, and the

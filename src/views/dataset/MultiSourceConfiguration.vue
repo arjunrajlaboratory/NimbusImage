@@ -159,7 +159,7 @@
       />
     </v-card>
     <v-alert
-      v-if="assignmentError && !initializing"
+      v-if="assignmentError && !initializing && !initError"
       type="error"
       variant="tonal"
       density="compact"
@@ -167,7 +167,7 @@
     >
       {{ assignmentError }}
     </v-alert>
-    <v-card v-if="initializing" class="my-4">
+    <v-card v-if="initializing || initError" class="my-4">
       <v-card-title class="d-flex align-center">
         <v-progress-circular
           :model-value="initProgressPercent"
@@ -654,6 +654,28 @@ interface ICompositingSource {
 // Items per source-metadata request (the endpoint allows up to 100).
 const SOURCE_METADATA_BATCH_SIZE = 50;
 
+// Some items are not readable as large images yet (retried).
+class ItemsNotReadyError extends Error {}
+
+// What to report for items still not readable once the retries run out.
+// Outside OIB conversion the server registers an image as it is uploaded,
+// so the usual cause is a file it could not open as an image at all.
+function unreadableItemsError(names: string[]): {
+  name: string;
+  message: string;
+} {
+  const shown = names.slice(0, 3).join(", ");
+  const more = names.length - 3;
+  const what =
+    names.length > 1 ? "these files as images" : "this file as an image";
+  return {
+    name: more > 0 ? `${shown} and ${more} more` : shown,
+    message:
+      `the server could not open ${what}; the format may be one ` +
+      "the server does not import, such as PNG",
+  };
+}
+
 // --- Props & Emits ---
 
 const props = withDefaults(
@@ -665,7 +687,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: "generatedJson", jsonId: string | null, config: any): void;
+  (e: "generatedJson", jsonId: string, config: any): void;
   (e: "configData", data: any): void;
   (e: "log", logs: string): void;
   (e: "generationError", message: string): void;
@@ -773,8 +795,8 @@ const canDoCompositing = computed(
   () =>
     tilesInternalMetadata.value !== null &&
     tilesMetadata.value !== null &&
-    // During a re-initialization girderItems is already the new folder's
-    // while the metadata is still the old one's.
+    // Items and metadata must come from the same load (a load sets
+    // girderItems well before the metadata).
     tilesMetadata.value.length === girderItems.value.length &&
     canCompositeByStagePosition(
       tilesMetadata.value,
@@ -1349,8 +1371,11 @@ function submitEnabled() {
     (count, assignment) => (assignment ? ++count : count),
     0,
   );
+  // A failed load leaves nothing (or a previous dataset's variables) to
+  // submit.
   return (
     !initializing.value &&
+    !initError.value &&
     (filledAssignments >= items.value.length || filledAssignments >= 4)
   );
 }
@@ -1465,17 +1490,74 @@ function saveDimensionStrategyToStore() {
   store.setUploadDimensionStrategy(strategy);
 }
 
+// A failed load ends with initializing false and initError set (the
+// template shows the error card for either), and rejects for the caller.
 async function initialize() {
   if (initializing.value) {
     reinitializeFlag = true;
     return;
   }
   initializing.value = true;
-  do {
-    reinitializeFlag = false;
-    await initializeImplementation();
-  } while (reinitializeFlag);
-  initializing.value = false;
+  try {
+    do {
+      reinitializeFlag = false;
+      resetInitState();
+      try {
+        await initializeImplementation();
+      } catch (error) {
+        // A load superseded mid-flight (the dataset changed) failing says
+        // nothing about the newer one: load that instead of reporting it.
+        if (reinitializeFlag) {
+          continue;
+        }
+        recordInitError(error);
+        throw error;
+      }
+    } while (reinitializeFlag);
+  } finally {
+    initializing.value = false;
+  }
+}
+
+// Everything a load of the dataset's files sets. Every load (initialize()
+// and reinitializeAndApplyStrategy alike) starts here, so nothing from a
+// previous load, another dataset's or a failed one, survives into the next.
+function resetInitState() {
+  dimensions.value = [];
+  assignments.XY = null;
+  assignments.Z = null;
+  assignments.T = null;
+  assignments.C = null;
+  tilesMetadata.value = null;
+  tilesInternalMetadata.value = null;
+  girderItems.value = [];
+  transcodeOverride.value = null;
+  enableCompositing.value = false;
+  isRGBFile.value = false;
+  rgbBandCount.value = 0;
+  filenameVariableCount = 0;
+  fileVariableCount = 0;
+  imageVariableCount = 0;
+  assignmentIdCount = 0;
+  initTotal.value = 0;
+  initCompleted.value = 0;
+  initPending.value = [];
+  initInFlight.value = [];
+  initError.value = null;
+}
+
+// Failures that do not name a file (listing the items, say) still need an
+// error to show.
+function recordInitError(error: unknown) {
+  if (!initError.value) {
+    initError.value = {
+      name: "the dataset's files",
+      message:
+        (error as any)?.response?.data?.message ||
+        (error instanceof Error ? error.message : String(error)) ||
+        "Unknown error",
+    };
+  }
 }
 
 async function initializeImplementation() {
@@ -1492,7 +1574,6 @@ async function initializeImplementation() {
   fileTranscodeDefault.value = !names.every((name: string) =>
     name.toLowerCase().endsWith(".nd2"),
   );
-  transcodeOverride.value = null;
 
   if (names.length > 1) {
     collectFilenameMetadata2(names).forEach((filenameData) => {
@@ -1604,7 +1685,7 @@ async function initializeImplementation() {
                 });
                 pending = notReady;
                 if (pending.length) {
-                  throw new Error(
+                  throw new ItemsNotReadyError(
                     `${pending.length} item(s) not ready, e.g. ` +
                       fetchedItems[pending[0]].name,
                   );
@@ -1625,7 +1706,17 @@ async function initializeImplementation() {
               },
             );
           } catch (error: any) {
-            if (!initError.value) {
+            if (
+              !initError.value &&
+              error instanceof ItemsNotReadyError &&
+              !hasOibFiles
+            ) {
+              // Retries ran out. Outside OIB conversion, an item still not
+              // readable is one the server could not open as an image.
+              initError.value = unreadableItemsError(
+                pending.map((idx) => fetchedItems[idx].name),
+              );
+            } else if (!initError.value) {
               // A failed request covers the whole batch, so name it as such.
               const first = fetchedItems[pending[0] ?? batch[0]].name;
               initError.value = {
@@ -1707,14 +1798,14 @@ async function initializeImplementation() {
   resetDimensionsToDefault();
 }
 
+// A failure is reported once, as generationError (from generateJson).
 async function submit() {
   const jsonId = await generateJson();
-
-  emit("generatedJson", jsonId, lastGeneratedConfig.value);
-
   if (!jsonId) {
     return;
   }
+
+  emit("generatedJson", jsonId, lastGeneratedConfig.value);
   if (props.autoDatasetRoute) {
     router.push({
       name: "dataset",
@@ -1799,6 +1890,9 @@ async function generateJson(): Promise<string | null> {
     const compositingSources: ICompositingSource[] =
       sources as ICompositingSource[];
     if (!tilesMetadata.value) {
+      generationErrorMessage.value =
+        "The dataset's file metadata is not loaded. Reload and try again.";
+      emit("generationError", generationErrorMessage.value);
       return null;
     }
     const { coordinates, itemOffsets } = compositingLayout.value!;
@@ -1998,34 +2092,13 @@ async function generateJson(): Promise<string | null> {
 async function reinitializeAndApplyStrategy(
   strategy: IDimensionStrategy,
 ): Promise<void> {
+  // Let a load already running finish: initialize() would otherwise only
+  // queue a rerun and return before the new load is done.
   while (initializing.value) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  dimensions.value = [];
-  assignments.XY = null;
-  assignments.Z = null;
-  assignments.T = null;
-  assignments.C = null;
-  tilesMetadata.value = null;
-  tilesInternalMetadata.value = null;
-  girderItems.value = [];
-  filenameVariableCount = 0;
-  fileVariableCount = 0;
-  imageVariableCount = 0;
-  assignmentIdCount = 0;
-  initTotal.value = 0;
-  initCompleted.value = 0;
-  initPending.value = [];
-  initInFlight.value = [];
-  initError.value = null;
-
-  initializing.value = true;
-  try {
-    await initializeImplementation();
-  } finally {
-    initializing.value = false;
-  }
+  await initialize();
 
   applyDimensionStrategy(strategy);
 }

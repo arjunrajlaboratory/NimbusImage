@@ -47,6 +47,9 @@ A reviewer flags **one instance** of a pattern per round. After fixing it, grep 
 | Stale comments/tests describing pre-fix behavior | Wherever behavior changed | Grep for the old function contract in comments and test names |
 | Partial persistence: one change writing the same config key twice | Handlers that change several fields of one resource | All inputs validated *before* the first write? Two actions in the handler both syncing the same key? (see nimbus-frontend skill) |
 | Store action throws/propagates without `rawError: true` | Any `src/store/*.ts` | Audit **every** store module and the **whole** chain — errors re-wrap at each `@Action` boundary, and an action needs the flag when it merely propagates (no `throw` of its own) |
+| **State outlives the thing it describes** | Store maps and module-level variables kept across navigation, a remount or a logout (run statuses, tracked jobs, caches, batch progress) | A finding names one store; the class is every store. List each store module and module-level variable with a verdict (cleared where, keyed by what), then read every waiter on any promise the reset settles: settling it to release a lock also resumes each loop and reporter awaiting it. PR #1469 found one more instance in each of four rounds before this was done as a list |
+| **A transition the state's owner did not write** | A parent holding a phase for a flow a child runs; anything a `:key`/`v-if` can remount | List every way the state can change that is not in the owner's code: the child's own buttons and exposed methods, a dismissal, a second instance, a remount, a late error from a superseded attempt. Each must land in a defined state |
+| **A fix added an `await`** | Any review fix that makes a function wait (a status read, a refresh, a confirmation) | The fix is a new suspension point in every caller. List the callers and, for each, what it read before the call and uses after it. Do this before pushing the fix, not after the next round |
 | **A rule applied to one of two symmetric paths** | Anywhere the same concept has two implementations | See below — this was the single most-repeated finding across a 10-round review |
 | **Derived-state invalidation stops at the edited item** | Ordered pipelines, chained filters, dependent plots, wizard steps | Map the dependency closure: if item N changes the input to N+1, invalidate N (when its own derivation changed) and every downstream item; a toggle can preserve N's own result while still invalidating N+1..end |
 | **Failed refresh retains state derived from different inputs** | Cached filters, search results, gates, projections | Record the exact derivation-input identity on successful commit. A failed identical retry may retain the result; if dataset/population/revision changed, invalidate before awaiting so failure cannot strand stale state. When active/filtering and visible-disabled consumers materialize different subsets, track their validity separately: a null active signature does not mean no visible derived state exists, and invalidating visible-only state must not drop still-valid active constraints. |
@@ -345,14 +348,14 @@ The eyes-reaction transition is the most useful signal: while 👀 is on the tri
 
 **Run the blast-radius sweep here, per fix, before the automated gates** — it
 is the one check that catches nothing on its own and everything on the next
-round. For each behavioural change in the diff, write the sentence *"X used to
+round. For each behavioral change in the diff, write the sentence *"X used to
 be true; now Y is"*, then grep for the five surfaces above (code paths and
 guards, tests, user-facing strings, doc prose, comments). Two greps that pay
 for themselves every time:
 
 ```bash
-# Prose and strings that may still describe the old behaviour.
-git diff <base>...HEAD --stat -- '*.md'      # docs you changed behaviour under
+# Prose and strings that may still describe the old behavior.
+git diff <base>...HEAD --stat -- '*.md'      # docs you changed behavior under
 grep -rn "<phrase from the old invariant>" src/ codebaseDocumentation/
 ```
 

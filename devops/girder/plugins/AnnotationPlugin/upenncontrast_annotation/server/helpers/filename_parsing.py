@@ -3,7 +3,7 @@
 
 The frontend tokenizes uploaded filenames and guesses which token
 "columns" correspond to which acquisition dimension (XY / Z / T / C).
-This module mirrors that behaviour exactly so the backend can generate
+This module mirrors that behavior exactly so the backend can generate
 the same multi-source configuration without the browser.
 
 Fidelity notes (JS semantics that are reproduced here):

@@ -1,25 +1,45 @@
 <template>
   <v-container>
-    <v-card v-if="quickupload" class="mb-2">
-      <v-card-title>Quick Import in Progess</v-card-title>
-      <v-card-text>
-        <v-progress-linear
-          class="text-progress"
-          :model-value="totalProgressPercentage"
-        />
-      </v-card-text>
+    <v-card v-if="isQuickImport" class="mb-2">
+      <template v-if="pipelineError">
+        <v-card-title>Quick Import Failed</v-card-title>
+        <v-card-actions class="button-bar">
+          <v-btn variant="text" size="small" @click="goHome">
+            Back to home
+          </v-btn>
+          <v-btn
+            v-if="canRetryReadingFiles"
+            variant="flat"
+            color="primary"
+            size="small"
+            @click="retryReadingFiles"
+          >
+            Try again
+          </v-btn>
+        </v-card-actions>
+      </template>
+      <template v-else>
+        <v-card-title>Quick Import in Progress</v-card-title>
+        <v-card-text>
+          <v-progress-linear
+            class="text-progress"
+            :model-value="totalProgressPercentage"
+          />
+        </v-card-text>
+      </template>
     </v-card>
     <v-form
       v-show="!showConfigAtTop"
       ref="form"
       v-model="valid"
       :disabled="
-        quickupload && !pipelineError && valid && filesSelected && !uploading
+        isQuickImport && !pipelineError && valid && filesSelected && !uploading
       "
       @submit.prevent="submit()"
     >
       <girder-upload
         v-if="path && !hideUploader"
+        :key="store.uploadWorkflow.currentDatasetIndex"
         ref="uploader"
         class="mb-2 new-dataset-upload"
         :dest="path"
@@ -56,7 +76,7 @@
           </file-dropzone>
         </template>
 
-        <template #files="{ files }" v-if="quickupload && !pipelineError">
+        <template #files="{ files }" v-if="isQuickImport && !pipelineError">
           <v-card>
             <v-card-text>
               Uploading {{ files ? files.length : 0 }} file(s)...
@@ -66,7 +86,7 @@
       </girder-upload>
 
       <file-dropzone
-        v-if="(!quickupload || pipelineError) && files.length > 0"
+        v-if="(!isQuickImport || pipelineError) && !pageTwo && files.length > 0"
         @update:model-value="addMoreFiles"
         style="height: 150px"
         class="mb-2"
@@ -105,7 +125,7 @@
                 v-model="path"
                 :breadcrumb="true"
                 title="Select a Folder to Import the New Dataset"
-                :disabled="isQuickImport && !pipelineError"
+                :disabled="(isQuickImport && !pipelineError) || pageTwo"
               />
             </v-row>
           </v-container>
@@ -134,9 +154,11 @@
         {{ storageWarningMessage }}
       </v-alert>
 
+      <!-- A failed quick import whose files are all uploaded cannot upload
+        again; its exits are on the card above. -->
       <div
         class="button-bar d-flex justify-space-between align-center"
-        v-if="!isQuickImport || pipelineError"
+        v-if="!isQuickImport || (pipelineError && !hideUploader)"
       >
         <div>
           <span class="mr-2"
@@ -156,14 +178,7 @@
             variant="flat"
             color="success"
             size="small"
-            :disabled="
-              !valid ||
-              !filesSelected ||
-              uploading ||
-              fileSizeExceeded ||
-              invalidLocation ||
-              configuring
-            "
+            :disabled="uploadDisabled"
             @click="submit"
           >
             Upload
@@ -302,11 +317,13 @@
           </v-card-text>
         </v-card>
       </template>
-      <template v-if="creatingView">
-        <div class="text-body-1 font-weight-medium mb-2">
-          Configuring the dataset
-        </div>
-        <v-progress-circular indeterminate />
+      <template v-if="creatingView || failedPhase === 'creatingView'">
+        <template v-if="creatingView">
+          <div class="text-body-1 font-weight-medium mb-2">
+            Configuring the dataset
+          </div>
+          <v-progress-circular indeterminate />
+        </template>
         <dataset-info
           ref="viewCreation"
           :class="{ 'd-none': !pipelineError }"
@@ -377,10 +394,14 @@
           <v-alert type="error" variant="tonal" density="compact" class="mt-3">
             {{ batchErrorMessage }}
           </v-alert>
-          <p class="mt-3">
+          <p v-if="canSkipFailedDataset" class="mt-3">
             {{ totalDatasets - store.uploadWorkflow.currentDatasetIndex - 1 }}
             dataset(s) remaining. Would you like to continue with the remaining
             datasets or stop?
+          </p>
+          <p v-else class="mt-3">
+            The first dataset sets up the configuration and collection the other
+            datasets reuse, so the batch cannot continue without it.
           </p>
         </v-card-text>
         <v-card-actions>
@@ -390,6 +411,7 @@
           </v-btn>
           <v-spacer></v-spacer>
           <v-btn
+            v-if="canSkipFailedDataset"
             variant="flat"
             color="primary"
             size="small"
@@ -404,7 +426,14 @@
   </v-container>
 </template>
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, nextTick } from "vue";
+import {
+  ref,
+  computed,
+  watch,
+  onMounted,
+  onBeforeUnmount,
+  nextTick,
+} from "vue";
 import { useRouter } from "vue-router";
 import store from "@/store";
 import girderResources from "@/store/girderResources";
@@ -437,6 +466,7 @@ type GWCUpload = ComponentPublicInstance & {
   inputFilesChanged(files: File[]): void;
   startUpload(): any;
   totalProgressPercent: number;
+  uploading: boolean;
 };
 
 // Custom Girder upload manager that allows us to set the option `use_S3_transfer_acceleration`
@@ -529,11 +559,39 @@ const viewCreation = ref<any>();
 
 // --- Reactive data ---
 const uploadedFiles = ref<File[] | null>(null);
-const configuring = ref(false);
-const creatingView = ref(false);
+// What the pipeline is doing for the current dataset. A failure returns it
+// to "idle" and records where it stopped in failedPhase, so no phase is
+// ever left running beside an error.
+// Configuring has two phases: "readingFiles" (MultiSourceConfiguration
+// loads the uploaded files' metadata, which changes nothing on the server)
+// and "configuring" (it generates the configuration, which does).
+type TPipelinePhase =
+  | "idle"
+  | "creatingDataset"
+  | "uploading"
+  | "readingFiles"
+  | "configuring"
+  | "creatingView";
+const phase = ref<TPipelinePhase>("idle");
+const failedPhase = ref<TPipelinePhase | null>(null);
+const uploading = computed(() => phase.value === "uploading");
+const configuring = computed(
+  () => phase.value === "readingFiles" || phase.value === "configuring",
+);
+const creatingView = computed(() => phase.value === "creatingView");
+const pipelineError = computed(() => failedPhase.value !== null);
+// Reading the files can run again on the dataset that already holds them;
+// a failed generation may have left a half-written configuration behind.
+const canRetryReadingFiles = computed(
+  () =>
+    failedPhase.value === "readingFiles" &&
+    dataset.value !== null &&
+    hideUploader.value &&
+    !isBatchMode.value,
+);
 const valid = ref(false);
 const failedDataset = ref("");
-const uploading = ref(false);
+// Set once the current dataset's files have all been uploaded.
 const hideUploader = ref(false);
 const name = ref("");
 const description = ref("");
@@ -547,8 +605,11 @@ const totalFrames = ref(0);
 const currentFrame = ref(0);
 const showLogDialog = ref(false);
 const showCopySnackbar = ref(false);
-const pipelineError = ref(false);
 const showBatchErrorDialog = ref(false);
+// Later datasets reuse the first one's dimension strategy and collection
+const canSkipFailedDataset = computed(
+  () => store.uploadWorkflow.currentDatasetIndex > 0,
+);
 const batchErrorMessage = ref("");
 const skippedDatasets = ref<number[]>([]);
 const fileSizeExceeded = ref(false);
@@ -626,6 +687,20 @@ const rules = computed(() => [
 ]);
 
 const filesSelected = computed(() => files.value.length > 0);
+
+// Upload stays usable after a failure (the form and button bar reappear for
+// a retry), except once the files are all uploaded: a retry can then only
+// create a second dataset. A quick import that fails then hides the button
+// and offers retryReadingFiles instead.
+const uploadDisabled = computed(
+  () =>
+    !valid.value ||
+    !filesSelected.value ||
+    phase.value !== "idle" ||
+    hideUploader.value ||
+    fileSizeExceeded.value ||
+    invalidLocation.value,
+);
 
 const recommendedName = computed(() => {
   const f = files.value;
@@ -809,9 +884,17 @@ async function getMaxUploadSize() {
 async function createCollection() {
   const collection = await store.createUploadCollection();
   if (!collection) {
-    pipelineError.value = true;
-    return;
+    handleBatchError("Could not create the collection");
   }
+  return collection;
+}
+
+// Stop the pipeline at a failure, remembering where it stopped.
+function failPipeline() {
+  if (failedPhase.value === null) {
+    failedPhase.value = phase.value;
+  }
+  phase.value = "idle";
 }
 
 async function uploadMounted() {
@@ -850,7 +933,7 @@ async function uploadMounted() {
     await nextTick();
 
     if (invalidLocation.value) {
-      pipelineError.value = true;
+      failPipeline();
       logError("Invalid location for dataset creation");
       return;
     }
@@ -864,8 +947,8 @@ async function uploadMounted() {
 }
 
 async function submit() {
-  if (pipelineError.value) {
-    logError("submit() called but pipelineError is set, aborting");
+  // The form's Enter key reaches here even while Upload is disabled.
+  if (phase.value !== "idle" || hideUploader.value) {
     return;
   }
 
@@ -874,7 +957,21 @@ async function submit() {
   }
 
   if (fileSizeExceeded.value || invalidLocation.value) {
-    pipelineError.value = true;
+    failPipeline();
+    return;
+  }
+
+  // A submit after a failure is a retry.
+  failedPhase.value = null;
+
+  if (dataset.value) {
+    // The dataset exists but its upload was interrupted: resume it into the
+    // dataset's folder rather than creating another dataset inside it. path
+    // points there already, unless reading the folder is what failed.
+    phase.value = "creatingDataset";
+    if (await enterDatasetFolder(dataset.value)) {
+      startUpload();
+    }
     return;
   }
 
@@ -888,67 +985,72 @@ async function submit() {
     pathForCreation._modelType !== "folder"
   ) {
     logError("Invalid path for dataset creation");
-    pipelineError.value = true;
+    failPipeline();
     return;
   }
 
   const datasetName = isBatchMode.value ? currentDatasetName.value : name.value;
 
-  dataset.value = await store.createDataset({
-    name: datasetName,
-    description: description.value,
-    path: pathForCreation,
-  });
+  phase.value = "creatingDataset";
+  try {
+    dataset.value = await store.createDataset({
+      name: datasetName,
+      description: description.value,
+      path: pathForCreation,
+    });
 
-  if (dataset.value === null) {
-    failedDataset.value = datasetName;
+    if (dataset.value === null) {
+      failedDataset.value = datasetName;
+      handleBatchError(`Could not create dataset ${datasetName}`);
+      return;
+    }
+
+    if (isBatchMode.value) {
+      store.addUploadedDataset(dataset.value);
+    }
+
+    failedDataset.value = "";
+  } catch (error) {
+    logError("Failed to create the dataset:", error);
+    handleBatchError(`Could not create dataset ${datasetName}`);
     return;
   }
 
-  if (isBatchMode.value) {
-    store.addUploadedDataset(dataset.value);
+  if (await enterDatasetFolder(dataset.value)) {
+    startUpload();
   }
-
-  failedDataset.value = "";
-  path.value = await girderResources.getFolder(dataset.value.id);
-  await nextTick();
-
-  if (!uploader.value) {
-    logError("Uploader component not available after dataset creation");
-    pipelineError.value = true;
-    return;
-  }
-  uploading.value = true;
-  uploader.value.startUpload();
 }
 
-async function submitSingleDataset() {
-  dataset.value = await store.createDataset({
-    name: name.value,
-    description: description.value,
-    path: path.value as any,
-  });
-
-  if (dataset.value === null) {
-    failedDataset.value = name.value;
-    return;
+// Point the uploader at the dataset's folder. A failed read returns null
+// rather than rejecting: path keeps its value, so the uploader stays mounted
+// and Upload reads the folder again (see submit). Assigning the null used to
+// unmount the uploader and leave Upload enabled with nothing to do.
+async function enterDatasetFolder(created: IDataset) {
+  const folder = await girderResources.getFolder(created.id);
+  if (!folder) {
+    logError(`Failed to read the folder of dataset ${created.id}`);
+    handleBatchError("Could not open the new dataset's folder");
+    return false;
   }
-
-  failedDataset.value = "";
-  path.value = await girderResources.getFolder(dataset.value.id);
+  path.value = folder;
   await nextTick();
+  return true;
+}
 
+// Upload the selected files into the dataset's folder (path). Files a
+// previous attempt already uploaded are skipped and interrupted ones resume.
+function startUpload() {
   if (!uploader.value) {
     logError("Uploader component not available after dataset creation");
-    pipelineError.value = true;
+    failPipeline();
     return;
   }
-  uploading.value = true;
+  phase.value = "uploading";
   uploader.value.startUpload();
 }
 
 async function configureDatasetWithStrategy() {
-  configuring.value = true;
+  phase.value = "readingFiles";
   await nextTick();
 
   const config = configuration.value;
@@ -966,11 +1068,32 @@ async function configureDatasetWithStrategy() {
   }
 
   progressStatusText.value = "Detecting file structure...";
-  await config.reinitializeAndApplyStrategy(strategy);
+  try {
+    await config.reinitializeAndApplyStrategy(strategy);
+  } catch (error) {
+    logError("Failed to read the dataset's files:", error);
+    generationFailed(initFailureMessage(config, error));
+    return;
+  }
+  phase.value = "configuring";
   progressStatusText.value = strategy.transcode
     ? "Transcoding..."
     : "Generating configuration...";
   config.submit();
+}
+
+// What to show when MultiSourceConfiguration could not read the files.
+function initFailureMessage(
+  config: InstanceType<typeof MultiSourceConfiguration>,
+  error: unknown,
+): string {
+  const initError = config.initError;
+  const reason = initError
+    ? `${initError.name}: ${initError.message}`
+    : error instanceof Error
+      ? error.message
+      : String(error);
+  return `Could not read the dataset's files (${reason})`;
 }
 
 async function advanceToNextDataset() {
@@ -981,17 +1104,23 @@ async function advanceToNextDataset() {
 
   store.advanceUploadDatasetIndex();
 
+  // Everything the pipeline sets for one dataset.
+  phase.value = "idle";
+  failedPhase.value = null;
   dataset.value = null;
-  configuring.value = false;
+  failedDataset.value = "";
   configurationLogs.value = "";
   transcodeProgress.value = undefined;
+  progressStatusText.value = "";
+  totalFrames.value = 0;
+  currentFrame.value = 0;
   processingError.value = null;
 
   if (!store.uploadWorkflow.originalPath) {
     logError(
       "[Batch Mode] ERROR: originalPath is not set in store, cannot continue",
     );
-    pipelineError.value = true;
+    failPipeline();
     return;
   }
   path.value = store.uploadWorkflow.originalPath;
@@ -1027,24 +1156,26 @@ function navigateToCollection() {
 // dataset (e.g. the transcoding job failed because the storage quota was
 // exceeded). Stops the spinner and surfaces the reason to the user.
 function generationFailed(message: string) {
-  configuring.value = false;
   processingError.value = message;
   handleBatchError(message);
 }
 
+// Every failure of the pipeline lands here. A single dataset stops with the
+// form available for a retry; a batch asks whether to skip this dataset.
 function handleBatchError(message: string) {
   if (!isBatchMode.value) {
-    pipelineError.value = true;
+    failPipeline();
     return;
   }
 
+  phase.value = "idle";
   batchErrorMessage.value = message;
   showBatchErrorDialog.value = true;
 }
 
 function handleStopBatch() {
   showBatchErrorDialog.value = false;
-  pipelineError.value = true;
+  failPipeline();
 
   const collection = store.uploadWorkflow.collection;
   const datasets = [...store.uploadWorkflow.datasets];
@@ -1070,7 +1201,6 @@ function handleContinueBatch() {
   showBatchErrorDialog.value = false;
   skippedDatasets.value.push(store.uploadWorkflow.currentDatasetIndex);
 
-  pipelineError.value = false;
   batchErrorMessage.value = "";
 
   advanceToNextDataset();
@@ -1092,8 +1222,7 @@ function filesChanged(inputFiles: FileUpload[] | File[]) {
     fileSizeExceeded.value = true;
     uploadedFiles.value = null;
     if (isQuickImport.value) {
-      pipelineError.value = true;
-      return;
+      failPipeline();
     }
     return;
   }
@@ -1116,18 +1245,42 @@ function addMoreFiles(newFiles: File[]) {
   }
 }
 
+// The uploader reports each file that fails. Upload then resumes into the
+// same dataset (see submit).
 function interruptedUpload() {
-  uploading.value = false;
-  hideUploader.value = false;
+  handleBatchError("The upload was interrupted");
 }
+
+// The uploader's own "Resume Upload" button, shown beside its error, calls
+// its startUpload directly, past submit(). Follow it into the uploading
+// phase, or the failure it resumes from would outlive a successful upload:
+// the import would go on under "Quick Import Failed", and a later failure
+// would be recorded as this one.
+watch(
+  () => uploader.value?.uploading,
+  (uploaderRunning) => {
+    if (uploaderRunning && phase.value === "idle") {
+      if (failedPhase.value === "uploading") {
+        failedPhase.value = null;
+      }
+      phase.value = "uploading";
+    }
+  },
+);
 
 function nextStep() {
   hideUploader.value = true;
-  uploading.value = false;
+  phase.value = "idle";
+  // Every file is uploaded, so no upload failure is current: one reported
+  // late by a worker of the attempt this upload resumed from would
+  // otherwise label the rest of the import as failed.
+  if (failedPhase.value === "uploading") {
+    failedPhase.value = null;
+  }
 
   if (!dataset.value) {
     logError("nextStep called but dataset is null");
-    pipelineError.value = true;
+    failPipeline();
     return;
   }
 
@@ -1152,45 +1305,63 @@ function nextStep() {
 }
 
 async function configureDataset() {
-  configuring.value = true;
+  phase.value = "readingFiles";
   await nextTick();
   const config = configuration.value;
   if (!config) {
     logError(
       "MultiSourceConfiguration component not mounted during quickupload",
     );
-    pipelineError.value = true;
+    handleBatchError("Configuration component not ready");
     return;
   }
-  await (config.initialized || config.initialize());
+  try {
+    await (config.initialized || config.initialize());
+  } catch (error) {
+    logError("Failed to read the dataset's files:", error);
+    generationFailed(initFailureMessage(config, error));
+    return;
+  }
+  phase.value = "configuring";
 
   if (isQuickImport.value) {
     config.submit();
   }
 }
 
-function generationDone(jsonId: string | null) {
+// Read the uploaded files again: a fresh MultiSourceConfiguration mounts
+// for the dataset that already holds them, so nothing is uploaded or
+// created twice.
+function retryReadingFiles() {
+  if (!canRetryReadingFiles.value) {
+    return;
+  }
+  failedPhase.value = null;
+  processingError.value = null;
+  configurationLogs.value = "";
+  configureDataset();
+}
+
+function goHome() {
+  router.push({ name: "root" });
+}
+
+// MultiSourceConfiguration emits generatedJson only on success; a failure
+// arrives as generationError (generationFailed).
+function generationDone() {
   if (isBatchMode.value) {
-    return handleCollectionGenerationDone(jsonId);
+    return handleCollectionGenerationDone();
   } else if (isQuickImport.value) {
-    return createView(jsonId);
+    return createView();
   } else {
     return;
   }
 }
 
-async function handleCollectionGenerationDone(jsonId: string | null) {
-  if (!jsonId) {
-    logError("Failed to generate JSON");
-    pipelineError.value = true;
-    return;
-  }
-
+async function handleCollectionGenerationDone() {
   if (isFirstDataset.value) {
     await store.setSelectedDataset(dataset.value!.id);
-    await createCollection();
-
-    if (pipelineError.value || !store.uploadWorkflow.collection) {
+    if (!(await createCollection())) {
       logWarning("Failed to create collection");
       return;
     }
@@ -1217,18 +1388,11 @@ async function handleCollectionGenerationDone(jsonId: string | null) {
     );
   }
 
-  configuring.value = false;
   advanceToNextDataset();
 }
 
-async function createView(jsonId: string | null) {
-  if (!jsonId) {
-    logError("Failed to generate JSON during quick upload");
-    pipelineError.value = true;
-    return;
-  }
+async function createView() {
   await store.setSelectedDataset(dataset.value!.id);
-  configuring.value = false;
 
   if (
     datasetMetadataImport.hasAnnotationData &&
@@ -1242,23 +1406,24 @@ async function createView(jsonId: string | null) {
     }
   }
 
-  creatingView.value = true;
+  phase.value = "creatingView";
   await nextTick();
   const vc = viewCreation.value;
   if (!vc) {
     logError("DatasetInfo component not mounted during quickupload");
-    pipelineError.value = true;
+    failPipeline();
     return;
   }
   const defaultView = await vc.createDefaultView();
   if (!defaultView) {
+    // DatasetInfo stays on screen (failedPhase) to create a view by hand.
     logError("Failed to create default view during quick upload");
-    pipelineError.value = true;
+    failPipeline();
     return;
   }
   store.setDatasetViewId({ id: defaultView.id });
   const route = vc.toRoute(defaultView);
-  creatingView.value = false;
+  phase.value = "idle";
 
   router.push(route);
 }
@@ -1324,6 +1489,15 @@ onMounted(async () => {
   }
 });
 
+// Leaving the page ends the upload workflow, whichever way it went: a later
+// mount (Back to this route, or the uploader embedded in
+// AddDatasetToCollection) must not pick up its files and mode.
+onBeforeUnmount(() => {
+  if (store.uploadWorkflow.active) {
+    store.completeUploadWorkflow();
+  }
+});
+
 // --- Expose for tests and external access ---
 defineExpose({
   store,
@@ -1333,6 +1507,13 @@ defineExpose({
   configuration,
   viewCreation,
   uploadedFiles,
+  phase,
+  failedPhase,
+  canRetryReadingFiles,
+  retryReadingFiles,
+  goHome,
+  uploadDisabled,
+  startUpload,
   configuring,
   creatingView,
   valid,
@@ -1391,7 +1572,6 @@ defineExpose({
   createCollection,
   uploadMounted,
   submit,
-  submitSingleDataset,
   configureDatasetWithStrategy,
   advanceToNextDataset,
   navigateToCollection,

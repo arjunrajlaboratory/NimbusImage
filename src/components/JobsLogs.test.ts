@@ -93,4 +93,34 @@ describe("JobsLogs", () => {
     expect((wrapper.vm as any).headers).toHaveLength(7);
     expect((wrapper.vm as any).headers[0].title).toBe("Title");
   });
+
+  it("keeps the newest job's log when an older log request resolves last", async () => {
+    let resolveFirst: (job: any) => void = () => {};
+    vi.mocked(store.api.getJobInfo)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }) as any,
+      )
+      .mockResolvedValueOnce({
+        _id: "j2",
+        title: "Job 2",
+        status: 3,
+        log: "log of job 2",
+      } as any);
+    const wrapper = mountComponent();
+    const vm = wrapper.vm as any;
+
+    // Open job 1's log, close it while it loads, open job 2's
+    const first = vm.viewJobLog({ _id: "j1", title: "Job 1" });
+    vm.showLogDialog = false;
+    await vm.viewJobLog({ _id: "j2", title: "Job 2" });
+    resolveFirst({ _id: "j1", title: "Job 1", status: 3, log: "log of job 1" });
+    await first;
+
+    expect(vm.selectedJob.title).toBe("Job 2");
+    expect(vm.currentJobLog).toContain("log of job 2");
+    expect(vm.currentJobLog).not.toContain("log of job 1");
+  });
 });

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import json
 import math
 import pickle
 from typing import TYPE_CHECKING, Iterator, NamedTuple, Sequence
 
 import numpy as np
+import tifffile
 
 from nimbusimage.models import FrameInfo
 
@@ -37,6 +39,9 @@ class ImageAccessor:
     def __init__(self, dataset: Dataset):
         self._dataset = dataset
         self._frame_map: dict | None = None
+        # Histograms by frame: get_composite and composite_style both
+        # need them.
+        self._histograms: dict[int, list] = {}
 
     def _ensure_frame_map(self):
         """Build channel→time→z→xy→frame_index map lazily."""
@@ -59,11 +64,15 @@ class ImageAccessor:
             ).setdefault(xy, idx)
         self._frame_map = m
 
-    def _frame_index(
+    def frame_index(
         self, channel: int = 0, time: int = 0, z: int = 0, xy: int = 0
     ) -> int:
+        """The large-image frame number of one channel at one location
+        (the ``frame`` parameter of tiles endpoints and styles)."""
         self._ensure_frame_map()
         return self._frame_map[channel][time][z][xy]
+
+    _frame_index = frame_index
 
     def _get_region(self, frame: int, **kwargs) -> np.ndarray:
         """Fetch a region as a numpy array via pickle protocol."""
@@ -75,6 +84,50 @@ class ImageAccessor:
             jsonResp=False,
         )
         return pickle.loads(response.content)
+
+    def _resamples_exactly(self) -> bool:
+        """Whether large_image's tiles/region downsamples this source
+        without losing values: 8-bit data, and single-band 16-bit data.
+        It sends every other array through 8-bit PIL (a float 0.5 or a
+        16-bit RGB 100 becomes 0)."""
+        self._dataset._ensure_metadata()
+        dtype = np.dtype(self._dataset.dtype)
+        bands = self._dataset._tiles.get("bandCount", 1) or 1
+        return dtype == np.uint8 or (dtype == np.uint16 and bands == 1)
+
+    def _read_region(self, frame: int, **kwargs) -> np.ndarray:
+        """An unstyled region (tiles/region parameters: optional crop
+        edges and width/height cap) in the source dtype, values intact.
+
+        A downsample the server cannot do exactly is read from the
+        plugin's raw_region route instead, which samples without PIL
+        (nearest, from the pyramid level read) and returns a TIFF.
+        """
+        if "width" not in kwargs or self._resamples_exactly():
+            return self._get_region(frame, **kwargs)
+        height, width = self._dataset.shape
+
+        def edge(name, size, default):
+            value = kwargs.get(name, default)
+            # tiles/region reads a negative edge from the far side;
+            # raw_region clamps instead, so resolve it here.
+            return value + size if value < 0 else value
+
+        params = {
+            "frame": frame,
+            "left": edge("left", width, 0),
+            "top": edge("top", height, 0),
+            "right": edge("right", width, width),
+            "bottom": edge("bottom", height, height),
+            "width": kwargs["width"],
+            "height": kwargs["height"],
+        }
+        response = self._dataset._gc.get(
+            f"item/{self._dataset._item_id}/raw_region",
+            parameters=params,
+            jsonResp=False,
+        )
+        return tifffile.imread(io.BytesIO(response.content))
 
     def get(
         self,
@@ -102,7 +155,7 @@ class ImageAccessor:
             2D numpy array.
         """
         frame = self._frame_index(channel, time, z, xy)
-        return _drop_single_band(self._get_region(
+        return _drop_single_band(self._read_region(
             frame, **self._region_params(crop, max_size)
         ))
 
@@ -159,6 +212,68 @@ class ImageAccessor:
             raise ValueError(f"axis must be 'z' or 'time', got '{axis}'")
         return np.stack(images, axis=0)
 
+    def projection_frames(
+        self, channel: int = 0, xy: int = 0, time: int = 0
+    ) -> list[int]:
+        """The frame numbers of one channel's z-slices at this XY position
+        and time, in z order; only slices that exist (a sparse dataset can
+        lack some)."""
+        self._ensure_frame_map()
+        by_z = self._frame_map.get(channel, {}).get(time, {})
+        return [by_z[z][xy] for z in sorted(by_z) if xy in by_z[z]]
+
+    def get_max_projection(
+        self,
+        channel: int = 0,
+        xy: int = 0,
+        time: int = 0,
+        crop: tuple[float, float, float, float] | None = None,
+        max_size: int | None = None,
+    ) -> np.ndarray:
+        """The maximum intensity over a channel's z-slices, exact and in
+        the source dtype. Returns a 2D array (the first band of a
+        multi-band source).
+
+        At full resolution, for 8- and 16-bit unsigned sources, the server
+        projects in one request (a "lighten" band per slice, unscaled).
+        Otherwise the slices are read one at a time and folded into a
+        running maximum, holding at most two planes: large_image styles a
+        downsampled result through 8 bits (a faint signal would round to
+        0), and its "source" dtype does not cover other types. Each slice
+        is read as get() reads it, values intact (see _read_region).
+        """
+        frames = self.projection_frames(channel, xy, time)
+        if not frames:
+            raise ValueError(
+                f"No z-slices of channel {channel} at xy={xy}, time={time}"
+            )
+        region = self._region_params(crop, max_size)
+        dtype = np.dtype(self._dataset.dtype)
+        if "width" not in region and dtype in (np.uint8, np.uint16):
+            top = int(np.iinfo(dtype).max)
+            style = {"dtype": "source", "bands": [
+                {"frame": frame, "band": 1, "min": 0, "max": top}
+                for frame in frames
+            ]}
+            projected = self._get_region(
+                frames[0], style=json.dumps(style, separators=(",", ":")),
+                **region,
+            )
+            # The styled result has color (and alpha) bands; the first
+            # holds the value. "source" is not applied to 8-bit data (it
+            # comes back as float32), so restore the dtype.
+            if projected.ndim == 3:
+                projected = projected[..., 0]
+            return projected.astype(dtype, copy=False)
+        projected = None
+        for frame in frames:
+            plane = _drop_single_band(self._read_region(frame, **region))
+            if plane.ndim == 3:
+                plane = plane[..., 0]
+            projected = plane if projected is None \
+                else np.maximum(projected, plane, out=projected)
+        return projected
+
     def get_composite(
         self,
         xy: int = 0,
@@ -200,37 +315,10 @@ class ImageAccessor:
         self._ensure_frame_map()
         source_dtype = self._dataset.dtype
         target_dtype = dtype or source_dtype
-        collections = self._dataset.collections
-        overrides = collections.layer_contrasts
-        sizes = {
-            "xy": self._dataset.num_xy,
-            "z": self._dataset.num_z,
-            "time": self._dataset.num_time,
-        }
-        current = {"xy": xy, "z": z, "time": time}
         region = self._region_params(crop, max_size)
 
         composite = None
-        for layer in collections.layers:
-            if not layer.get("visible", True):
-                continue
-            frames = self._layer_frames(layer, current, sizes)
-            if not frames:
-                continue
-            # The app's histogram is of the layer's image at the current
-            # location (resolveSlice maps max-merge to the current index),
-            # even when the drawn tile is a projection over many frames.
-            histogram_frames = self._layer_frames(
-                layer, current, sizes, project=False
-            )
-            if not histogram_frames:
-                # No image of this channel at the current location: the
-                # app draws nothing for the layer (getLayerImages is empty).
-                continue
-            contrast = (
-                overrides.get(layer.get("id")) or layer.get("contrast", {})
-            )
-            contrast_range = self._contrast_range(contrast, histogram_frames)
+        for layer, frames, contrast_range in self._drawn_layers(xy, z, time):
             if len(frames) > 1 or "width" in region:
                 # Drawn by the server's band styling, as the app's tiles
                 # are: a max-merge projection in one request (not one fetch
@@ -280,6 +368,65 @@ class ImageAccessor:
             max_val = np.iinfo(dt).max
             return (composite * max_val).astype(dt)
 
+    def _drawn_layers(self, xy: int, z: int, time: int):
+        """(layer, frames, contrast_range) for each layer the app draws at
+        this location, in drawing order."""
+        self._dataset._ensure_metadata()
+        self._ensure_frame_map()
+        collections = self._dataset.collections
+        overrides = collections.layer_contrasts
+        sizes = {
+            "xy": self._dataset.num_xy,
+            "z": self._dataset.num_z,
+            "time": self._dataset.num_time,
+        }
+        current = {"xy": xy, "z": z, "time": time}
+        for layer in collections.layers:
+            if not layer.get("visible", True):
+                continue
+            frames = self._layer_frames(layer, current, sizes)
+            if not frames:
+                continue
+            # The app's histogram is of the layer's image at the current
+            # location (resolveSlice maps max-merge to the current index),
+            # even when the drawn tile is a projection over many frames.
+            histogram_frames = self._layer_frames(
+                layer, current, sizes, project=False
+            )
+            if not histogram_frames:
+                # No image of this channel at the current location: the
+                # app draws nothing for the layer (getLayerImages is empty).
+                continue
+            contrast = (
+                overrides.get(layer.get("id")) or layer.get("contrast", {})
+            )
+            yield layer, frames, self._contrast_range(
+                contrast, histogram_frames
+            )
+
+    def composite_style(
+        self, xy: int = 0, z: int = 0, time: int = 0
+    ) -> dict | None:
+        """The composite as one large_image ``style``: a band per drawn
+        frame, windowed to its layer's contrast and colored with its
+        layer's color, combined with "lighten" (get_composite's default
+        mode). Pass it to tiles/region to have the server render the
+        composite, e.g. for a download link; None when nothing draws.
+        """
+        bands = []
+        for layer, frames, contrast_range in self._drawn_layers(xy, z, time):
+            low, high = contrast_range or ("min", "max")
+            r, g, b = _parse_color(layer.get("color", "white"))
+            color = "#{:02x}{:02x}{:02x}".format(
+                *(round(c * 255) for c in (r, g, b))
+            )
+            bands += [
+                {"frame": frame, "min": low, "max": high,
+                 "palette": ["#000000", color]}
+                for frame in frames
+            ]
+        return {"bands": bands} if bands else None
+
     def _layer_frames(
         self, layer: dict, current: dict, sizes: dict, project: bool = True
     ) -> list[int]:
@@ -305,6 +452,15 @@ class ImageAccessor:
             if xyi in by_time.get(t, {}).get(zi, {})
         ]
 
+    def _histogram(self, frame: int):
+        """A frame's histogram, fetched once per accessor."""
+        if frame not in self._histograms:
+            self._histograms[frame] = self._dataset._gc.get(
+                f"item/{self._dataset._item_id}/tiles/histogram",
+                parameters={**_HISTOGRAM_PARAMS, "frame": frame},
+            )
+        return self._histograms[frame]
+
     def _contrast_range(
         self, contrast: dict, frames: list[int]
     ) -> tuple[float, float] | None:
@@ -316,13 +472,7 @@ class ImageAccessor:
             return float(black), float(white)
         # Percentile mode: a linear percent of the histogram's range,
         # rounded like the app's scaleLinear().rangeRound().
-        histograms = [
-            self._dataset._gc.get(
-                f"item/{self._dataset._item_id}/tiles/histogram",
-                parameters={**_HISTOGRAM_PARAMS, "frame": frame},
-            )
-            for frame in frames
-        ]
+        histograms = [self._histogram(frame) for frame in frames]
         if not all(histograms):
             return None
         lo = min(h[0]["min"] for h in histograms)
@@ -523,7 +673,7 @@ class ImageAccessor:
         if scale < 1.0:
             kwargs["width"] = round(region_width * scale)
             kwargs["height"] = round(region_height * scale)
-        region = _drop_single_band(self._get_region(frame, **kwargs))
+        region = _drop_single_band(self._read_region(frame, **kwargs))
         # The server preserves the aspect ratio, so the effective scale can
         # differ slightly from the requested one — use the returned size
         return (

@@ -1,5 +1,6 @@
-"""girder.env asks for compressors=zstd. Without the zstd module pymongo
-only warns and connects uncompressed, so pin that the module is there."""
+"""A deployment can ask for compressors=zstd in its Mongo URI. Without the
+zstd module pymongo only warns and connects uncompressed, so pin that the
+module is there."""
 import warnings
 
 from pymongo import MongoClient

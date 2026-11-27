@@ -62,7 +62,7 @@ const DENSE_KEY = /(^|[{,\s])dense\s*(?=[:,}\s]|$)/;
 // KNOWN LIMIT: `v-bind="someObject"` (116 occurrences in src, all
 // `activatorProps`/`$attrs` style) cannot be resolved statically, so a `dense`
 // arriving through one is invisible to this guard. Documented rather than
-// silently assumed away; `does not fire on look-alikes` pins the behaviour so
+// silently assumed away; `does not fire on look-alikes` pins the behavior so
 // the gap stays visible instead of being mistaken for coverage.
 function denseInTag(blob: string): boolean {
   if (DENSE_ATTR.test(attrNames(blob))) return true;
@@ -85,7 +85,7 @@ function densePlaces(source: string): string[] {
 }
 
 describe("Vuetify 4 deprecations", () => {
-  // Vuetify 4 deprecated the boolean `dense` prop. VRow still honours it but
+  // Vuetify 4 deprecated the boolean `dense` prop. VRow still honors it but
   // logs `[Vuetify UPGRADE] 'dense' is deprecated` once per mounted instance —
   // `deprecate()` is called from `setup()`, so re-rendering an existing row
   // never repeats it. Every other component in this app never had a `dense`

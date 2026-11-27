@@ -127,7 +127,7 @@ export class ConnectionList extends VuexModule {
   expandedTrackIds: Set<string> = markRaw(new Set());
 
   /**
-   * Property path labelling tracks in the "By track" view ([] = default
+   * Property path labeling tracks in the "By track" view ([] = default
    * short-id labels). Lets the panel show the same track ids a property
    * worker computed (e.g. Parent-Child Connection IDs' `trackId`), so a track
    * flagged during post-processing can be found here by that id.
@@ -177,7 +177,7 @@ export class ConnectionList extends VuexModule {
    * paths, so what the list shows and what the canvas draws cannot drift.
    * Keyed off the DATASET-WIDE track (via `trackKeyByAnnotationId`), so a
    * scope- or display-narrowed fragment is judged by its full track's
-   * metrics, the same rule track colouring and duplicate-ID detection follow.
+   * metrics, the same rule track coloring and duplicate-ID detection follow.
    *
    * With no filter active this is a stable always-true constant: the viewer
    * reads it on every draw pass, and the inactive case must cost nothing and
@@ -577,7 +577,7 @@ export class ConnectionList extends VuexModule {
    * Drop the path when its property leaves the configuration. The persisted
    * resolver (resolveAnnotationBrowserConfig) already does this at hydration,
    * but a live deletion must do the same immediately — same contract as
-   * reconcileAnalysisPlotsForPropertyIds — or the panel keeps labelling from
+   * reconcileAnalysisPlotsForPropertyIds — or the panel keeps labeling from
    * the deleted property and a later browser save persists the orphaned path.
    * Called by properties.setProperties after the propertyIds write succeeds.
    */

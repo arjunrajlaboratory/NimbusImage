@@ -21,14 +21,14 @@
           {{
             batchProgress.completed +
             batchProgress.failed +
-            batchProgress.cancelled
+            batchProgress.canceled
           }}
           / {{ batchProgress.total }} datasets
           <span v-if="batchProgress.failed > 0" class="text-error">
             ({{ batchProgress.failed }} failed)
           </span>
-          <span v-if="batchProgress.cancelled > 0" class="text-warning">
-            ({{ batchProgress.cancelled }} cancelled)
+          <span v-if="batchProgress.canceled > 0" class="text-warning">
+            ({{ batchProgress.canceled }} canceled)
           </span>
         </div>
         <v-progress-linear
@@ -102,10 +102,12 @@
 import { ref, computed, watch } from "vue";
 import store from "@/store";
 import propertyStore from "@/store/properties";
+import batchRuns, { runBatch } from "@/store/batchRuns";
 import { useCollectionDatasetCount } from "@/utils/useCollectionDatasetCount";
 import AnalyzePanel from "@/components/AnalyzePanel.vue";
 import PropertyPicker from "@/components/PropertyPicker.vue";
 import { IAnnotationProperty } from "@/store/model";
+import { logError } from "@/utils/log";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -124,14 +126,13 @@ const dialogOpen = computed({
 const pickerRef = ref<InstanceType<typeof PropertyPicker> | null>(null);
 
 const applyToAllDatasets = ref(false);
-const batchProgress = ref<{
-  total: number;
-  completed: number;
-  failed: number;
-  cancelled: number;
-  currentDatasetName: string;
-} | null>(null);
-const batchCancelFunction = ref<(() => void) | null>(null);
+// The batch lives in the store, keyed by collection and property, so
+// reopening the dialog mid-batch still shows it, can cancel it and cannot
+// start a second; another collection's batch is neither shown nor blocking.
+const shownBatch = computed(() =>
+  batchRuns.shownRun("property", store.selectedConfigurationId),
+);
+const batchProgress = computed(() => shownBatch.value?.progress ?? null);
 const {
   collectionDatasetCount,
   fetchCollectionDatasetCount,
@@ -145,50 +146,68 @@ const hasComputedProperties = computed(
 
 const batchProgressPercent = computed(() => {
   if (!batchProgress.value || batchProgress.value.total === 0) return 0;
-  const { completed, failed, cancelled, total } = batchProgress.value;
-  return ((completed + failed + cancelled) / total) * 100;
+  const { completed, failed, canceled, total } = batchProgress.value;
+  return ((completed + failed + canceled) / total) * 100;
 });
 
 async function onComputePropertyBatch(property: IAnnotationProperty) {
   const configurationId = store.selectedConfigurationId;
-  if (!configurationId) return;
-
-  batchProgress.value = {
-    total: collectionDatasetCount.value,
-    completed: 0,
-    failed: 0,
-    cancelled: 0,
-    currentDatasetName: "Starting...",
-  };
-
-  await propertyStore.computePropertyBatch({
-    property,
-    configurationId,
-    onBatchProgress: (status) => {
-      batchProgress.value = status;
-    },
-    onCancel: (cancel) => {
-      batchCancelFunction.value = cancel;
-    },
-    onComplete: () => {
-      batchCancelFunction.value = null;
-      setTimeout(() => {
-        batchProgress.value = null;
-      }, 3000);
-    },
-  });
+  if (configurationId) {
+    await computePropertyBatchIn(
+      property,
+      configurationId,
+      collectionDatasetCount.value,
+    );
+  }
 }
 
+// Runs one property's batch over the given configuration. Resolves to
+// whether the user canceled it; false when it did not start or threw.
+async function computePropertyBatchIn(
+  property: IAnnotationProperty,
+  configurationId: string,
+  total: number,
+): Promise<boolean> {
+  // One batch at a time: the dialog shows one progress and one Cancel All.
+  if (batchRuns.anyInFlight("property", configurationId)) return false;
+
+  try {
+    const { cancelRequested } = await runBatch(
+      "property",
+      configurationId,
+      property.id,
+      total,
+      (hooks) =>
+        propertyStore.computePropertyBatch({
+          property,
+          configurationId,
+          ...hooks,
+        }),
+    );
+    return cancelRequested;
+  } catch (error) {
+    logError(`Batch computation of ${property.name} failed`, error);
+    return false;
+  }
+}
+
+// The collection is the one selected when the batch started: each property
+// runs over it, and the batch stops when the user moves to another one or
+// cancels (Cancel All cancels the property running, then this stops).
 async function onComputePropertiesBatch(properties: IAnnotationProperty[]) {
+  const configurationId = store.selectedConfigurationId;
+  if (!configurationId) return;
+  const total = collectionDatasetCount.value;
   for (const property of properties) {
-    await onComputePropertyBatch(property);
+    if (store.selectedConfigurationId !== configurationId) return;
+    if (await computePropertyBatchIn(property, configurationId, total)) {
+      return;
+    }
   }
 }
 
 function cancelBatch() {
-  if (batchCancelFunction.value) {
-    batchCancelFunction.value();
-  }
+  shownBatch.value?.cancel?.();
 }
 
 function onPickerDone() {

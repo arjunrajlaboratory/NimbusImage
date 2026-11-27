@@ -18,6 +18,8 @@ import jobs from "./jobs";
 import progress from "./progress";
 import { jobStates } from "./jobConstants";
 import rootStore from "./root";
+import sync from "./sync";
+import girderResources from "./girderResources";
 import "./filters";
 import "./properties";
 // Registers hydrateTrackLabelPath, which hydrateAnnotationBrowserState
@@ -25,6 +27,16 @@ import "./properties";
 import "./connectionList";
 import { RestClient } from "@/girder";
 import ShareLinkAPI from "./ShareLinkAPI";
+import batchRuns, { runBatch } from "./batchRuns";
+import { logError } from "@/utils/log";
+
+// logError is console.error captured at import, so a console spy can't see
+// it. Wrap it so the loadLargeImages tests can assert on it; everywhere else
+// in this file it still calls through.
+vi.mock("@/utils/log", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/utils/log")>();
+  return { ...original, logError: vi.fn(original.logError) };
+});
 
 describe("share-link bootstrap identity", () => {
   let originalClient: typeof main.girderRest;
@@ -282,7 +294,7 @@ describe("share-link bootstrap identity", () => {
     expect(main.authRestored).toBe(true);
   });
 
-  it("does not commit a share bootstrap after its route is cancelled", async () => {
+  it("does not commit a share bootstrap after its route is canceled", async () => {
     const client = main.girderRest;
     const identity = main.girderUser;
     const controller = new AbortController();
@@ -308,7 +320,7 @@ describe("share-link bootstrap identity", () => {
     await Promise.resolve();
     controller.abort();
     finish({ datasetViewId: "shared-view" });
-    expect(await pending).toBe("Share-link request was cancelled.");
+    expect(await pending).toBe("Share-link request was canceled.");
     expect(main.girderRest).toBe(client);
     expect(main.girderUser).toBe(identity);
   });
@@ -479,8 +491,8 @@ describe("addMultiSourceMetadata error propagation", () => {
       ]);
     });
 
-    it("reports a cancelled job as a failure", async () => {
-      finishedJob(jobStates.cancelled);
+    it("reports a canceled job as a failure", async () => {
+      finishedJob(jobStates.canceled);
       expect(await messageOf(configure())).toBe(
         "Failed to transcode the large image: the transcoding job failed. " +
           "See the transcoding log for details.",
@@ -1090,6 +1102,24 @@ describe("tool job outcome scoping", () => {
   });
 });
 
+describe("logout clears batch runs", () => {
+  it("does not show the previous session's batch after logging out", async () => {
+    vi.spyOn(main.girderRest, "logout").mockResolvedValue(undefined as any);
+    void runBatch(
+      "workerTool",
+      "config-1",
+      "tool-1",
+      2,
+      () => new Promise(() => {}),
+    );
+    expect(batchRuns.shownRun("workerTool", "config-1")).not.toBeNull();
+
+    await main.logout();
+
+    expect(batchRuns.shownRun("workerTool", "config-1")).toBeNull();
+  });
+});
+
 describe("scales getters normalize an unknown pixel size", () => {
   afterEach(() => {
     (rootStore.state as any).main.configuration = null;
@@ -1168,5 +1198,217 @@ describe("initialize: authRestored", () => {
       Object.assign(client, { token });
       vi.restoreAllMocks();
     }
+  });
+});
+
+describe("loadLargeImages", () => {
+  const image = (id: string) => ({ _id: id, name: id }) as any;
+  const state = () => (rootStore.state as any).main;
+
+  beforeEach(() => {
+    state().dataset = { id: "ds-1" };
+    state().allLargeImages = [];
+    state().allLargeImagesDatasetId = null;
+    state().currentLargeImage = null;
+    // Silenced here only: these tests log on purpose
+    vi.mocked(logError).mockClear();
+    vi.mocked(logError).mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    // Back to calling through to the real logError
+    vi.mocked(logError).mockReset();
+    state().dataset = null;
+    state().allLargeImages = [];
+    state().allLargeImagesDatasetId = null;
+    state().currentLargeImage = null;
+  });
+
+  it("does not log when a large image is already current", async () => {
+    const original = image("original");
+    state().currentLargeImage = original;
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([
+      original,
+    ]);
+    const getCurrent = vi.spyOn(girderResources, "getCurrentLargeImage");
+
+    expect(await main.loadLargeImages()).toBeNull();
+
+    expect(logError).not.toHaveBeenCalled();
+    expect(getCurrent).not.toHaveBeenCalled();
+    expect(main.allLargeImages).toEqual([original]);
+    expect(toRaw(main.currentLargeImage)).toBe(original);
+  });
+
+  it("selects and returns the dataset's large image when none is current", async () => {
+    const original = image("original");
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([
+      original,
+    ]);
+    vi.spyOn(girderResources, "getCurrentLargeImage").mockResolvedValue(
+      original,
+    );
+
+    expect(await main.loadLargeImages()).toBe(original);
+
+    expect(toRaw(main.currentLargeImage)).toBe(original);
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("logs when large images exist but none can be selected", async () => {
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([
+      image("original"),
+    ]);
+    vi.spyOn(girderResources, "getCurrentLargeImage").mockResolvedValue(null);
+
+    expect(await main.loadLargeImages()).toBeNull();
+
+    expect(logError).toHaveBeenCalledWith(
+      "Store",
+      "Large images exist but none could be selected",
+    );
+  });
+
+  it("logs and clears the list when the dataset has no large images", async () => {
+    state().allLargeImages = [image("deleted")];
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([]);
+
+    expect(await main.loadLargeImages()).toBeNull();
+
+    expect(main.allLargeImages).toEqual([]);
+    expect(logError).toHaveBeenCalledWith("Store", "No large images found");
+  });
+
+  it("replaces a held image that is not one of this dataset's", async () => {
+    // A dataset switch does not reset the current image, so the outgoing
+    // dataset's image must not count as this dataset's selection.
+    const outgoing = image("outgoing");
+    const own = image("own");
+    state().currentLargeImage = outgoing;
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([own]);
+    vi.spyOn(girderResources, "getCurrentLargeImage").mockResolvedValue(own);
+
+    expect(await main.loadLargeImages()).toBe(own);
+
+    expect(toRaw(main.currentLargeImage)).toBe(own);
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("switches to and returns a newly created large image", async () => {
+    const original = image("original");
+    const computed = image("computed");
+    state().allLargeImages = [original];
+    state().allLargeImagesDatasetId = "ds-1";
+    state().currentLargeImage = original;
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([
+      original,
+      computed,
+    ]);
+    // updateCurrentLargeImage is fired, not awaited; never resolving keeps
+    // it from reaching refreshDataset.
+    const setCurrent = vi
+      .spyOn(girderResources, "setCurrentLargeImage")
+      .mockReturnValue(new Promise(() => {}));
+
+    expect(await main.loadLargeImages(true)).toBe(computed);
+
+    expect(setCurrent).toHaveBeenCalledWith({
+      datasetId: "ds-1",
+      largeImage: computed,
+    });
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("returns null without logging when switching finds no new image", async () => {
+    const original = image("original");
+    state().allLargeImages = [original];
+    state().allLargeImagesDatasetId = "ds-1";
+    state().currentLargeImage = original;
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([
+      original,
+    ]);
+    const setCurrent = vi.spyOn(girderResources, "setCurrentLargeImage");
+
+    expect(await main.loadLargeImages(true)).toBeNull();
+
+    expect(setCurrent).not.toHaveBeenCalled();
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("treats no image as new when the held list is another dataset's", async () => {
+    // A worker finishing while a dataset switch is still loading: the list
+    // is the outgoing dataset's, so every image here would look new.
+    const outgoing = image("outgoing");
+    state().allLargeImages = [outgoing];
+    state().allLargeImagesDatasetId = "ds-0";
+    state().currentLargeImage = outgoing;
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([
+      image("own"),
+    ]);
+    const setCurrent = vi.spyOn(girderResources, "setCurrentLargeImage");
+
+    expect(await main.loadLargeImages(true)).toBeNull();
+
+    expect(setCurrent).not.toHaveBeenCalled();
+    expect(main.allLargeImagesDatasetId).toBe("ds-1");
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("records the dataset the list was loaded for", async () => {
+    vi.spyOn(girderResources, "getAllLargeImages").mockResolvedValue([]);
+
+    await main.loadLargeImages();
+
+    expect(main.allLargeImagesDatasetId).toBe("ds-1");
+  });
+});
+
+describe("sync indicator: balanced saves", () => {
+  // The indicator counts saves in flight, so each action must end exactly
+  // the saves it starts: a missing end leaves "Saving" on forever, an extra
+  // one hides another request that is still running.
+  beforeEach(() => {
+    Object.assign((rootStore.state as any).sync, {
+      saving: false,
+      savesInFlight: 0,
+      lastError: null,
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    jobs.clearStoredMessages("job1");
+  });
+
+  it("addMultiSourceMetadata ends its save when the upload succeeds", async () => {
+    mockSuccessfulUploadAndTiles();
+
+    await main.addMultiSourceMetadata({
+      parentId: "folder1",
+      metadata: "{}",
+      transcode: false,
+    });
+
+    expect(sync.saving).toBe(false);
+  });
+
+  it("a failed colorByProperty write does not end another save in flight", async () => {
+    const original = (girderResources as any).getConfiguration;
+    (girderResources as any).getConfiguration = vi
+      .fn()
+      .mockRejectedValue(new Error("offline"));
+    sync.setSaving(true); // another request, still running
+    try {
+      await main.saveColorByPropertyFor({
+        datasetId: "ds1",
+        configurationId: "not-the-loaded-one",
+        state: null,
+      });
+    } finally {
+      (girderResources as any).getConfiguration = original;
+    }
+
+    expect(sync.lastError?.message).toBe("offline");
+    expect(sync.saving).toBe(true);
   });
 });

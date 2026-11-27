@@ -976,7 +976,7 @@ from girder_jobs.constants import JobStatus
 # RUNNING  = 2  (currently executing)
 # SUCCESS  = 3  (completed successfully)
 # ERROR    = 4  (failed)
-# CANCELED = 5  (cancelled)
+# CANCELED = 5  (canceled)
 ```
 
 **Warning:** Status 3 means **SUCCESS**, not "running". This is a common source of confusion.

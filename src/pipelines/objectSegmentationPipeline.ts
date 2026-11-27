@@ -1916,7 +1916,13 @@ export function createObjectSegmentationToolStateFromToolConfiguration(
     if (isComputing) {
       mergeStatus({ phase: "computing" });
     } else if (state.status.phase === "computing") {
-      mergeStatus({ phase: state.proposals === null ? "idle" : "ready" });
+      // Progress only describes a scan in flight. A scan whose input went
+      // away (last example undone) ends in NoOutput without reporting again,
+      // and the panel shows progress over the phase whenever it is set.
+      mergeStatus({
+        phase: state.proposals === null ? "idle" : "ready",
+        progress: null,
+      });
     }
   };
   allNodes.forEach((node) => node.onOutputUpdate(recomputeComputingPhase));

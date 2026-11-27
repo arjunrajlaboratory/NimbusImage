@@ -43,7 +43,7 @@ API-created datasets subtly different from UI-created ones:
   (`nanometers`, `micrometer`, …) and normalizes GREEK SMALL LETTER MU to MICRO
   SIGN before matching.
 
-The color tables are the drift risk, so `TestColourTableParity` re-parses
+The color tables are the drift risk, so `TestColorTableParity` re-parses
 `src/store/model.ts` and compares — a palette edit on the frontend fails the
 backend suite instead of silently giving API-created datasets different layer
 colors. It self-skips where the frontend tree is unreachable (the Linux
@@ -414,7 +414,7 @@ mongodb://mongodb:27017"` and
   dataset. — *"test_compositing_reported_and_xy_collapsed"*,
   *"test_not_compositing_when_not_requested"*
 - [ ] **The creator's channel-color overrides are honored.** —
-  *"testUserChannelColoursAreHonoured"*, *"testUserOverrideWinsOverTheDefaultTable"*,
+  *"testUserChannelColorsAreHonored"*, *"testUserOverrideWinsOverTheDefaultTable"*,
   *"testMergeDoesNotMutateTheSharedTable"*
 - [ ] **Every `logger.exception` sits inside an exception handler.** Outside
   one it records `NoneType: None`, so a best-effort handler whose only output
@@ -492,14 +492,14 @@ mongodb://mongodb:27017"` and
   *"testViewFailureRollsBackTheWholeRequest"*
 - [ ] **The ported color tables equal the frontend's.** Re-parsed from
   `src/store/model.ts`, with a guard that the parse found something. —
-  *"testPaletteMatches"*, *"testChannelColoursMatch"*,
+  *"testPaletteMatches"*, *"testChannelColorsMatch"*,
   *"testParsingFoundSomething"*
 - [ ] **Layer defaults match `newLayer`.** Known channel names keep their
   color, a duplicate color falls back to the palette, duplicate names get
   positional ones, and an empty name becomes "Channel N" (not "Layer N" --
   that branch is dead in the frontend too). —
-  *"testKnownChannelNamesGetTheirColour"*,
-  *"testDuplicateChannelColourFallsBackToThePalette"*,
+  *"testKnownChannelNamesGetTheirColor"*,
+  *"testDuplicateChannelColorFallsBackToThePalette"*,
   *"testDuplicateChannelNamesGetPositionalLayerNames"*,
   *"testEmptyChannelNameFallsBackToItsIndex"*
 - [ ] **z-step uses the frontend's UPPER median, not the mean of the middle

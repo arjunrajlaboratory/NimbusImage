@@ -1,6 +1,6 @@
-import { computed, InjectionKey, ref } from "vue";
+import { computed, InjectionKey, ref, watch } from "vue";
 import store from "@/store";
-import pipelinesStore from "@/store/pipelines";
+import pipelinesStore, { IPipelineStepRunStatus } from "@/store/pipelines";
 import {
   IErrorInfoList,
   IPipeline,
@@ -22,13 +22,7 @@ function overBatchLimitMessage(datasetCount: number): string {
   );
 }
 
-export type TStepStatus =
-  | "pending"
-  | "running"
-  | "success"
-  | "error"
-  | "cancelled"
-  | "skipped";
+export type TStepStatus = IPipelineStepRunStatus["status"];
 
 export interface IStepRunState {
   status: TStepStatus;
@@ -40,7 +34,7 @@ export interface IBatchRunProgress {
   total: number;
   completed: number;
   failed: number;
-  cancelled: number;
+  canceled: number;
   currentDatasetName: string;
 }
 
@@ -56,7 +50,7 @@ export function stepStatusIcon(status?: TStepStatus): string {
       return "mdi-check-circle";
     case "error":
       return "mdi-close-circle";
-    case "cancelled":
+    case "canceled":
       return "mdi-cancel";
     case "skipped":
       return "mdi-minus-circle-outline";
@@ -71,7 +65,7 @@ export function stepStatusColor(status?: TStepStatus): string | undefined {
       return "success";
     case "error":
       return "error";
-    case "cancelled":
+    case "canceled":
       return "warning";
     default:
       return undefined;
@@ -112,7 +106,21 @@ export function createPipelineRunController() {
   const applyToAllDatasets = ref(false);
 
   const cancelFn = ref<(() => void) | null>(null);
-  const cancelledByUser = ref(false);
+  // The configuration the last run (or refused run) belongs to: its pipeline
+  // lives there, so its result means nothing once another one is selected.
+  let runConfigurationId: string | null = null;
+  // True from the start of a run until it settles, batch runs included.
+  let runInFlight = false;
+  // Hides the finished batch's progress a few seconds after it completes.
+  let batchProgressLinger: ReturnType<typeof setTimeout> | null = null;
+
+  function clearBatchProgress() {
+    if (batchProgressLinger !== null) {
+      clearTimeout(batchProgressLinger);
+      batchProgressLinger = null;
+    }
+    batchProgress.value = null;
+  }
 
   const {
     collectionDatasetCount,
@@ -172,7 +180,8 @@ export function createPipelineRunController() {
     activeStepIds.value = pipeline.steps.map((step) => step.id);
     result.value = null;
     cancelFn.value = null;
-    cancelledByUser.value = false;
+    // A previous batch's linger timer must not hide this run's progress.
+    clearBatchProgress();
     stepStatuses.value = makeBaselineStatuses(pipeline);
     stepJobIds.value = pipeline.steps.map(() => null);
   }
@@ -191,6 +200,7 @@ export function createPipelineRunController() {
     if (!canRunPipeline(pipeline)) {
       return;
     }
+    runConfigurationId = store.selectedConfigurationId;
     runNotice.value = null;
     // The user asked to run on every dataset, but the collection is over the
     // limit. Refuse with a clear message rather than silently running only the
@@ -205,11 +215,21 @@ export function createPipelineRunController() {
     lastRunWasBatch.value = runAsBatch;
     resetRunState(pipeline);
 
-    if (runAsBatch && store.selectedConfigurationId) {
-      await runBatch(pipeline);
-      return;
+    runInFlight = true;
+    try {
+      if (runAsBatch && store.selectedConfigurationId) {
+        await runBatch(pipeline);
+      } else {
+        await runSingle(pipeline);
+      }
+    } finally {
+      runInFlight = false;
+      // The configuration may have changed while the run was in flight.
+      clearRunIfConfigurationChanged();
     }
+  }
 
+  async function runSingle(pipeline: IPipeline) {
     try {
       await pipelinesStore.runPipeline({
         pipeline,
@@ -232,15 +252,7 @@ export function createPipelineRunController() {
             entry.errors = errors;
           }
         },
-        onStepComplete: (index, success) => {
-          if (success) {
-            setStatus(index, "success");
-          } else if (cancelledByUser.value) {
-            setStatus(index, "cancelled");
-          } else {
-            setStatus(index, "error");
-          }
-        },
+        onStepComplete: (index, status) => setStatus(index, status),
         onCancel: (cancel) => {
           cancelFn.value = cancel;
         },
@@ -263,7 +275,7 @@ export function createPipelineRunController() {
       total: collectionDatasetCount.value,
       completed: 0,
       failed: 0,
-      cancelled: 0,
+      canceled: 0,
       currentDatasetName: "Starting…",
     };
     let completed = false;
@@ -289,7 +301,8 @@ export function createPipelineRunController() {
           completed = true;
           cancelFn.value = null;
           result.value = { ...summary, failedStepIndex: null };
-          setTimeout(() => {
+          batchProgressLinger = setTimeout(() => {
+            batchProgressLinger = null;
             batchProgress.value = null;
           }, 3000);
         },
@@ -297,22 +310,41 @@ export function createPipelineRunController() {
     } finally {
       cancelFn.value = null;
       if (!completed) {
-        batchProgress.value = null;
+        clearBatchProgress();
       }
     }
   }
 
   function cancel() {
-    cancelledByUser.value = true;
     cancelFn.value?.();
   }
+
+  // The dialog stays mounted across datasets: once the configuration a
+  // finished run belongs to is no longer selected, forget the run, so the
+  // status strip does not describe a pipeline this configuration lacks. A run
+  // still in flight keeps its state (a batch run spans datasets); it is
+  // checked again when it settles.
+  function clearRunIfConfigurationChanged() {
+    if (runInFlight || runConfigurationId === store.selectedConfigurationId) {
+      return;
+    }
+    runConfigurationId = null;
+    activePipelineId.value = null;
+    activeStepIds.value = [];
+    stepStatuses.value = [];
+    stepJobIds.value = [];
+    lastRunWasBatch.value = false;
+    clearResult();
+  }
+
+  watch(() => store.selectedConfigurationId, clearRunIfConfigurationChanged);
 
   // Drop the finished-run summary (and any lingering batch progress) so the
   // status strip stops describing a run that no longer matches what's on
   // screen — e.g. when the editor opens a different pipeline than the last run.
   function clearResult() {
     result.value = null;
-    batchProgress.value = null;
+    clearBatchProgress();
     runNotice.value = null;
   }
 

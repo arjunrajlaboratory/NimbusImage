@@ -231,7 +231,7 @@ class TestColorByProperty:
         assert legend["clippedLow"] is False
         assert legend["clippedHigh"] is False
 
-    def testCustomPercentilesAreHonoured(self, admin, server):
+    def testCustomPercentilesAreHonored(self, admin, server):
         folder, _ = self._makeDatasetWithValues(
             admin, [{"propA": v} for v in range(0, 101)]
         )
@@ -277,8 +277,8 @@ class TestColorByProperty:
             assert message in resp.json["message"], extra
 
     def testCategoriesBeyondThePaletteStayDistinct(self, admin, server):
-        # A 36-cluster graph clustering (real case) cycled a 20-colour
-        # palette, so clusters 1 and 21 rendered identically. Colours must
+        # A 36-cluster graph clustering (real case) cycled a 20-color
+        # palette, so clusters 1 and 21 rendered identically. Colors must
         # stay distinct until MAX_CATEGORIES.
         folder, _ = self._makeDatasetWithValues(
             admin, [{"propA": "c%03d" % i} for i in range(45)]
@@ -345,7 +345,7 @@ class TestColorByProperty:
     def testASinglePercentileCannotInvertTheRange(self, admin, server):
         # The twin of testEmptyExplicitRangeIsA400 on the percentile pair:
         # percentileLow alone, above the default high of 99, resolved to
-        # low > high and painted every annotation the middle colour under a
+        # low > high and painted every annotation the middle color under a
         # legend whose min exceeded its max — HTTP 200, no error.
         folder, _ = self._makeDatasetWithValues(
             admin, [{"propA": v} for v in range(1000)]
@@ -365,7 +365,7 @@ class TestColorByProperty:
 
     def testZeroWidthRangeStillClampsOutliers(self, admin, server):
         # p1 == p99 on sparse data (199 zeros and one outlier). A zero-width
-        # range still has an outside: the outlier must take the top colour, not
+        # range still has an outside: the outlier must take the top color, not
         # the middle one, or the ramp contradicts the legend's clippedHigh.
         folder, ids = self._makeDatasetWithValues(
             admin, [{"propA": 0}] * 199 + [{"propA": 1000}]
@@ -499,9 +499,9 @@ class TestColorByProperty:
 
     def testDuplicatePropertyValueDocsDoNotHideAStaleColor(self, admin):
         # An annotation with two property-value documents used to land in two
-        # colour groups, which inflated the covered-id count that decides the
+        # color groups, which inflated the covered-id count that decides the
         # clearing pass can be skipped — so an annotation with no value kept
-        # its previous colour and the response still reported uncolored: 0.
+        # its previous color and the response still reported uncolored: 0.
         folder = utilities.createFolder(
             admin, "dupes", upenn_utilities.datasetMetadata
         )
@@ -532,9 +532,9 @@ class TestColorByProperty:
             str(a["_id"]): a.get("color")
             for a in Annotation().find({"datasetId": folder["_id"]})
         }
-        # The value-less annotation lost its stale colour...
+        # The value-less annotation lost its stale color...
         assert colors[str(stale["_id"])] is None
-        # ...and is reported as uncoloured.
+        # ...and is reported as uncolored.
         assert result["colored"] == 2
         assert result["uncolored"] == 1
 
@@ -800,8 +800,8 @@ class TestColorByProperty:
 
     def testAssignmentListsExactlyWhatWasWritten(self, admin, server):
         # The assignment lets a client repaint without refetching, so it must
-        # match the database exactly: same ids, same colours, and annotations
-        # with no value must be absent (their colour was cleared to null).
+        # match the database exactly: same ids, same colors, and annotations
+        # with no value must be absent (their color was cleared to null).
         folder, ids = self._makeDatasetWithValues(
             admin,
             [{"propA": "a"}, {"propA": "a"}, {"propA": "b"}, None],
@@ -848,13 +848,13 @@ class TestColorByProperty:
         )
         assertStatusOk(resp)
         # Empty (not absent): "everything was cleared", which the client
-        # applies as "null every colour".
+        # applies as "null every color".
         assert resp.json["assignment"] == []
 
-    def testAssignmentCoversEveryColouredAnnotationAtScale(
+    def testAssignmentCoversEveryColoredAnnotationAtScale(
         self, admin, server
     ):
-        # Continuous colouring quantizes into many groups; every coloured
+        # Continuous coloring quantizes into many groups; every colored
         # annotation must appear exactly once across them.
         folder, ids = self._makeDatasetWithValues(
             admin, [{"propA": v} for v in range(60)]
@@ -879,7 +879,7 @@ class TestColorByProperty:
 
     def testFullCoverageSkipsTheClearingPass(self, admin, monkeypatch):
         # The clear exists so value-less annotations fall back to their layer
-        # colour. When every annotation gets a colour it is pure waste, and an
+        # color. When every annotation gets a color it is pure waste, and an
         # expensive one: 4.8s directly plus ~4.5s of write contention on a
         # 708K dataset (80% of the request). Pin the skip so it can't
         # silently regress.
@@ -904,7 +904,7 @@ class TestColorByProperty:
 
     def testPartialCoverageStillClears(self, admin, monkeypatch):
         # The twin of the case above: one annotation has no value, so the
-        # clear must still run or it would keep a stale colour.
+        # clear must still run or it would keep a stale color.
         folder, ids = self._makeDatasetWithValues(
             admin, [{"propA": 1}, {"propA": 2}, None]
         )

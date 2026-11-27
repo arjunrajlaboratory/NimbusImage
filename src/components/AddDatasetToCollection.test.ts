@@ -10,6 +10,8 @@ const mockGetDataset = vi.fn();
 const mockIsDatasetFolder = vi.fn();
 const mockGetDatasetCompatibility = vi.fn();
 const mockAreCompatibles = vi.fn();
+const mockConfigInitialize = vi.fn();
+const mockConfigSubmit = vi.fn();
 
 vi.mock("@/store", () => ({
   default: {
@@ -77,6 +79,16 @@ vi.mock("@/views/dataset/MultiSourceConfiguration.vue", () => ({
     name: "MultiSourceConfiguration",
     template: "<div></div>",
     props: ["datasetId", "autoDatasetRoute"],
+    emits: ["generatedJson", "generationError", "log"],
+    data: () => ({
+      initialized: null,
+      initError: null,
+      generationErrorMessage: null,
+    }),
+    methods: {
+      initialize: (...args: any[]) => mockConfigInitialize(...args),
+      submit: (...args: any[]) => mockConfigSubmit(...args),
+    },
   },
 }));
 
@@ -107,14 +119,23 @@ const sampleCollection = {
   scales: {},
 } as any;
 
-function mountComponent(props = {}) {
+function mountComponent(props = {}, options: any = {}) {
   return shallowMount(AddDatasetToCollection, {
     props: {
       collection: sampleCollection,
       ...props,
     },
+    ...options,
   });
 }
+
+// Renders the upload branch's MultiSourceConfiguration (the mocked one).
+const withConfiguration = {
+  global: {
+    renderStubDefaultSlot: true,
+    stubs: { MultiSourceConfiguration: false },
+  },
+};
 
 describe("AddDatasetToCollection", () => {
   beforeEach(() => {
@@ -423,7 +444,7 @@ describe("AddDatasetToCollection", () => {
     expect(wrapper.emitted("done")).toBeTruthy();
   });
 
-  it("addDatasetConfigurationDone sets editVariables when jsonId is null", async () => {
+  it("addDatasetConfigurationFailed reveals the configuration and keeps it mounted", async () => {
     const wrapper = mountComponent();
     const vm = wrapper.vm as any;
     vm.option = {
@@ -434,10 +455,70 @@ describe("AddDatasetToCollection", () => {
       uploadedDatasetId: "ds1",
     };
 
-    await vm.addDatasetConfigurationDone(null);
+    vm.addDatasetConfigurationFailed();
 
     expect(vm.option.editVariables).toBe(true);
-    expect(vm.option.configuring).toBe(false);
+    expect(vm.option.configuring).toBe(true);
+  });
+
+  it("keeps the configuration and its error on screen after a generation failure", async () => {
+    const wrapper = mountComponent({}, withConfiguration);
+    const vm = wrapper.vm as any;
+    vm.option = {
+      type: "upload",
+      editVariables: false,
+      configuring: true,
+      configurationLogs: "",
+      uploadedDatasetId: "ds1",
+    };
+    await nextTick();
+    expect(wrapper.text()).toContain("Configuring the dataset");
+
+    const configuration = wrapper.findComponent({
+      name: "MultiSourceConfiguration",
+    });
+    // The configuration shows its own error, then reports it.
+    (configuration.vm as any).generationErrorMessage = "Transcode failed";
+    configuration.vm.$emit("generationError", "Transcode failed");
+    await nextTick();
+
+    expect(vm.option.editVariables).toBe(true);
+    expect(
+      wrapper.findComponent({ name: "MultiSourceConfiguration" }).exists(),
+    ).toBe(true);
+    expect(wrapper.text()).not.toContain("Configuring the dataset");
+    expect(mockSetSelectedDataset).not.toHaveBeenCalled();
+  });
+
+  it("reveals the configuration when reading the uploaded files fails", async () => {
+    mockConfigInitialize.mockRejectedValue(new Error("Access denied"));
+    const wrapper = mountComponent({}, withConfiguration);
+    const vm = wrapper.vm as any;
+
+    await vm.addDatasetToCollectionUploaded("ds1");
+
+    expect(mockConfigInitialize).toHaveBeenCalled();
+    expect(mockConfigSubmit).not.toHaveBeenCalled();
+    expect(vm.option.editVariables).toBe(true);
+  });
+
+  it("hides the configuring progress while the configuration shows a load error", async () => {
+    mockConfigInitialize.mockRejectedValue(new Error("Access denied"));
+    const wrapper = mountComponent({}, withConfiguration);
+    const vm = wrapper.vm as any;
+    const pending = vm.addDatasetToCollectionUploaded("ds1");
+    await nextTick();
+    // The configuration records its load error as it fails.
+    (
+      wrapper.findComponent({ name: "MultiSourceConfiguration" }).vm as any
+    ).initError = { name: "a.tif", message: "Access denied" };
+    await pending;
+    await nextTick();
+
+    expect(
+      wrapper.findComponent({ name: "MultiSourceConfiguration" }).exists(),
+    ).toBe(true);
+    expect(wrapper.text()).not.toContain("Configuring the dataset");
   });
 
   it("addDatasetToCollectionUploaded returns early when type is not upload", async () => {

@@ -292,7 +292,14 @@ import { deleteSelectedObjects } from "@/utils/deleteSelectedObjects";
 import { boundHotkey } from "@/commands/hotkeys";
 import { NoOutput } from "@/pipelines/computePipeline";
 import { logWarning } from "@/utils/log";
-import { getUnrollCells, IUnrollCell, unrollGridSize } from "@/utils/unroll";
+import {
+  getUnrollCells,
+  IUnrollCell,
+  unrollGridSize,
+  unrolledPoint,
+  unrollLayoutFor,
+} from "@/utils/unroll";
+import { cameraDeepLinkZoom } from "@/utils/cameraDeepLink";
 import {
   annotationRasterSelectorsForLayers,
   annotationRasterSelectorsSupported,
@@ -439,7 +446,7 @@ const samLoadingMessages = computed(() => {
 // so the SAM watcher fires on swap, but skips deep-walking the GeoJS tree.
 const samMapEntry = shallowRef<IMapEntry | null>(null);
 const mouseState = ref<IMouseState | null>(null);
-let synchronisationEnabled = true;
+let synchronizationEnabled = true;
 
 const blankUrl =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVQIHWNgYAAAAAMAAU9ICq8AAAAASUVORK5CYII=";
@@ -798,6 +805,9 @@ const cameraInfo = computed({
 // guarding the bump — kept as a ref purely for symmetry with the bump ref.
 const fitOnDatasetChange = ref(0);
 const lastFittedDatasetId = ref<string | null>(null);
+// The dataset the fit watcher last fitted. A camera deep link waits for it:
+// centering before the fit would be undone by it.
+let fitAppliedDatasetId: string | null = null;
 
 const overview = computed(() => store.overview);
 const dataset = computed(() => store.dataset);
@@ -867,7 +877,7 @@ const mapLayerList = computed<ILayerStackImage[][]>(() => {
 
 // One entry per map, index-aligned with mapLayerList (and so with maps): each
 // map draws its own layer group in the "unroll" layer mode, and a group can
-// cover different frames than its neighbour, so cells are derived per map from
+// cover different frames than its neighbor, so cells are derived per map from
 // the layer whose tiles that map shows.
 const unrollCellsByMap = computed<IUnrollCell[][]>(() => {
   if (!unrolling.value) {
@@ -1134,7 +1144,49 @@ function mouseLeave() {
   }
 }
 
+// The only way a shift-capture ends. "commit" hands the path to the
+// AnnotationViewer (lasso, SAM prompt, segmentation example); "cancel" only
+// clears its preview. No-op unless a capture (not a preview) is active.
+function endMouseCapture(outcome: "commit" | "cancel") {
+  const state = mouseState.value;
+  if (!state || state.isMouseMovePreviewState) {
+    return;
+  }
+  state.outcome = outcome;
+  mouseState.value = null;
+}
+
+// A release outside the maps ends the capture too. Registered in the capture
+// phase so nothing on the way (GeoJS's document handlers) can swallow it;
+// releases over a map are left to mouseUp, which also stops propagation. The
+// layout element itself is not a map: unrolled grids leave empty cells.
+function windowMouseUp(evt: MouseEvent) {
+  const layout = mapLayout.value;
+  if (
+    layout &&
+    evt.target instanceof Node &&
+    evt.target !== layout &&
+    layout.contains(evt.target)
+  ) {
+    return;
+  }
+  endMouseCapture("commit");
+}
+
+// Losing focus mid-gesture (alt-tab, a dialog) never delivers the mouseup
+function windowBlur() {
+  endMouseCapture("cancel");
+}
+
 function mouseMove(evt: MouseEvent, mapIdx: number) {
+  // Back over the map with no button down: the release was missed
+  if (
+    mouseState.value &&
+    !mouseState.value.isMouseMovePreviewState &&
+    evt.buttons === 0
+  ) {
+    endMouseCapture("cancel");
+  }
   if (!mouseState.value || mouseState.value.isMouseMovePreviewState) {
     // Create a preview mouse state
     const mapEntry = maps.value?.[mapIdx];
@@ -1168,10 +1220,10 @@ function mouseUp(evt: MouseEvent) {
     return;
   }
   evt.stopPropagation();
-  mouseState.value = null;
+  endMouseCapture("commit");
 }
 
-function synchroniseCameraFromMap(map: IGeoJSMap) {
+function synchronizeCameraFromMap(map: IGeoJSMap) {
   const size = map.size();
   // Setting camera info will apply to all maps thanks to applyCameraInfo
   cameraInfo.value = {
@@ -1193,7 +1245,7 @@ function setCenter(center: IGeoJSPosition) {
     return;
   }
   map.center(center);
-  synchroniseCameraFromMap(map);
+  synchronizeCameraFromMap(map);
 }
 
 function resetRotation() {
@@ -1213,7 +1265,7 @@ function resetView() {
     return;
   }
   map.bounds(map.maxBounds(undefined, null), null);
-  synchroniseCameraFromMap(map);
+  synchronizeCameraFromMap(map);
 }
 
 function setCorners(evt: any) {
@@ -1238,13 +1290,13 @@ function setCorners(evt: any) {
   const zoom = map.zoom() - Math.log2(Math.max(scaling.x, scaling.y));
   map.zoom(zoom);
   map.center(center, null);
-  synchroniseCameraFromMap(map);
+  synchronizeCameraFromMap(map);
 }
 
 function applyCameraInfo() {
   maps.value.forEach((mapentry) => {
     const map = mapentry.map;
-    synchronisationEnabled = false;
+    synchronizationEnabled = false;
     try {
       map.zoom(cameraInfo.value.zoom, undefined, true, true);
       map.rotation(cameraInfo.value.rotate, undefined, true);
@@ -1252,7 +1304,7 @@ function applyCameraInfo() {
     } catch (err) {
       logWarning(err);
     } finally {
-      synchronisationEnabled = true;
+      synchronizationEnabled = true;
     }
   });
 }
@@ -1365,19 +1417,19 @@ const MAX_UNROLL_LABEL_CELLS = 400;
 
 interface IUnrollLabelState {
   widgets: IGeoJSDomWidget[];
-  // Identifies the labelled grid; a change means the widgets are rebuilt.
+  // Identifies the labeled grid; a change means the widgets are rebuilt.
   signature: string;
 }
 
 const unrollLabelStates = new WeakMap<IGeoJSMap, IUnrollLabelState>();
 
-// Cell count of the last grid that went unlabelled, so the warning is logged
+// Cell count of the last grid that went unlabeled, so the warning is logged
 // once per grid rather than on every draw.
 let warnedUnrollLabelCells = 0;
 
-// The cells of one map's grid that get a label: unlabelled ones (every unrolled
+// The cells of one map's grid that get a label: unlabeled ones (every unrolled
 // dimension has a single value) and grids too dense to label are dropped.
-function labelledUnrollCells(mapIndex: number): IUnrollCell[] {
+function labeledUnrollCells(mapIndex: number): IUnrollCell[] {
   const cells = (unrollCellsByMap.value[mapIndex] ?? []).filter(
     (cell) => cell.label,
   );
@@ -1472,7 +1524,7 @@ function updateUnrollLabels() {
     if (!uiLayer) {
       return;
     }
-    const cells = labelledUnrollCells(mapIndex);
+    const cells = labeledUnrollCells(mapIndex);
     const signature = JSON.stringify([
       cells.map((cell) => [cell.index, cell.label]),
       unrollW.value,
@@ -1538,8 +1590,8 @@ function _setupMap(
   if (maps.value.length <= mllidx || needReset) {
     const map = markRaw(geojs.map(params.map));
     const synchronizationCallback = () => {
-      if (synchronisationEnabled) {
-        synchroniseCameraFromMap(map);
+      if (synchronizationEnabled) {
+        synchronizeCameraFromMap(map);
       }
     };
     map.geoOn(geojs.event.pan, synchronizationCallback);
@@ -1558,6 +1610,11 @@ function _setupMap(
       keyboardOpts.actions = newActions;
     }
     map.interactor().options(interactorOpts);
+    // A map created while the view is locked (dataset change, map reset)
+    // must start locked too, or the lock icon lies
+    if (isViewLocked.value) {
+      applyViewLock(map);
+    }
     const annotationLayer = markRaw(
       map.createLayer("annotation", {
         annotations: geojs.listAnnotations(),
@@ -2179,6 +2236,13 @@ function draw() {
   readyLayers.value = localReadyLayers;
   for (const { fullLayer, adjLayer, capturedIdx } of layerPairs) {
     const setReady = () => {
+      // GeoJS keeps a busy layer's onIdle handlers until it goes idle, past
+      // later draws. Only this draw's array may be marked: after a map reset
+      // or a layer remap, capturedIdx names another (maybe still loading)
+      // layer pair, and a removed layer going idle must not count for it.
+      if (toRaw(readyLayers.value) !== localReadyLayers) {
+        return;
+      }
       if (fullLayer.idle && adjLayer.idle) {
         readyLayers.value.splice(capturedIdx, 1, true);
       }
@@ -2188,28 +2252,29 @@ function draw() {
   }
 }
 
+function applyViewLock(map: IGeoJSMap) {
+  const interactor = map.interactor();
+
+  if (isViewLocked.value) {
+    // Store the current actions before clearing them
+    if (!defaultActions.value) {
+      defaultActions.value = interactor.options().actions;
+    }
+    // Clear all actions to disable all navigation interactions
+    interactor.options({
+      actions: [],
+    });
+  } else {
+    // Restore the default actions to reenable all navigation interactions
+    interactor.options({
+      actions: defaultActions.value,
+    });
+  }
+}
+
 function toggleViewLock() {
   isViewLocked.value = !isViewLocked.value;
-
-  maps.value.forEach((mapentry) => {
-    const interactor = mapentry.map.interactor();
-
-    if (isViewLocked.value) {
-      // Store the current actions before clearing them
-      if (!defaultActions.value) {
-        defaultActions.value = interactor.options().actions;
-      }
-      // Clear all actions to disable all navigation interactions
-      interactor.options({
-        actions: [],
-      });
-    } else {
-      // Restore the default actions to reenable all navigation interactions
-      interactor.options({
-        actions: defaultActions.value,
-      });
-    }
-  });
+  maps.value.forEach((mapentry) => applyViewLock(mapentry.map));
 }
 
 // The SAM annotation tool and the unified object-segmentation tool are both
@@ -2271,6 +2336,23 @@ watch(mouseMap, () => {
 watch(maps, () => {
   samMapEntry.value = maps.value[0] ?? null;
 });
+
+// A capture whose map entry was replaced or removed (map reset, layer mode
+// change) can never receive its mouseup through that map: cancel it
+watch(
+  () => {
+    const capturedMapEntry = mouseState.value?.mapEntry;
+    return (
+      !!capturedMapEntry &&
+      !maps.value.some((entry) => toRaw(entry) === toRaw(capturedMapEntry))
+    );
+  },
+  (mapEntryGone) => {
+    if (mapEntryGone) {
+      endMouseCapture("cancel");
+    }
+  },
+);
 
 watch([samMapEntry, layersReady, cameraInfo, selectedTool], () => {
   const toolState = selectedTool.value?.state;
@@ -2399,7 +2481,67 @@ watch(fitOnDatasetChange, () => {
     return;
   }
   map.bounds(map.maxBounds(undefined, null), null);
+  fitAppliedDatasetId = lastFittedDatasetId.value;
+  applyCameraDeepLink();
 });
+
+// Center on a `?x=&y=&zoom=` deep link (utils/cameraDeepLink.ts) once the
+// view's own dataset is drawn and fitted. Consumed on apply, so it runs once
+// per navigation: later z/time changes and redraws leave the camera alone.
+// When the link's dataset is new, the fit watcher above calls this after its
+// fit; when the dataset is unchanged (same-dataset view switch, or the query
+// changed on an open view) no fit comes, and this watcher applies it as soon
+// as loading ends.
+function applyCameraDeepLink() {
+  const link = store.pendingCameraDeepLink;
+  const map = maps.value[0]?.map;
+  if (
+    !link ||
+    !map ||
+    sync.datasetLoading ||
+    // While a view loads, store.dataset is still the outgoing dataset.
+    dataset.value?.id !== link.datasetId ||
+    fitAppliedDatasetId !== link.datasetId
+  ) {
+    return;
+  }
+  store.consumeCameraDeepLink();
+  const point = { x: link.x, y: link.y };
+  // Unrolled, the current frame is drawn in its own grid cell: aim at the
+  // point within that cell, as annotation navigation does.
+  const center = unrolling.value
+    ? unrolledPoint(
+        point,
+        { XY: store.xy, Z: store.z, Time: store.time },
+        unrollLayoutFor({
+          flags: {
+            unrollXY: store.unrollXY,
+            unrollZ: store.unrollZ,
+            unrollT: store.unrollT,
+          },
+          unrollW: unrollW.value,
+          image: dataset.value.anyImage(),
+          dataset: dataset.value,
+        }),
+      )
+    : point;
+  // Image pixel coordinates are the map's interface gcs (y down), the same
+  // space cameraInfo.center and annotation coordinates use.
+  map.zoom(
+    cameraDeepLinkZoom(link, {
+      unitsPerPixelAtZoom0: map.unitsPerPixel(0),
+      viewportWidth: map.size().width,
+      zoomRange: map.zoomRange(),
+    }),
+  );
+  map.center(center);
+  synchronizeCameraFromMap(map);
+}
+
+watch(
+  [() => store.pendingCameraDeepLink, () => sync.datasetLoading],
+  applyCameraDeepLink,
+);
 
 // ---- Lifecycle ----
 
@@ -2412,6 +2554,8 @@ onMounted(() => {
   draw();
   // Trigger mapsChanged logic
   samMapEntry.value = maps.value[0] ?? null;
+  window.addEventListener("mouseup", windowMouseUp, true);
+  window.addEventListener("blur", windowBlur);
 
   // Watch for container resizes (e.g. navigation drawer open/close)
   // and update GeoJS map sizes accordingly
@@ -2436,6 +2580,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("mouseup", windowMouseUp, true);
+  window.removeEventListener("blur", windowBlur);
   annotationStore.setVisibilitySuppressed(false);
   for (const layer of trackedAnnotationOverviewLayers) {
     cancelAnnotationOverviewLoad(layer);
@@ -2512,11 +2658,11 @@ defineExpose({
   samLoadingMessages,
   samMapEntry,
   mouseState,
-  get synchronisationEnabled() {
-    return synchronisationEnabled;
+  get synchronizationEnabled() {
+    return synchronizationEnabled;
   },
-  set synchronisationEnabled(v) {
-    synchronisationEnabled = v;
+  set synchronizationEnabled(v) {
+    synchronizationEnabled = v;
   },
   blankUrl,
   mouseDown,
@@ -2537,6 +2683,8 @@ defineExpose({
   _setTileUrls,
   _syncAnnotationOverviewLayer,
   _setAnnotationOverviewVisibility,
+  fitOnDatasetChange,
+  lastFittedDatasetId,
 });
 </script>
 

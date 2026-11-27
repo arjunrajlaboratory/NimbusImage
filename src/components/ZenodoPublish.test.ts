@@ -555,7 +555,7 @@ describe("ZenodoPublish", () => {
       .find((b) => b.textContent?.trim() === "Publish")!
       .click();
     await flushPromises();
-    // Cancelling a pending publish would orphan its error.
+    // Canceling a pending publish would orphan its error.
     const cancel = Array.from(document.body.querySelectorAll("button")).find(
       (b) => b.textContent?.trim() === "Cancel",
     )!;

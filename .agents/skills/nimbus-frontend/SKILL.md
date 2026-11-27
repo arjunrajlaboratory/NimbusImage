@@ -1,6 +1,6 @@
 ---
 name: nimbus-frontend
-description: "Use when writing or modifying Vue 3 components, Vuex store modules, TypeScript interfaces, or Vuetify 4 UI in the src/ directory. Covers: <script setup> composition API, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 4 theming (CSS Cascade Layers, light/dark mode), select slot patterns (no .raw wrapper), dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button conventions (5-role taxonomy — primary/secondary/tertiary/destructive/icon-only — with required variant and size), button loading states, @girder/components compatibility, and style guidelines."
+description: "Use when writing or modifying Vue 3 components, Vuex store modules, TypeScript interfaces, or Vuetify 4 UI in the src/ directory. Covers: <script setup> composition API, vuex-module-decorators (@Module, @Action, @Mutation), Vuetify 4 theming (CSS Cascade Layers, light/dark mode), select slot patterns (no .raw wrapper), dialog patterns, API client usage (GirderAPI.ts, AnnotationsAPI.ts), logging utilities (logWarning/logError instead of console.*), button conventions (5-role taxonomy — primary/secondary/tertiary/destructive/icon-only — with required variant and size), button loading states, state flags and in-flight tracking (loading/running/saving/dragging flags are state machines: design them before adding one), @girder/components compatibility, and style guidelines."
 ---
 
 # Nimbus Frontend Development
@@ -468,7 +468,7 @@ the new one*, which nothing catches because the component unmounts fine and the
 trailing call usually lands harmlessly.
 
 Guard it with a test that records the throttles **at construction** — the
-version that listed them by name stayed green while two uncancelled ones
+version that listed them by name stayed green while two uncanceled ones
 shipped, and a version that scanned `wrapper.vm` only moved the hand-maintained
 list to `defineExpose` (an unexposed throttle stays invisible there):
 
@@ -1053,6 +1053,198 @@ cut 708,983 to 72,925.
   read that one list; a new narrowing filter that skips it is invisible on
   all three. See `codebaseDocumentation/ACTIVE_CONSTRAINT_CUES.md`.
 
+## State flags are state machines: design them before adding one
+
+A flag that tracks "what is this doing right now" (`running`, `loading`,
+`configuring`, `isDragging`, a "pending" id, a phase string) is an implicit
+state machine. An audit of the whole UI found about 25 of them, and the
+review that followed took seven passes because each fix was written against
+one path. See `codebaseDocumentation/IMPLICIT_STATE_MACHINES.md` for the list
+and its regression checklist.
+
+The rest of this section records what went wrong. This part is what to do
+first, whenever a change adds or touches a ref, store field or module-level
+variable of that kind.
+
+### Seven questions before the first line
+
+Answer each one. Where the answer is not obvious from the type, write it in
+a comment above the state: the next change will be made by someone who reads
+only that file.
+
+1. **Is the answer already held somewhere?** A second record of the same
+   fact will disagree with the first. Read the owners table below and derive
+   from the owner (a computed over the store) instead of adding a flag.
+2. **What are the states?** Name them. Two flags that cannot both be true,
+   or one that implies another, are one state: use a single
+   `null | { phase: "dragging" | "saving", ... }` so an impossible
+   combination cannot be written and one assignment resets everything
+   (`dragState` in `AnnotationViewer.vue`). A longer flow gets one named
+   phase value, with where it failed recorded beside it and not as another
+   running state (`phase` and `failedPhase` in `NewDataset.vue`).
+3. **Who writes each transition?** List every writer, including the ones you
+   did not write: a child component's own buttons and exposed methods, a
+   `v-if` or `:key` that remounts the owner, a route change, a dataset
+   switch, a logout, a watcher, a response that arrives late.
+4. **How does each state end?** Four exits, every time: success, failure (a
+   rejection, so the reset is in `finally`), cancel, and abandonment
+   (unmount, window blur, navigation, the target going away, a release that
+   never arrives). A state with no failure or abandonment exit is the
+   spinner that never stops.
+5. **How long does it live, and who clears it?** Pick the shortest lifetime
+   that works and put the state where that lifetime is enforced:
+
+   | It must survive | Put it | It is cleared by |
+   |---|---|---|
+   | nothing beyond this component | a local ref | unmount |
+   | a remount (`:key`, `v-if`, a dialog closing, another tool selected) | a store module | you, on every exit |
+   | only the open dataset | the per-dataset store state | `setSelectedDataset` |
+   | navigation between datasets | a store map keyed by every id that scopes it (user, configuration, dataset, tool or property; see `toolRunKey` in `store/jobs.ts`) | you, plus the session check below |
+
+   Tool and property ids are shared by every dataset of a collection, so a
+   key of the tool id alone is the wrong scope. Anything kept across
+   navigation is also reached after a logout: the Logout button reloads the
+   page, but work in flight still resumes in the window before the reload.
+6. **Can two overlap?** A double-click, a second request before the first
+   answers, two components asking at once. Choose one policy and write it
+   down: **refuse** (take the lock synchronously, before the first `await`),
+   **count** (`sync.setSaving`), or **latest wins** (claim a sequence token
+   before any early return). A plain boolean is right only when overlap is
+   impossible by construction.
+7. **What does each `await` assume?** Everything read before an `await` may
+   be false after it: the dataset, the configuration, the view, the session,
+   whether the component is still mounted. Re-check it, or better, confirm
+   the effect landed. Adding an `await` to an existing function puts this
+   question to every caller: read them.
+
+### Owners that already exist
+
+Read these (a computed over the getter). Do not add a flag beside them.
+Two are private to their module, marked below: a change that needs them
+extends that module instead of keeping a second record elsewhere.
+
+| Question | Owner |
+|---|---|
+| Is a save or load in flight? What was the last error? | `sync.setSaving` / `sync.setLoading` (`store/sync.ts`); they are counts, so every `true` needs its `false` in a `finally` |
+| Is a dataset or view loading? Which dataset is on screen? | `sync.datasetLoading`; `shownDatasetId()` (`store/index.ts`), not `store.dataset`, which is the outgoing one until the load lands |
+| Is this worker tool running here? Which job? How did it end? | `jobs.isToolRunInFlight`, `jobIdForToolInDataset`, `toolJobOutcome` (`store/jobs.ts`); submit through the store actions so the run is recorded before the job exists |
+| Is this property computing? How did the last run end? | `propertyStore.getStatus(id)`; `jobs.jobIdForPropertyInDataset` |
+| Is a pipeline running? | `pipelinesStore.runningPipelineId`, and the controller from `usePipelineRun.ts` |
+| Is an "apply to all" batch running? Was it cancelled? | `runBatch` and `batchRuns.shownRun` / `anyInFlight` (`store/batchRuns.ts`); `runBatch` returns `cancelRequested` |
+| Has the login session ended since this started? | `sessionEndedSignal()` (`store/batchRuns.ts`), captured before the first `await`. For a submission answered late, `trackJob`, a file-local helper in `store/annotation.ts` and in `store/properties.ts` (private): every submit site in those files goes through it |
+| Is a route-driven change of mine still in flight? | `pendingSets` in `utils/useRouteMapper.ts` (private) |
+| Where is the upload flow? | `store.uploadWorkflow`, and `phase` / `failedPhase` in `NewDataset.vue` |
+
+### Tests that go with it
+
+- One test per transition in question 3, including the failure and the
+  abandonment exits. Hold the request with a promise the test resolves, so
+  the state in the middle can be asserted.
+- Call the entry point twice before the first call settles and assert one
+  request (or the policy from question 6).
+- Settle things in the wrong order: the older response last, the unmount
+  before the response, the logout before the answer.
+- Assert on the rendered component as well as the store. A write to a raw
+  object leaves the store correct and the spinner on.
+- Confirm each test fails without its code (mutate, run, restore), then add
+  one line per invariant to the feature's regression checklist.
+
+### The four shapes that leave the UI stuck
+
+Nearly every bug the audit found was one of these.
+
+1. **Reset after an `await` with no `try/finally`.** Set the flag, await, reset
+   on the next line: a rejection skips the reset and the spinner never stops.
+   Reset in `finally`. Check every `await` between the set and the `try`, too
+   (`progress.create` before the `try` was a repeat offender).
+2. **A boolean where overlapping requests need a count or a token.** The first
+   request to finish clears the flag for the one still running, or an older
+   response overwrites a newer one. Count in-flight requests, or claim a
+   sequence token **before any early return** and let only the newest write.
+   `sync.setSaving` / `sync.setLoading` are counts: every `true` needs its
+   `false` in a `finally`, or the indicator sticks forever.
+3. **One question, several sources.** If "is this tool running" can be read
+   from a component ref and from the jobs store, they will disagree. Derive
+   one from the other. Scope store lookups fully: tool ids are shared by every
+   dataset in a collection, so "the tool's job" must also match the dataset.
+4. **Partial reset.** One reset function, clearing everything the state uses;
+   prefer one state object (`null | {phase, ...}`) over five refs so a reset
+   cannot clear only part of it.
+
+Also: a gesture needs a **cancel** exit as well as a commit (a mouseup that
+never arrives, a blur, the target going away), and state holds reactive
+proxies, so compare a stored socket, map or layer with an event target through
+`toRaw`, never `===`.
+
+An assignment expression yields the raw right-hand side, not the store's
+proxy. `const status = state[id] ?? (state[id] = defaultStatus())` leaves
+every later `status.running = ...` invisible to the UI on the first run, so a
+spinner never clears while the store reads correct. Assign, then read back
+through the store. Check the rendered component too, not only store state.
+
+Two more, both found by review or live testing of code that already used
+sequence tokens:
+
+- Claiming a token makes the older request unable to clear the flag it set.
+  The newest claimant must leave that flag right on every exit, early returns
+  included (`if (!file) { isLoading = false; return; }`).
+- An equality skip ("the URL value equals the store's, nothing to do") reads
+  committed state. While another change is in flight, that state is about to
+  be replaced, and the skipped request is the one that should have overtaken
+  it: view S, open T, back to S within 10 ms ended on T. Give the skip a
+  "nothing of mine pending" condition (`pendingSets` in `useRouteMapper.ts`
+  tracks the mapper's own unsettled `set` calls). Scope it to the caller's
+  own requests: "anything pending anywhere" let an unrelated URL write
+  cancel a view switch started by a snapshot.
+
+More of the same kind, found by reviews of fixes that were each correct alone:
+
+- Adding a `:key` (or `v-if`) so a component's state does not carry over
+  also throws away its in-flight flags. Before remounting, move every
+  "request sent, no answer yet" flag into a store: the worker menu's
+  `localRunning` was the only record of a submission until the job was
+  tracked, so selecting another tool and coming back allowed a second run
+  (`toolRunsInFlight` in `jobs.ts`).
+- State deliberately kept across navigation (a run's status, a batch) must
+  still be dropped at logout, or keyed by user: the next account cannot read
+  the old job or hear it finish, so the lock never releases. Check every store
+  that holds such state, not only the one the finding named: the property
+  statuses were cleared one round before the tracked-job map beside them.
+  The Logout button now reloads the page (`utils/logoutRestart.ts`), which
+  discards every store at once; the per-store resets in `store.logout()`
+  cover only the time until the reload. Two things must be done before a
+  reload because it cuts async work short: await any cleanup of persisted
+  data (the AI conversation in IndexedDB), and carry anything the next page
+  load needs to know in `sessionStorage`, read once (the "follows a logout"
+  marker that keeps the login dialog closed).
+- Settling a promise to release a lock also resumes every loop awaiting it.
+  Retiring tracked jobs at logout resolved them as "not successful", and the
+  batch loops took that for a failed dataset and submitted the next one. Stop
+  the loop first (`sessionEndedSignal` in `batchRuns.ts`), then settle. Then
+  read every other waiter on that promise: a single property run raised a
+  "computation failed" toast for a job that was still running. And a reset
+  that empties a map does not cover a request still in flight, which adds
+  its entry afterwards: check the session before adding (`trackJob`).
+- A status kept across navigation is shown on whatever dataset is open when
+  the run ends. Release the lock there, but show the outcome only on the
+  dataset the run was for (`finishPropertyRun`). "The dataset open" is the
+  one being loaded, not `store.dataset`, which is the old one until the load
+  lands (`shownDatasetId` in `store/index.ts`).
+- When a parent holds a phase for a flow that a third-party child component
+  runs, list the child's own buttons: each one is a transition the parent
+  did not write. The Girder uploader's "Resume Upload" restarted the upload
+  past `submit()`, leaving the parent's failure state set (`NewDataset.vue`
+  watches the uploader's `uploading` flag).
+- "Was it cancelled?" cannot be read from a count of cancelled items: a
+  cancel that arrives after the last item ended cancels nothing. Record the
+  request itself (`cancelRequested` from `runBatch`).
+- Never assign a nullable lookup straight into the ref a child's `v-if`
+  hangs on: `path.value = await getFolder(id)` unmounted the uploader when
+  the read failed (`getFolder` returns null, it does not reject).
+- A `finally` that restores a value (a time point, a selection) restores it
+  only if the view it was captured in is still current, and "the job to
+  cancel" is the one in flight, not one a ref still remembers.
+
 ## Logging
 
 **Never use `console.log`, `console.warn`, or `console.error`** — eslint will reject them. `no-console` is an error only when `NODE_ENV=production`, which is how CI lints, so a plain local `pnpm lint:ci` won't flag them.
@@ -1210,7 +1402,7 @@ effect the code under test is checking for:
 ```ts
 function appendAnalysisPlot(id: string) { /* what the real action does */ }
 beforeEach(() => { mock.addAnalysisPlot.mockImplementation(appendAnalysisPlot); });
-// A test layering extra behaviour composes rather than replaces:
+// A test layering extra behavior composes rather than replaces:
 mock.addAnalysisPlot.mockImplementation((id) => { appendAnalysisPlot(id); ...extra... });
 ```
 

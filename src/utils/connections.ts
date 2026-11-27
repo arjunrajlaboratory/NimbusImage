@@ -112,7 +112,7 @@ export function findConnectedComponents(
  * The viewer and the connection list build their components from different
  * connection sets (the viewer filters to the displayed time window, the list to
  * the current scope), so they cannot share a component object. They CAN share a
- * key derivation — which is what makes a track the same colour in both places.
+ * key derivation — which is what makes a track the same color in both places.
  * Picking "first element of the Set" instead would depend on insertion order,
  * and the two build their sets in different orders.
  */
@@ -219,7 +219,7 @@ export function computeTrackMetrics(
   return metrics;
 }
 
-/** The colour every track is drawn in when per-track colouring is off. */
+/** The color every track is drawn in when per-track coloring is off. */
 export const TRACK_UNIFORM_COLOR = "#FFFFFF";
 
 function hslToHex(hue: number, saturation: number, lightness: number): string {
@@ -247,17 +247,17 @@ function hslToHex(hue: number, saturation: number, lightness: number): string {
  * two multipliers a thousandth away from it score among the best. Naming a
  * constant here would imply the value was derived; it was searched for.
  *
- * Two properties are held simultaneously, because optimising either alone picks a
+ * Two properties are held simultaneously, because optimizing either alone picks a
  * step that fails the other:
  *
- * 1. **Neighbouring ids must differ** — tracks created in one pass get
+ * 1. **Neighboring ids must differ** — tracks created in one pass get
  *    consecutive ids, so this is the common case. Measured as the smallest hue
- *    gap between allocation-order neighbours, over 128 batches (4 id prefixes ×
+ *    gap between allocation-order neighbors, over 128 batches (4 id prefixes ×
  *    8 start offsets × 4 sizes up to 600).
  * 2. **Small nearby groups must all differ** — the five-id case from the
  *    original bug report, measured as the smallest gap over ALL pairs.
  *
- * | step      | worst neighbour gap | five-id all-pairs |
+ * | step      | worst neighbor gap | five-id all-pairs |
  * |-----------|---------------------|-------------------|
  * | 0.1912317 |               68.8° |             68.8° |
  * | 0.3594317 |               96.1° |             62.8° |
@@ -275,7 +275,7 @@ function hslToHex(hue: number, saturation: number, lightness: number): string {
 const HUE_STEPS = [0.1912317, 0.3594317, 0.5954317] as const;
 
 /**
- * Deterministic colour for a track, keyed by `trackKey`.
+ * Deterministic color for a track, keyed by `trackKey`.
  *
  * Three properties matter, and each cost a bug to learn:
  *
@@ -285,7 +285,7 @@ const HUE_STEPS = [0.1912317, 0.3594317, 0.5954317] as const;
  *    and read as unhighlighted against the image.
  *
  * 2. Adjacent ids must not give adjacent hues. Track ids are ObjectIds
- *    allocated in one batch, so neighbouring tracks differ in the last
+ *    allocated in one batch, so neighboring tracks differ in the last
  *    character only. Invisible in synthetic fixtures; on a real dataset the
  *    first five tracks came out rgb(80,226,{162,218,215,213,211}) — five
  *    indistinguishable greens, because under `% 360` a one-character difference
@@ -307,7 +307,7 @@ const HUE_STEPS = [0.1912317, 0.3594317, 0.5954317] as const;
  * that one is stronger and its murmur finalizer is commented as existing "to
  * break sequential correlation in MongoDB ObjectIDs". The two are in direct
  * tension: the irrational step needs the sequential correlation the finalizer
- * destroys. Measured over 40 consecutive ObjectIds, smallest neighbouring-id hue
+ * destroys. Measured over 40 consecutive ObjectIds, smallest neighboring-id hue
  * gap — hashString 9.2°, hashString with a plain `% 360` 3.0°. Swapping in the
  * "better" hash makes the output worse.
  */
@@ -539,14 +539,14 @@ export function resolveTrackLabelValue(
  * value spanning two distinct dataset-wide tracks evidences a split.
  */
 export function findDuplicateTrackLabelValues(
-  labelledTracks: Iterable<{
+  labeledTracks: Iterable<{
     resolution: TTrackLabelResolution;
     datasetTrackKey: string;
   }>,
 ): Set<number | string> {
   const firstKeyByValue = new Map<number | string, string>();
   const duplicates = new Set<number | string>();
-  for (const { resolution, datasetTrackKey } of labelledTracks) {
+  for (const { resolution, datasetTrackKey } of labeledTracks) {
     if (resolution.status !== "value" && resolution.status !== "partial") {
       continue;
     }

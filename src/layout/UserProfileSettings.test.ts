@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { nextTick } from "vue";
 import { mount } from "@vue/test-utils";
 import UserProfileSettings from "./UserProfileSettings.vue";
@@ -16,10 +16,38 @@ vi.mock("@/store", () => ({
   girderUrlFromApiRoot: (apiRoot: string) => apiRoot.replace("/api/v1", ""),
 }));
 
+const mocks = vi.hoisted(() => ({
+  steps: [] as string[],
+  clearConversationAndStorage: vi.fn(),
+  restartAfterLogout: vi.fn(),
+}));
+
+vi.mock("@/store/aiPanel", () => ({
+  default: {
+    clearConversationAndStorage: () => mocks.clearConversationAndStorage(),
+  },
+}));
+
+vi.mock("@/utils/logoutRestart", () => ({
+  restartAfterLogout: () => mocks.restartAfterLogout(),
+}));
+
+vi.mock("@/utils/log", () => ({ logError: vi.fn(), logWarning: vi.fn() }));
+
+import { flushPromises } from "@vue/test-utils";
 import { routerProvider } from "@/test/helpers";
 import store from "@/store";
 
 const mockRouter = { push: vi.fn() };
+
+// Each step of a logout records itself after a tick, so the order asserted
+// is the order the steps finished in, not the order they were started in.
+function step(name: string) {
+  return async () => {
+    await Promise.resolve();
+    mocks.steps.push(name);
+  };
+}
 
 function mountComponent() {
   return mount(UserProfileSettings, {
@@ -49,11 +77,53 @@ describe("UserProfileSettings", () => {
     expect(wrapper.text()).toContain("used (no storage limit)");
   });
 
-  it("calls logout and navigates on logout button click", async () => {
-    const wrapper = mountComponent();
-    await wrapper.find(".v-btn").trigger("click");
-    await nextTick();
-    expect(store.logout).toHaveBeenCalled();
-    expect(mockRouter.push).toHaveBeenCalledWith({ name: "root" });
+  describe("logout", () => {
+    beforeEach(() => {
+      mocks.steps = [];
+      vi.mocked(store.logout).mockReset().mockImplementation(step("logout"));
+      mocks.clearConversationAndStorage
+        .mockReset()
+        .mockImplementation(step("clear conversation"));
+      mockRouter.push.mockReset().mockImplementation(step("go to root"));
+      mocks.restartAfterLogout
+        .mockReset()
+        .mockImplementation(() => mocks.steps.push("reload"));
+    });
+
+    async function clickLogout() {
+      await mountComponent().find(".v-btn").trigger("click");
+      await nextTick();
+      await flushPromises();
+    }
+
+    it("logs out, wipes the AI conversation, goes to root, then reloads", async () => {
+      await clickLogout();
+
+      expect(mocks.steps).toEqual([
+        "logout",
+        "clear conversation",
+        "go to root",
+        "reload",
+      ]);
+      expect(mockRouter.push).toHaveBeenCalledWith({ name: "root" });
+    });
+
+    it("still reloads when the AI conversation cannot be wiped", async () => {
+      mocks.clearConversationAndStorage.mockRejectedValue(
+        new Error("IndexedDB unavailable"),
+      );
+
+      await clickLogout();
+
+      expect(mocks.steps).toEqual(["logout", "go to root", "reload"]);
+    });
+
+    it("still reloads when the navigation to root fails", async () => {
+      mockRouter.push.mockRejectedValue(new Error("navigation failed"));
+
+      await clickLogout();
+
+      expect(mocks.steps).toEqual(["logout", "clear conversation", "reload"]);
+    });
   });
 });

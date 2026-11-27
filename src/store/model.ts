@@ -145,11 +145,25 @@ export interface ISamAnnotationToolState {
   // targets, bypassing Proxy). This property is updated by an onOutputUpdate
   // callback and can be safely read by Vue computeds.
   mapEntry: IMapEntry | null;
+  // Reactive mirror of nodes.input.mainPrompt.output, for the same reason.
+  prompts: TSamPrompt[];
   mouseState: {
     path: IGeoJSPoint2D[]; // In GCS coordinates
   };
   output: IGeoJSPosition[] | null;
   livePreview: IGeoJSPosition[] | null;
+  // One unresolved pipeline failure, or null: the first unresolved "load"
+  // failure if any, else the oldest unresolved failure. A failed node
+  // otherwise just leaves NoOutput, which looks exactly like "no prompts".
+  // "load" is creating the model sessions (fetch + session creation); "run"
+  // is screenshot, encode or decode. `canRetry`: nodes.retryLoad() retries it.
+  // Named `failure`, not `error`: `"error" in state` identifies
+  // IErrorToolState.
+  failure: {
+    stage: "load" | "run";
+    message: string;
+    canRetry: boolean;
+  } | null;
 }
 
 export const ObjectSegmentationToolStateSymbol: unique symbol = Symbol(
@@ -273,6 +287,10 @@ export interface IMouseState {
   target: HTMLElement;
   path: IGeoJSPosition[];
   initialMouseEvent: MouseEvent;
+  // How a capture (non-preview state) ended, set just before ImageViewer
+  // clears the state: "commit" hands the path to the consumer, "cancel"
+  // discards it. A capture cleared without an outcome is not a commit.
+  outcome?: "commit" | "cancel";
 }
 
 export const ErrorToolStateSymbol: unique symbol = Symbol("ErrorToolState");
@@ -438,7 +456,7 @@ export interface IViewConfiguration {
 export type TLayerMode = "single" | "multiple" | "unroll";
 
 /**
- * How timelapse track segments are coloured. "track" gives every connected
+ * How timelapse track segments are colored. "track" gives every connected
  * component its own hue; "uniform" draws them all in `TRACK_UNIFORM_COLOR`,
  * which is easier to read when many tracks overlap.
  */
@@ -557,7 +575,7 @@ export interface IAnnotationBrowserConfig {
   // Analysis-panel scatter plots and their gate polygons. Optional for
   // compatibility with configurations saved before analysis plots existed.
   analysisPlots?: IAnalysisPlot[];
-  // Property path labelling tracks in the Connections tab ([] = default
+  // Property path labeling tracks in the Connections tab ([] = default
   // short-id labels). Optional for compatibility with configurations saved
   // before track labels existed.
   trackLabelPath?: string[];
@@ -2478,7 +2496,7 @@ export interface IPipeline {
 export interface IPipelineRunResult {
   succeeded: number;
   failed: number;
-  cancelled: number;
+  canceled: number;
   failedStepIndex: number | null;
 }
 

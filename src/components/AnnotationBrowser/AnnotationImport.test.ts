@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mount, shallowMount } from "@vue/test-utils";
+import { flushPromises, mount, shallowMount } from "@vue/test-utils";
 
 vi.mock("@/store", () => ({
   default: {
@@ -216,5 +216,162 @@ describe("AnnotationImport", () => {
     wrapper.vm.overwriteProperties = true;
     wrapper.vm.reset();
     expect(wrapper.vm.overwriteProperties).toBe(false);
+  });
+  describe("import lifecycle", () => {
+    function loaded() {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.isJsonLoaded = true;
+      vm.annotations = [{ id: "a1" }];
+      return { wrapper, vm };
+    }
+
+    it("ignores a second submit while an import is running", async () => {
+      let finish!: () => void;
+      vi.mocked(importAnnotationsFromData).mockImplementationOnce(
+        () => new Promise<void>((resolve) => (finish = resolve)),
+      );
+      const { vm } = loaded();
+      const first = vm.submit();
+      await vm.submit();
+      expect(importAnnotationsFromData).toHaveBeenCalledTimes(1);
+      finish();
+      await first;
+    });
+
+    it("disables the Import selection button while importing", async () => {
+      let finish!: () => void;
+      vi.mocked(importAnnotationsFromData).mockImplementationOnce(
+        () => new Promise<void>((resolve) => (finish = resolve)),
+      );
+      const div = document.createElement("div");
+      document.body.appendChild(div);
+      const wrapper = mount(AnnotationImport, {
+        attachTo: div,
+        props: { open: true },
+      });
+      const vm = wrapper.vm as any;
+      vm.isJsonLoaded = true;
+      await nextTick();
+      const button = () =>
+        Array.from(document.body.querySelectorAll("button")).find((b) =>
+          b.textContent?.includes("Import selection"),
+        ) as HTMLButtonElement;
+      expect(button().disabled).toBe(false);
+      const pending = vm.submit();
+      await nextTick();
+      expect(button().disabled).toBe(true);
+      // Left pending: a successful import closes the dialog, and Vuetify's
+      // close transition throws once the test tears the DOM down.
+      void finish;
+      void pending;
+    });
+
+    it("shows an import failure in the dialog", async () => {
+      vi.mocked(importAnnotationsFromData).mockRejectedValueOnce(
+        new Error("Server said no"),
+      );
+      const { vm } = loaded();
+      await vm.submit();
+      expect(vm.importError).toBe("Server said no");
+      expect(vm.isImporting).toBe(false);
+      // The dialog keeps its loaded file so the user can retry.
+      expect(vm.isJsonLoaded).toBe(true);
+    });
+
+    it("resets the overwrite choices when the dialog closes", async () => {
+      const wrapper = shallowMount(AnnotationImport, { props: { open: true } });
+      const vm = wrapper.vm as any;
+      vm.isJsonLoaded = true;
+      vm.overwriteAnnotations = true;
+      vm.overwriteProperties = true;
+      vm.importError = "old failure";
+      await wrapper.setProps({ open: false });
+      await nextTick();
+      expect(vm.overwriteAnnotations).toBe(false);
+      expect(vm.overwriteProperties).toBe(false);
+      expect(vm.isJsonLoaded).toBe(false);
+      expect(vm.importError).toBe("");
+      wrapper.unmount();
+    });
+
+    it("keeps the in-progress state when the dialog closes mid-import", async () => {
+      let finish!: () => void;
+      vi.mocked(importAnnotationsFromData).mockImplementationOnce(
+        () => new Promise<void>((resolve) => (finish = resolve)),
+      );
+      const wrapper = shallowMount(AnnotationImport, { props: { open: true } });
+      const vm = wrapper.vm as any;
+      vm.isJsonLoaded = true;
+      const pending = vm.submit();
+      await wrapper.setProps({ open: false });
+      await nextTick();
+      expect(vm.isImporting).toBe(true);
+      await vm.submit();
+      expect(importAnnotationsFromData).toHaveBeenCalledTimes(1);
+      finish();
+      await pending;
+      wrapper.unmount();
+    });
+
+    it("keeps the latest file when an earlier file's read finishes last", async () => {
+      const reads: Array<(text: string) => void> = [];
+      const fakeFile = () =>
+        ({
+          text: () => new Promise<string>((resolve) => reads.push(resolve)),
+        }) as unknown as File;
+      const json = (id: string) =>
+        JSON.stringify({
+          annotations: [{ id }],
+          annotationConnections: [],
+          annotationProperties: [],
+          annotationPropertyValues: {},
+        });
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.jsonFile = fakeFile();
+      await nextTick();
+      vm.jsonFile = fakeFile();
+      await nextTick();
+      expect(reads).toHaveLength(2);
+      reads[1](json("newer"));
+      await flushPromises();
+      reads[0](json("older"));
+      await flushPromises();
+      expect(vm.annotations).toEqual([{ id: "newer" }]);
+      expect(vm.isJsonLoaded).toBe(true);
+    });
+
+    it("stops the file spinner when the picked file is not valid JSON", async () => {
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.jsonFile = {
+        text: () => Promise.resolve("{ not json"),
+      } as unknown as File;
+      await nextTick();
+      expect(vm.isLoadingFile).toBe(true);
+      await flushPromises();
+      expect(vm.jsonFile).toBeNull();
+      expect(vm.isLoadingFile).toBe(false);
+      expect(vm.isJsonLoaded).toBe(false);
+    });
+
+    it("stops the file spinner when the file is cleared mid-read", async () => {
+      let finishRead!: (text: string) => void;
+      const wrapper = mountComponent();
+      const vm = wrapper.vm as any;
+      vm.jsonFile = {
+        text: () => new Promise<string>((resolve) => (finishRead = resolve)),
+      } as unknown as File;
+      await nextTick();
+      expect(vm.isLoadingFile).toBe(true);
+      vm.jsonFile = null;
+      await nextTick();
+      expect(vm.isLoadingFile).toBe(false);
+      finishRead("{}");
+      await flushPromises();
+      expect(vm.isLoadingFile).toBe(false);
+      expect(vm.isJsonLoaded).toBe(false);
+    });
   });
 });

@@ -873,7 +873,7 @@ export class Filters extends VuexModule {
     );
     if (resolutionPlots.length === 0 && paths.length === 0) {
       // Nothing to fetch or resolve: don't even look at the population, so a
-      // dataset nobody is analysing never pays for any of this.
+      // dataset nobody is analyzing never pays for any of this.
       return "idle";
     }
     const base = this.analysisPopulation;
@@ -1287,6 +1287,11 @@ export class Filters extends VuexModule {
         // left — it used to return without clearing, leaving "gates could not
         // be applied" up while the retained gates were visibly filtering.
         this.setAnalysisGateError(null);
+      }
+      if (this.analysisLoading) {
+        // This refresh holds the newest token, so it owns the loading flag: a
+        // request it superseded left the flag set for it to clear.
+        this.setAnalysisLoading(false);
       }
       return;
     }

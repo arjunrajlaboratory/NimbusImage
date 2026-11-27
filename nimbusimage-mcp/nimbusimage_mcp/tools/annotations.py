@@ -13,6 +13,7 @@ from nimbusimage_mcp._common import (
     clamp,
     client,
     instrumented,
+    sending_once,
 )
 
 Shape = Literal["point", "polygon", "line", "rectangle"]
@@ -209,7 +210,8 @@ def ni_annotations_tag(
             "annotation_ids (tagging a whole dataset needs an explicit "
             "query)."
         )
-    annotations = client().dataset(dataset_id).annotations
+    nc = client()
+    annotations = nc.dataset(dataset_id).annotations
     if annotation_ids:
         if len(annotation_ids) > MAX_TAG_ANNOTATIONS:
             raise ToolError(
@@ -237,7 +239,8 @@ def ni_annotations_tag(
         if set(new_tags) != set(annotation.tags):
             updates.append((annotation.id, {"tags": new_tags}))
     if updates:
-        annotations.update_many(updates)
+        with sending_once(nc, "tag change", "Count the tagged annotations"):
+            annotations.update_many(updates)
     return {
         "matched": len(matched),
         "changed": len(updates),

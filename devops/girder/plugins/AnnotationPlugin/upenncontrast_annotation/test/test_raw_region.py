@@ -22,7 +22,7 @@ WIDTH, HEIGHT = 64, 48
 
 
 def _sixteenBitPlane():
-    # Values above 255 that differ by less than 256 between neighbours: an
+    # Values above 255 that differ by less than 256 between neighbors: an
     # 8-bit conversion (floor-divide by 256) would collapse them
     return (
         np.arange(WIDTH * HEIGHT, dtype=np.uint16).reshape(HEIGHT, WIDTH)
@@ -111,7 +111,7 @@ class TestRawRegion:
         image = tifffile.imread(io.BytesIO(_bodyBytes(resp)))
         assert image.dtype == np.uint16
         assert image.shape == (12, 16)
-        # Nearest-neighbour sampling keeps source values, not averages
+        # Nearest-neighbor sampling keeps source values, not averages
         assert np.isin(image, _sixteenBitPlane()).all()
 
     def testDownsampledMultibandKeepsSourceSamples(

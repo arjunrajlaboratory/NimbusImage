@@ -474,8 +474,124 @@ export function simplifyCoordinates(
   return geojs.util.rdpLineSimplify(coords, tolerance, true);
 }
 
+export type TSamToolFailure = NonNullable<ISamAnnotationToolState["failure"]>;
+
+interface ISamFailureKey {
+  // Re-runs the failed node; set only where that is cheap and safe
+  retry?: () => void;
+}
+
+/**
+ * Records which pipeline nodes are currently failed, so the tool state can
+ * show the failure instead of an empty result. A ComputeNode that throws only
+ * logs and leaves NoOutput, which is indistinguishable from "no prompts".
+ * A node's failure is cleared when it starts a new computation (its inputs
+ * changed, so the failed attempt no longer applies), when it succeeds, or
+ * when it settles with its inputs gone (e.g. the prompts were reset while it
+ * ran, so the failed attempt was for prompts that no longer exist).
+ *
+ * Exported for tests.
+ */
+export function createSamFailureTracker() {
+  const failures = new Map<ISamFailureKey, TSamToolFailure>();
+  let listener: (failure: TSamToolFailure | null) => void = () => {};
+
+  // Load failures first: they block everything and are the retryable ones
+  const publish = () => {
+    let current: TSamToolFailure | null = null;
+    for (const failure of failures.values()) {
+      if (failure.stage === "load") {
+        current = failure;
+        break;
+      }
+      current ??= failure;
+    }
+    listener(current);
+  };
+
+  const clear = (key: ISamFailureKey) => {
+    if (failures.delete(key)) {
+      publish();
+    }
+  };
+
+  /**
+   * createComputeNode, with the node's rejections recorded as failures. The
+   * error is re-thrown so ComputeNode still logs it and outputs NoOutput.
+   */
+  function trackedNode<T extends any[], U>(
+    stage: TSamToolFailure["stage"],
+    fun: (...args: T) => U,
+    parents: Parameters<typeof createComputeNode<T, U>>[1],
+    key: ISamFailureKey = {},
+  ) {
+    const wrapped = async (...args: T): Promise<Awaited<U>> => {
+      try {
+        const result = await fun(...args);
+        clear(key);
+        return result;
+      } catch (error) {
+        failures.set(key, {
+          stage,
+          message: error instanceof Error ? error.message : String(error),
+          canRetry: !!key.retry,
+        });
+        publish();
+        throw error;
+      }
+    };
+    // ComputeNode logs a failure under the function's name
+    Object.defineProperty(wrapped, "name", { value: fun.name });
+    const node = createComputeNode(wrapped, parents);
+    node.onOutputUpdate(() => {
+      // A node whose inputs went away while it awaited settles without
+      // calling the function again: nothing else would clear the failure.
+      if (node.isComputing || !node.areAllParametersReady()) {
+        clear(key);
+      }
+    });
+    return node;
+  }
+
+  /**
+   * A session node, with an extra input that retry re-sets to recompute this
+   * node alone: re-setting the model would also rebuild the sessions that
+   * loaded and re-run the encoding that depends on them. Failed sessions are
+   * not cached (createOnnxInferenceSession), so a retry fetches again.
+   */
+  function sessionNode(
+    createSession: (model: TSamModel) => Promise<InferenceSession>,
+    modelNameNode: ManualInputNode<TSamModel>,
+  ) {
+    const attemptNode = new ManualInputNode<true>(true);
+    return trackedNode(
+      "load",
+      // The second parameter is the attempt input, used only as a trigger
+      (...[model]: [TSamModel, true]) => createSession(model),
+      [modelNameNode, attemptNode],
+      { retry: () => attemptNode.setValue(true) },
+    );
+  }
+
+  return {
+    trackedNode,
+    sessionNode,
+    setListener(newListener: (failure: TSamToolFailure | null) => void) {
+      listener = newListener;
+    },
+    retryLoad() {
+      for (const key of [...failures.keys()]) {
+        key.retry?.();
+      }
+    },
+  };
+}
+
+type TSamFailureTracker = ReturnType<typeof createSamFailureTracker>;
+
 function createSamPipelineEncoderNodes(
   modelNameNode: ManualInputNode<TSamModel>,
+  tracker: TSamFailureTracker,
 ) {
   // The map that need to be screenshot and that we use for coordinate conversions
   // It is set by the user
@@ -489,22 +605,27 @@ function createSamPipelineEncoderNodes(
   );
 
   // The context is used as a cache for canvas, 2D context, tensors...
-  const contextNode = createComputeNode(createEncoderContext, [modelNameNode]);
+  // A failure here is a setup failure that retrying will not fix.
+  const contextNode = tracker.trackedNode("load", createEncoderContext, [
+    modelNameNode,
+  ]);
 
   // The session node is an input that contains the model
-  const sessionNode = createComputeNode(createEncoderSession, [modelNameNode]);
+  const sessionNode = tracker.sessionNode(createEncoderSession, modelNameNode);
 
   // Take a screenshot of the map
-  const screenshotNode = createComputeNode(screenshot, [geoJsMapInputNode]);
+  const screenshotNode = tracker.trackedNode("run", screenshot, [
+    geoJsMapInputNode,
+  ]);
 
   // Preprocess the image: resize, normalize and convert to tensor
-  const preprocessNode = createComputeNode(processCanvas, [
+  const preprocessNode = tracker.trackedNode("run", processCanvas, [
     screenshotNode,
     contextNode,
   ]);
 
   // Do the encoding
-  const inferenceNode = createComputeNode(runEncoder, [
+  const inferenceNode = tracker.trackedNode("run", runEncoder, [
     sessionNode,
     preprocessNode,
   ]);
@@ -524,6 +645,7 @@ function createSamPipelineDecoderNodes(
   modelNameNode: ManualInputNode<TSamModel>,
   simplificationToleranceNode: ManualInputNode<number>,
   encoderNodes: ReturnType<typeof createSamPipelineEncoderNodes>,
+  tracker: TSamFailureTracker,
   promptAsyncOptions?: TManualInputNodeAsyncOptions,
 ) {
   // Input for the prompt
@@ -537,10 +659,10 @@ function createSamPipelineDecoderNodes(
   const contextNode = new ManualInputNode(createDecoderContext());
 
   // The session node is an input that contains the model
-  const sessionNode = createComputeNode(createDecoderSession, [modelNameNode]);
+  const sessionNode = tracker.sessionNode(createDecoderSession, modelNameNode);
 
   // Preprocess the prompt to match SAM API
-  const processPromptNode = createComputeNode(processPrompt, [
+  const processPromptNode = tracker.trackedNode("run", processPrompt, [
     promptInputNode,
     encoderNodes.preprocessNode,
     contextNode,
@@ -548,37 +670,39 @@ function createSamPipelineDecoderNodes(
   ]);
 
   // Run the inference
-  const inferenceNode = createComputeNode(runDecoder, [
+  const inferenceNode = tracker.trackedNode("run", runDecoder, [
     sessionNode,
     processPromptNode,
     encoderNodes.inferenceNode,
   ]);
 
   // Convert the mask into a polygon
-  const maskToPolygonNode = createComputeNode(runItkPipeline, [inferenceNode]);
+  const maskToPolygonNode = tracker.trackedNode("run", runItkPipeline, [
+    inferenceNode,
+  ]);
 
   // SAM1 masks are already in display coordinates (via orig_im_size),
   // SAM2 masks need rescaling from fixed mask space to display space.
   let simplificationNode: ComputeNode<any, any>;
   if (isSam2Model(model)) {
-    const rescaleNode = createComputeNode(rescaleMaskToDisplayCoords, [
+    const rescaleNode = tracker.trackedNode("run", rescaleMaskToDisplayCoords, [
       maskToPolygonNode,
       encoderNodes.preprocessNode,
       inferenceNode,
     ]);
-    simplificationNode = createComputeNode(simplifyCoordinates, [
+    simplificationNode = tracker.trackedNode("run", simplifyCoordinates, [
       rescaleNode,
       simplificationToleranceNode,
     ]);
   } else {
-    simplificationNode = createComputeNode(simplifyCoordinates, [
+    simplificationNode = tracker.trackedNode("run", simplifyCoordinates, [
       maskToPolygonNode,
       simplificationToleranceNode,
     ]);
   }
 
   // Convert coordinates from display to world
-  const coordinatesConversionNode = createComputeNode(displayToWorld, [
+  const coordinatesConversionNode = tracker.trackedNode("run", displayToWorld, [
     simplificationNode,
     encoderNodes.geoJsMapInputNode,
   ]);
@@ -603,18 +727,24 @@ function createSamPipeline(model: TSamModel) {
   // Create the pipeline
   const modelNameNode = new ManualInputNode(model);
   const simplificationToleranceNode = new ManualInputNode(0);
-  const encoderNodes = createSamPipelineEncoderNodes(modelNameNode);
+  const failureTracker = createSamFailureTracker();
+  const encoderNodes = createSamPipelineEncoderNodes(
+    modelNameNode,
+    failureTracker,
+  );
   const decoderNodes = createSamPipelineDecoderNodes(
     model,
     modelNameNode,
     simplificationToleranceNode,
     encoderNodes,
+    failureTracker,
   );
   const previewNodes = createSamPipelineDecoderNodes(
     model,
     modelNameNode,
     simplificationToleranceNode,
     encoderNodes,
+    failureTracker,
     {
       type: "debounce",
       wait: 100,
@@ -640,6 +770,11 @@ function createSamPipeline(model: TSamModel) {
       mainOuput: decoderNodes.coordinatesConversionNode,
       previewOuput: previewNodes.coordinatesConversionNode,
     },
+    // Reports failures to the tool state (state.failure)
+    onFailureChange: failureTracker.setListener,
+    // Retry the model sessions that failed to load. Cheap: only failed
+    // sessions are re-created, the loaded ones stay.
+    retryLoad: failureTracker.retryLoad,
   };
 }
 
@@ -672,12 +807,19 @@ export function createSamToolStateFromToolConfiguration(
     nodes,
     loadingMessages: [] as string[],
     mapEntry: null as ISamAnnotationToolState["mapEntry"],
+    prompts: [] as TSamPrompt[],
     mouseState: {
       path: [] as IGeoJSPosition[],
     },
     output: null as ISamAnnotationToolState["output"],
     livePreview: null as ISamAnnotationToolState["livePreview"],
+    failure: null as ISamAnnotationToolState["failure"],
   }) as unknown as ISamAnnotationToolState;
+
+  // Make a failed load or run visible. A new tool state starts with none.
+  nodes.onFailureChange((failure) => {
+    state.failure = failure;
+  });
 
   // Add a callback to update the loading message when computing
   // Do this only for nodes that take a long time to compute
@@ -708,6 +850,16 @@ export function createSamToolStateFromToolConfiguration(
   geoJSMapNode.onOutputUpdate(() => {
     const mapOutput = geoJSMapNode.output;
     state.mapEntry = !mapOutput || mapOutput === NoOutput ? null : mapOutput;
+  });
+
+  // Mirror the main prompt list the same way, so prompt counts, prompt
+  // markers and previews follow it. A fresh markRaw'd copy per update: the
+  // key reassignment is what triggers, and callers that edit the list (undo,
+  // redo) never mutate the node's own array or hand it a reactive proxy.
+  const mainPromptNode = nodes.input.mainPrompt;
+  mainPromptNode.onOutputUpdate(() => {
+    const promptOutput = mainPromptNode.output;
+    state.prompts = markRaw(promptOutput === NoOutput ? [] : [...promptOutput]);
   });
 
   // Main output is reactive

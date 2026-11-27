@@ -17,7 +17,7 @@ export interface IDebouncedAbortableTask<T> {
 }
 
 /**
- * True when an error is an aborted/cancelled request rather than a real
+ * True when an error is an aborted/canceled request rather than a real
  * failure. Covers axios's CanceledError (name/code) and the native
  * AbortController's DOMException AbortError, so callers can swallow it silently
  * instead of logging a spurious error.

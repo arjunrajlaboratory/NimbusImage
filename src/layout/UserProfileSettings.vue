@@ -28,14 +28,32 @@ import { useRouter } from "vue-router";
 import store, { girderUrlFromApiRoot } from "@/store";
 import StorageUsageSection from "@/components/StorageUsageSection.vue";
 import ConnectedAppsSection from "@/components/ConnectedAppsSection.vue";
+import aiPanelStore from "@/store/aiPanel";
+import { restartAfterLogout } from "@/utils/logoutRestart";
+import { logError } from "@/utils/log";
 
 // Whether the menu holding these settings is open.
 defineProps<{ visible: boolean }>();
 
 const router = useRouter();
 
+// Logout ends in a page reload (see logoutRestart.ts), so nothing the
+// previous account left in memory reaches the next one.
 async function logout() {
   await store.logout();
-  router.push({ name: "root" });
+  // The reload would cut short the wipe that the logged-in-user watcher in
+  // App.vue starts, and the same account logging back in would get its
+  // conversation back.
+  try {
+    await aiPanelStore.clearConversationAndStorage();
+  } catch (error) {
+    logError("Could not clear the stored AI conversation:", error);
+  }
+  try {
+    await router.push({ name: "root" });
+  } catch (error) {
+    logError("Could not go to the home page after logout:", error);
+  }
+  restartAfterLogout();
 }
 </script>

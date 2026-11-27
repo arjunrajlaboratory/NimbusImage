@@ -237,7 +237,7 @@ describe("compositingCheck", () => {
     expect(result.error).toContain('"tile_2.nd2" (XY 3)');
   });
 
-  it("does not call heavily overlapping neighbours duplicates", () => {
+  it("does not call heavily overlapping neighbors duplicates", () => {
     expect(
       check([
         [0, 0],

@@ -725,7 +725,7 @@ def _build_zenodo_metadata(project):
         creators = [{'name': 'Unknown'}]
 
     # Map license to Zenodo format.  Fall back to
-    # cc-by-4.0 for unrecognised values.
+    # cc-by-4.0 for unrecognized values.
     license_map = {
         "CC-BY-4.0": "cc-by-4.0",
         "CC-BY-SA-4.0": "cc-by-sa-4.0",

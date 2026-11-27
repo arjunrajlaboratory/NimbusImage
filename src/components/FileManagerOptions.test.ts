@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { nextTick } from "vue";
-import { shallowMount } from "@vue/test-utils";
+import { flushPromises, shallowMount } from "@vue/test-utils";
 
 const mockMoveItems = vi.fn();
 const mockRenameItem = vi.fn();
@@ -256,5 +256,43 @@ describe("FileManagerOptions", () => {
     wrapper.setProps({ items: [makeItem({ name: "Updated" })] });
     await nextTick();
     expect(vm.newName).toBe("Updated");
+  });
+
+  it("dismissing the assetstore confirmation cancels it, and the next one opens", async () => {
+    // Render the list's content, so the dialog stubs are in the tree
+    const wrapper = shallowMount(FileManagerOptions, {
+      props: { items: [makeItem()] },
+      global: {
+        stubs: {
+          VList: { template: "<div><slot /></div>" },
+          GirderLocationChooser: true,
+          AddToProjectDialog: true,
+        },
+      },
+    });
+    const vm = wrapper.vm as any;
+    const confirmDialog = () =>
+      wrapper
+        .findAllComponents({ name: "VDialog" })
+        .find((dialog) => dialog.props("modelValue") === true);
+
+    vm.moveFolderToAssetstore("item1", "as2");
+    await nextTick();
+    const dialog = confirmDialog();
+    expect(dialog).toBeDefined();
+
+    // Escape or a click outside the dialog
+    dialog!.vm.$emit("update:modelValue", false);
+    await flushPromises();
+    expect(vm.moveFolderToAssetstorResolve).toBeNull();
+    expect(mockMoveFolderToAssetstore).not.toHaveBeenCalled();
+    expect(wrapper.emitted("closeMenu")).toBeTruthy();
+    expect(confirmDialog()).toBeUndefined();
+
+    vm.moveFolderToAssetstore("item1", "as1");
+    await nextTick();
+    expect(confirmDialog()).toBeDefined();
+    confirmDialog()!.vm.$emit("update:modelValue", false);
+    await flushPromises();
   });
 });

@@ -10,7 +10,7 @@ openable in the web UI exactly like one made through it.
 
 Only the *fresh* case is ported -- layers built from an empty list, in
 channel order -- which is the only case this endpoint has. That collapses
-``newLayer``'s "next unused channel / next unused colour" searches into an
+``newLayer``'s "next unused channel / next unused color" searches into an
 index walk; ``test_default_configuration.py`` pins the equivalence.
 
 Like the other helpers here, everything is a pure function over plain
@@ -151,7 +151,7 @@ def resolve_channel_colors(user_colors=None):
     """Port of ``getChannelColors``: defaults with the user's overrides on
     top. The frontend threads the configuring user's saved palette through
     ``createConfigurationFromDataset`` into ``newLayer``, so an
-    API-created collection has to honour it or it silently differs from a
+    API-created collection has to honor it or it silently differs from a
     UI-created one."""
     return {**CHANNEL_COLORS, **(user_colors or {})}
 

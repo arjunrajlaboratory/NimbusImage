@@ -272,6 +272,79 @@ describe("AI panel forced clear (finding P2-D)", () => {
     expect(aiPanel.running).toBe(false);
     expect(aiPanel.pendingApprovalIndex).toBeNull();
   });
+
+  it("does not push a later tool's card into the conversation that replaced it", async () => {
+    await aiPanel.handleAuthenticatedUserChange("userA");
+    postAgentMessage.mockResolvedValueOnce({
+      content: [
+        { type: "tool_use", id: "tu1", name: "set_location", input: {} },
+        { type: "tool_use", id: "tu2", name: "color_annotations", input: {} },
+      ],
+      stop_reason: "tool_use",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    });
+    let resolveTool: (value: any) => void = () => {};
+    mockExecuteAgentTool.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveTool = resolve;
+      }),
+    );
+    const turn = aiPanel.sendUserMessage("move, then color");
+    await waitFor(() => mockExecuteAgentTool.mock.calls.length > 0);
+
+    aiPanel.clearConversation(true);
+    resolveTool({ result: { ok: true } });
+    await turn;
+
+    expect(mockExecuteAgentTool).toHaveBeenCalledTimes(1);
+    expect(aiPanel.items).toEqual([]);
+  });
+
+  it("reports an identity change to an in-flight tool after a forced clear", async () => {
+    // The clear nulls turnSnapshot; a tool that re-checks identity before it
+    // acts (run_worker) must not read that as "unchanged".
+    await aiPanel.handleAuthenticatedUserChange("userA");
+    postAgentMessage.mockResolvedValueOnce(toolUseResponse("run_worker"));
+    let context: any;
+    let resolveTool: (value: any) => void = () => {};
+    mockExecuteAgentTool.mockImplementationOnce(
+      (_name: string, _input: any, ctx: any) => {
+        context = ctx;
+        return new Promise((resolve) => {
+          resolveTool = resolve;
+        });
+      },
+    );
+    const turn = aiPanel.sendUserMessage("run the worker");
+    await waitFor(() => context !== undefined);
+    const beforeClear = context.hasViewIdentityChanged();
+
+    aiPanel.clearConversation(true);
+    const afterClear = context.hasViewIdentityChanged();
+    // Settle the turn before asserting so a failure can't leave it running.
+    resolveTool({ result: { ok: true } });
+    await turn;
+    expect(beforeClear).toBe(false);
+    expect(afterClear).toBe(true);
+  });
+
+  it("does not run a gated tool approved just before a forced clear", async () => {
+    await aiPanel.handleAuthenticatedUserChange("userA");
+    mockIsGatedTool.mockReturnValue(true);
+    aiPanel.setAutoApprove(false);
+    postAgentMessage.mockResolvedValueOnce(toolUseResponse("run_worker"));
+
+    const turn = aiPanel.sendUserMessage("run the worker");
+    await waitFor(() => aiPanel.pendingApprovalIndex !== null);
+    // Approval and clear in the same tick: the approval wins the resolver,
+    // so the loop resumes with approved === true after the clear.
+    aiPanel.approvePendingTool(true);
+    aiPanel.clearConversation(true);
+    await turn;
+
+    expect(mockExecuteAgentTool).not.toHaveBeenCalled();
+    expect(aiPanel.items).toEqual([]);
+  });
 });
 
 // wait_for_job deliberately blocks for minutes, so Stop (and a forced clear)
@@ -450,6 +523,9 @@ describe("AI panel persistence", () => {
     );
 
     const change = aiPanel.handleAuthenticatedUserChange("userA");
+    // Exposed as state so the panel can refuse the send without clearing the
+    // typed message.
+    expect(aiPanel.hydrating).toBe(true);
     // A send while the stored conversation is still loading must be a no-op,
     // so it can't be clobbered when that history lands.
     await aiPanel.sendUserMessage("typed too early");
@@ -458,6 +534,7 @@ describe("AI panel persistence", () => {
     // Once hydration settles, sending works again.
     resolveLoad(null);
     await change;
+    expect(aiPanel.hydrating).toBe(false);
     await aiPanel.sendUserMessage("now it works");
     expect(postAgentMessage).toHaveBeenCalled();
     expect(lastSentPayload()).toContain("now it works");
