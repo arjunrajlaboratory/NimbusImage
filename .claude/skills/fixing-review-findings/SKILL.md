@@ -348,14 +348,14 @@ The eyes-reaction transition is the most useful signal: while 👀 is on the tri
 
 **Run the blast-radius sweep here, per fix, before the automated gates** — it
 is the one check that catches nothing on its own and everything on the next
-round. For each behavioural change in the diff, write the sentence *"X used to
+round. For each behavioral change in the diff, write the sentence *"X used to
 be true; now Y is"*, then grep for the five surfaces above (code paths and
 guards, tests, user-facing strings, doc prose, comments). Two greps that pay
 for themselves every time:
 
 ```bash
-# Prose and strings that may still describe the old behaviour.
-git diff <base>...HEAD --stat -- '*.md'      # docs you changed behaviour under
+# Prose and strings that may still describe the old behavior.
+git diff <base>...HEAD --stat -- '*.md'      # docs you changed behavior under
 grep -rn "<phrase from the old invariant>" src/ codebaseDocumentation/
 ```
 

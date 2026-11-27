@@ -107,7 +107,7 @@ export function createErrorEventCallback(errorObject: IErrorInfoList) {
 }
 
 const FINISHED_JOB_STATUSES: number[] = [
-  jobStates.cancelled,
+  jobStates.canceled,
   jobStates.success,
   jobStates.error,
 ];
@@ -454,7 +454,7 @@ export class Jobs extends VuexModule {
     if (!success) {
       logError(
         `Compute job with id ${jobId} ${
-          status === jobStates.cancelled ? "cancelled" : "failed"
+          status === jobStates.canceled ? "canceled" : "failed"
         }`,
       );
       if (status === jobStates.error) {

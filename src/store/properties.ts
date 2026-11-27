@@ -1212,7 +1212,7 @@ export class Properties extends VuexModule {
       total: number;
       completed: number;
       failed: number;
-      cancelled: number;
+      canceled: number;
       currentDatasetName: string;
     }) => void;
     // Called immediately with the cancel function so the caller can wire up
@@ -1222,13 +1222,13 @@ export class Properties extends VuexModule {
     onComplete: (results: {
       succeeded: number;
       failed: number;
-      cancelled: number;
+      canceled: number;
     }) => void;
   }): Promise<boolean> {
     const propertyId = property.id;
     const scales = main.scales;
     const submittedJobIds: string[] = [];
-    let isCancelled = false;
+    let isCanceled = false;
     const sessionEnded = sessionEndedSignal();
 
     // Refuse while the property runs anywhere (a single run or another
@@ -1248,7 +1248,7 @@ export class Properties extends VuexModule {
 
     // Create the cancel function and notify the caller immediately
     const cancel = () => {
-      isCancelled = true;
+      isCanceled = true;
       for (const jobId of submittedJobIds) {
         main.api.cancelJob(jobId);
       }
@@ -1278,7 +1278,7 @@ export class Properties extends VuexModule {
 
       if (total === 0) {
         previousRun = null;
-        onComplete({ succeeded: 0, failed: 0, cancelled: 0 });
+        onComplete({ succeeded: 0, failed: 0, canceled: 0 });
         return true;
       }
 
@@ -1304,16 +1304,16 @@ export class Properties extends VuexModule {
 
       let completed = 0;
       let failed = 0;
-      let cancelled = 0;
+      let canceled = 0;
 
       for (const datasetId of datasetIds) {
-        if (isCancelled || sessionEnded()) {
-          cancelled++;
+        if (isCanceled || sessionEnded()) {
+          canceled++;
           onBatchProgress({
             total,
             completed,
             failed,
-            cancelled,
+            canceled,
             currentDatasetName: datasetNames[datasetId],
           });
           continue;
@@ -1324,7 +1324,7 @@ export class Properties extends VuexModule {
           total,
           completed,
           failed,
-          cancelled,
+          canceled,
           currentDatasetName: datasetName,
         });
 
@@ -1365,8 +1365,8 @@ export class Properties extends VuexModule {
 
             const success = await trackJob(computeJob, sessionEnded);
 
-            if (isCancelled || sessionEnded()) {
-              cancelled++;
+            if (isCanceled || sessionEnded()) {
+              canceled++;
             } else if (success) {
               completed++;
             } else {
@@ -1385,14 +1385,14 @@ export class Properties extends VuexModule {
         // Update batch progress
         progress.update({
           id: batchProgressId,
-          progress: completed + failed + cancelled,
+          progress: completed + failed + canceled,
           total,
         });
         onBatchProgress({
           total,
           completed,
           failed,
-          cancelled,
+          canceled,
           currentDatasetName: datasetName,
         });
       }
@@ -1415,7 +1415,7 @@ export class Properties extends VuexModule {
       }
 
       previousRun = completed > 0 && failed === 0 && refreshSucceeded;
-      onComplete({ succeeded: completed, failed, cancelled });
+      onComplete({ succeeded: completed, failed, canceled });
       return true;
     } finally {
       if (status.errorInfo) {

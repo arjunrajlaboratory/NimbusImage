@@ -89,7 +89,7 @@ vi.mock("@/store/properties", () => {
 });
 
 // Mutable (and reset in beforeEach) because the swatch gate depends on the
-// timelapse mode as well as the colouring option, and both need to be driven.
+// timelapse mode as well as the coloring option, and both need to be driven.
 const timelapseStore = vi.hoisted(() => ({
   showMode: true,
   trackColoring: "track" as string,
@@ -253,11 +253,11 @@ describe("ConnectionList", () => {
   });
 
   /**
-   * The swatch promises "this is the colour that track is drawn in", and
+   * The swatch promises "this is the color that track is drawn in", and
    * `trackColor` is only reached from the timelapse draw path — so with the mode
-   * off it names a colour nothing on the canvas is using. Measured on a real
+   * off it names a color nothing on the canvas is using. Measured on a real
    * dataset: 248 swatches in 248 hues against zero drawn connection features.
-   * Gating on the colouring option alone also made them unturnoffable, since
+   * Gating on the coloring option alone also made them unturnoffable, since
    * that toggle lives in the Timelapse palette, which *is* the mode.
    */
   it("hides the track swatches while timelapse mode is off", () => {
@@ -268,7 +268,7 @@ describe("ConnectionList", () => {
     expect(mountComponent().vm.showTrackSwatches).toBe(false);
   });
 
-  it("still hides them in the mode when colouring is uniform", () => {
+  it("still hides them in the mode when coloring is uniform", () => {
     timelapseStore.trackColoring = "uniform";
     expect(mountComponent().vm.showTrackSwatches).toBe(false);
   });
@@ -844,7 +844,7 @@ describe("track labels from a property", () => {
     const track = wrapper.vm.tracks[0];
     expect(wrapper.vm.trackTitle(track)).toBe("42");
     expect(wrapper.vm.trackBadge(track)).toBeNull();
-    // The default id moves into the tooltip so same-valued neighbours can
+    // The default id moves into the tooltip so same-valued neighbors can
     // still be told apart.
     expect(wrapper.vm.trackTitleTooltip(track)).toContain("#");
     expect(wrapper.text()).toContain("Track 42");

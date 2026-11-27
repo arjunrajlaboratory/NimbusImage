@@ -355,7 +355,7 @@ expired links refused), `ShareLinkAPI.test.ts`, `SharedView.test.ts`,
   `canEditDatasetView` is false.
 - Leaving the shared route cancels pending authentication before identity commits —
   `SharedView.test.ts` (`cancels pending authentication when leaving the shared route`),
-  `index.test.ts` (`does not commit a share bootstrap after its route is cancelled`).
+  `index.test.ts` (`does not commit a share bootstrap after its route is canceled`).
 - Failed link validation cannot commit attempted identity or reset user state;
   only the latest successful bootstrap commits, without persisting its bearer —
   `index.test.ts` (`does not commit an attempted identity when link validation fails`,

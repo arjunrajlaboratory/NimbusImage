@@ -6,7 +6,7 @@ import {
 } from "@/store/model";
 import { MAX_CONNECT_SELECTED } from "@/store/constants";
 
-// Exercise the real module against mocked neighbours. ./root stays real — the
+// Exercise the real module against mocked neighbors. ./root stays real — the
 // dynamic module registers on it.
 const {
   mainMock,
@@ -33,7 +33,7 @@ const {
   createFromBases: vi.fn(),
 }));
 
-// The mocked neighbours must be REACTIVE: connectionList's getters are Vuex
+// The mocked neighbors must be REACTIVE: connectionList's getters are Vuex
 // getters, so they cache until a tracked dependency changes. Against plain
 // objects they would compute once (against empty state) and never recompute,
 // making every assertion below pass or fail for the wrong reason.
@@ -524,7 +524,7 @@ describe("track label path", () => {
   // The persisted resolver drops a path whose property left the
   // configuration, and a live deletion must do the same immediately (same
   // contract as reconcileAnalysisPlotsForPropertyIds) — otherwise the panel
-  // keeps labelling from the deleted property and a later browser save can
+  // keeps labeling from the deleted property and a later browser save can
   // persist the orphaned path.
   it("clears the path and persists when its property is deleted", () => {
     connectionList.hydrateTrackLabelPath(["gone", "trackId"]);

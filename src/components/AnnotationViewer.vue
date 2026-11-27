@@ -2025,12 +2025,12 @@ function drawTimelapseTrack(
       // selection or hover. Kept on the feature so the segment can be restyled
       // in place later without knowing which track it came from — a hover
       // change must not have to rebuild the layer to be visible.
-      // A time jump keeps the track's colour. It used to be forced to #ff6b6b,
-      // which broke both colouring controls: "uniform" left those segments red
-      // among white ones, so it was not uniform, and under per-track colouring a
+      // A time jump keeps the track's color. It used to be forced to #ff6b6b,
+      // which broke both coloring controls: "uniform" left those segments red
+      // among white ones, so it was not uniform, and under per-track coloring a
       // track whose drawn segments are all jumps showed a hue swatch against red
       // lines. The jump is still unmistakable — the dash and the reduced opacity
-      // below are two independent cues that no other segment has — so the colour
+      // below are two independent cues that no other segment has — so the color
       // was a third, redundant signal that happened to be the one contradicting
       // the swatch. Dropping it makes the swatch match the line unconditionally,
       // which is a claim the UI now makes in both modes.
@@ -2411,7 +2411,7 @@ function getConnectionStyle(isSelected: boolean, isHovered: boolean) {
 // burst into one final restyle with the latest state.
 const restyleAnnotationsThrottled = throttle(restyleAnnotations, THROTTLE);
 
-// A timelapse track segment's appearance minus the highlight: colour from its
+// A timelapse track segment's appearance minus the highlight: color from its
 // connected component (or the red of a skipped frame), width from whether its
 // frame is before or after the current one. Stored on the feature so a
 // selection or hover change can repaint it without knowing its track.
@@ -2440,7 +2440,7 @@ interface ITimelapsePointBaseStyle {
  * action does — produced no visible change anywhere in timelapse mode. Only
  * connections reacted to selection there, which made a working object
  * selection read as "it selected the links instead". Selected dots take the
- * same cyan as selected segments so one colour means "selected" throughout the
+ * same cyan as selected segments so one color means "selected" throughout the
  * mode.
  *
  * Every branch sets every key: this object REPLACES the feature's style rather
@@ -4426,7 +4426,7 @@ function onMousePathChanged(
   oldState: IMouseState | null,
 ) {
   // Only an explicit commit is consumed. A capture that ended any other way
-  // (cancelled, or its map entry replaced) only clears the preview.
+  // (canceled, or its map entry replaced) only clears the preview.
   if (newState === null && oldState?.outcome === "commit") {
     consumeMouseState(oldState);
   } else {
@@ -5070,9 +5070,9 @@ watch(displayedAnnotations, (annotations) => {
 });
 
 // Timelapse mode: every draw input (watching the store directly fixes an older
-// timelapseTags bug). Track colour is baked into the line features at build
+// timelapseTags bug). Track color is baked into the line features at build
 // time — there is no restyle-in-place path for it, the way there is for
-// hover — so the colouring controls MUST appear here or they change nothing
+// hover — so the coloring controls MUST appear here or they change nothing
 // until the next unrelated redraw.
 watch(
   [

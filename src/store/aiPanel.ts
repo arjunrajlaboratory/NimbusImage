@@ -463,7 +463,7 @@ export class AiPanel extends VuexModule {
       for (; iteration < MAX_TOOL_ITERATIONS; iteration++) {
         const response = await main.agentAPI.postAgentMessage(wireMessages);
         if (conversationGeneration !== generationAtStart) {
-          // Cleared/cancelled during the API call (e.g. user changed); discard
+          // Cleared/canceled during the API call (e.g. user changed); discard
           // this response rather than mutating the fresh conversation.
           return;
         }
@@ -524,7 +524,7 @@ export class AiPanel extends VuexModule {
           );
         }
         if (conversationGeneration !== generationAtStart) {
-          // Cleared/cancelled while tools ran; drop the results.
+          // Cleared/canceled while tools ran; drop the results.
           return;
         }
         wireMessages.push({ role: "user", content: results });

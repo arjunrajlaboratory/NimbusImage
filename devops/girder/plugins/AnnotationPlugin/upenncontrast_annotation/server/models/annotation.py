@@ -2026,7 +2026,7 @@ class Annotation(AccessControlMixin, ProxiedModel):
             elif value < low:
                 # A zero-width range still has an inside and an outside: p1 ==
                 # p99 happens on sparse data (199 zeros and one 1000), and
-                # painting the outliers the middle colour contradicted the
+                # painting the outliers the middle color contradicted the
                 # legend, which reports clippedHigh in exactly that case.
                 t = 0.0
             elif value > high:

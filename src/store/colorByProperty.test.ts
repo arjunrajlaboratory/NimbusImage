@@ -106,7 +106,7 @@ describe("color-by-property configuration persistence", () => {
     (store.state as any).girderResources.resources = {};
   });
 
-  // colorAnnotationIds only retires the legend when it actually recolours
+  // colorAnnotationIds only retires the legend when it actually recolors
   // something, so these tests need an annotation that really gets patched.
   function seedPatchableStub(color: string | null = null) {
     (store.state as any).annotation.stubOnlyMode = true;

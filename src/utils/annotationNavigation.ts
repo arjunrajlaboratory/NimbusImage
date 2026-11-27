@@ -18,7 +18,7 @@ const CONNECTION_FRAME_PADDING = 1.6;
 /**
  * Fraction of the viewport a framed track should occupy. Deliberately well
  * under 1: a track filling the frame edge to edge loses the surrounding context
- * that makes it interpretable — neighbouring cells, which way it is heading.
+ * that makes it interpretable — neighboring cells, which way it is heading.
  */
 const TRACK_VIEWPORT_FRACTION = 0.2;
 
@@ -222,7 +222,7 @@ export function goToConnection(parentId: string, childId: string) {
 }
 
 /**
- * Frame a whole track: centre on its members' bounding box and size the camera
+ * Frame a whole track: center on its members' bounding box and size the camera
  * so the track occupies `TRACK_VIEWPORT_FRACTION` of the viewport.
  *
  * XY and Z come from an ANCHOR member — the one nearest the current frame —
@@ -236,7 +236,7 @@ export function goToConnection(parentId: string, childId: string) {
  * otherwise moved to the nearest member. One rule covers both modes, because the
  * only thing that differs is how wide "drawn" is: timelapse mode renders
  * `[time - modeWindow, time + modeWindow]`, normal mode just the current frame.
- * Time is the window's centre and the user scrubs it deliberately, so the bar for
+ * Time is the window's center and the user scrubs it deliberately, so the bar for
  * moving it is "you would otherwise be looking at nothing".
  *
  * Two ways this went wrong, both from testing something other than what the draw

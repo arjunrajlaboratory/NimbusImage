@@ -85,7 +85,7 @@ def _mockLargeImagePipeline(
     """Install deterministic model doubles for endpoint failure tests.
 
     ``metadataByName`` overrides the tile metadata per item name, so tests
-    can drive dtype/IndexRange-dependent behaviour without needing a real
+    can drive dtype/IndexRange-dependent behavior without needing a real
     tile source. ``internalMetadataByName`` does the same for the internal
     metadata (e.g. ND2 stage positions).
     """
@@ -664,7 +664,7 @@ class TestDatasetMultiSourcePipeline:
             level=AccessType.READ, exc=True,
         )
         assert collection["meta"]["subtype"] == "contrastConfiguration"
-        # One layer per channel, named and coloured like the UI would.
+        # One layer per channel, named and colored like the UI would.
         layers = collection["meta"]["layers"]
         assert [layer["name"] for layer in layers] == \
             resp.json["config"]["channels"]
@@ -1238,7 +1238,7 @@ class TestDatasetMultiSourcePipeline:
                 "a failed run destroyed pre-existing largeImage state"
             )
 
-    def testUserChannelColoursAreHonoured(
+    def testUserChannelColorsAreHonored(
         self, admin, server, largeImageCapable
     ):
         """The UI passes the configuring user's saved palette into
@@ -1248,7 +1248,7 @@ class TestDatasetMultiSourcePipeline:
         )
         UserColorsModel().setUserColors(admin, {"CHANA": "#123456"})
 
-        folder = self._makeDatasetFolder(admin, "user_colours_dataset")
+        folder = self._makeDatasetFolder(admin, "user_colors_dataset")
         resp = server.request(
             path=MULTI_SOURCE_PATH % folder["_id"],
             method="POST",
@@ -1263,11 +1263,11 @@ class TestDatasetMultiSourcePipeline:
             ObjectId(resp.json["collectionId"]), user=admin,
             level=AccessType.READ, exc=True,
         )
-        colours = {
+        colors = {
             layer["name"]: layer["color"]
             for layer in collection["meta"]["layers"]
         }
-        assert colours["chanA"] == "#123456"
+        assert colors["chanA"] == "#123456"
 
     def testTranscodeSchedulesJobWhenConfigIsAutoMarked(
         self, admin, server, largeImageCapable, largeImageAutoSet

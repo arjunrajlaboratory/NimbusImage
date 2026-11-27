@@ -964,7 +964,7 @@ Root cause: `goToAnnotationIdLocation` (`AnnotationList.vue`) recentered via
 leaving `gcsBounds` at the pre-click viewport. It is the **only** programmatic
 recenter that bypasses the GeoJS map — every map-driven recenter
 (`setCenter`/`setCorners`/`resetView` in `ImageViewer.vue`) recomputes
-`gcsBounds` via `synchroniseCameraFromMap`, while `applyCameraInfo` deliberately
+`gcsBounds` via `synchronizeCameraFromMap`, while `applyCameraInfo` deliberately
 suppresses that sync to avoid multi-map loops. Viewport-driven hydration
 (`updateVisibilityAndHydration`, Step 2) splits current-frame annotations by
 `gcsBounds`, so with stale bounds the destination was classified out-of-viewport

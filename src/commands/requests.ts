@@ -9,17 +9,17 @@ import type { TReturnType as TToolTypeSelectionValue } from "@/tools/creation/to
 // out of `src/store/index.ts`, which is already 2000+ lines (and whose edits
 // break HMR).
 
-/** Open the tool-creation dialog pre-selected (honoured by Toolset.vue). */
+/** Open the tool-creation dialog pre-selected (honored by Toolset.vue). */
 export const toolCreationRequest = shallowRef<TToolTypeSelectionValue | null>(
   null,
 );
 
-/** Load a snapshot (honoured by Snapshots.vue). */
+/** Load a snapshot (honored by Snapshots.vue). */
 export const snapshotLoadRequest = shallowRef<ISnapshot | null>(null);
 
 /**
  * Pre-select a property path (as `createPathStringFromPathArray` keys it) in
- * the Color-by-property dialog (honoured by ColorByPropertyDialog.vue).
+ * the Color-by-property dialog (honored by ColorByPropertyDialog.vue).
  */
 export const colorByPropertyRequest = shallowRef<string | null>(null);
 

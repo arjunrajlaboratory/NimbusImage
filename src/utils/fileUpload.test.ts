@@ -124,7 +124,7 @@ describe("selectFilesFromFolder", () => {
     expect(await promise).toEqual([]);
   });
 
-  it("resolves with an empty array when the dialog is cancelled", async () => {
+  it("resolves with an empty array when the dialog is canceled", async () => {
     const { getInput } = captureCreatedInput();
 
     const promise = selectFilesFromFolder();

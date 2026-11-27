@@ -452,7 +452,7 @@ describe("Toolset", () => {
       wrapper.unmount();
     });
 
-    it("honours a request made before it mounted", () => {
+    it("honors a request made before it mounted", () => {
       toolCreationRequest.value = request;
       const wrapper = mountComponent();
       expect((wrapper.vm as any).toolCreationDialogOpen).toBe(true);

@@ -178,6 +178,34 @@ describe("worker compute actions report back on every path", () => {
     expect(mocks.progress.complete).toHaveBeenCalledWith("progress-1");
   });
 
+  it("schedules a new image's caches for the dataset open when the job ends", async () => {
+    // The user switched datasets while the job ran. loadLargeImages acts on
+    // the open dataset, so the image it returns is that dataset's.
+    mocks.addJob.mockImplementation(async () => {
+      mocks.main.configuration = null;
+      mocks.main.dataset = { id: "ds-2" };
+      return true;
+    });
+    mocks.main.loadLargeImages.mockResolvedValue({ _id: "new-image" });
+    mocks.main.scheduleTileFramesComputation.mockClear();
+    mocks.main.scheduleMaxMergeCache.mockClear();
+    mocks.main.scheduleHistogramCache.mockClear();
+    const callback = vi.fn();
+    await annotationStore.computeAnnotationsWithWorker({
+      tool,
+      workerInterface: {},
+      progress: {},
+      error: { errors: [] },
+      callback,
+    });
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(true));
+    expect(mocks.main.scheduleTileFramesComputation).toHaveBeenCalledWith(
+      "ds-2",
+    );
+    expect(mocks.main.scheduleMaxMergeCache).toHaveBeenCalledWith("ds-2");
+    expect(mocks.main.scheduleHistogramCache).toHaveBeenCalledWith("ds-2");
+  });
+
   it("completes a batch whose per-dataset progress entry or final refresh fails", async () => {
     mocks.main.api.findDatasetViews.mockResolvedValue([
       { datasetId: "ds-a" },
@@ -204,7 +232,7 @@ describe("worker compute actions report back on every path", () => {
     expect(onComplete).toHaveBeenCalledWith({
       succeeded: 1,
       failed: 1,
-      cancelled: 0,
+      canceled: 0,
     });
   });
 
@@ -300,7 +328,7 @@ describe("worker compute actions report back on every path", () => {
     expect(onComplete).toHaveBeenCalledWith({
       succeeded: 0,
       failed: 0,
-      cancelled: 2,
+      canceled: 2,
     });
   });
 });

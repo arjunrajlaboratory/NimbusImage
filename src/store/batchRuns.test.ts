@@ -11,7 +11,7 @@ const progress = (currentDatasetName: string) => ({
   total: 2,
   completed: 1,
   failed: 0,
-  cancelled: 0,
+  canceled: 0,
   currentDatasetName,
 });
 
@@ -52,7 +52,7 @@ describe("batch runs", () => {
       async (hooks) => {
         hooks.onCancel(cancelJobs);
         batchRuns.batchRun("property", "config-1", "property-1")?.cancel?.();
-        hooks.onComplete({ succeeded: 2, failed: 0, cancelled: 0 });
+        hooks.onComplete({ succeeded: 2, failed: 0, canceled: 0 });
       },
     );
 
@@ -146,13 +146,13 @@ describe("batch runs", () => {
       2,
       async ({ onBatchProgress, onComplete }) => {
         onBatchProgress(progress("dataset-b"));
-        onComplete({ succeeded: 2, failed: 0, cancelled: 0 });
+        onComplete({ succeeded: 2, failed: 0, canceled: 0 });
       },
     );
 
     expect(result).toEqual({
       started: true,
-      results: { succeeded: 2, failed: 0, cancelled: 0 },
+      results: { succeeded: 2, failed: 0, canceled: 0 },
       cancelRequested: false,
     });
     expect(

@@ -490,7 +490,7 @@ hand.
   *"testDuplicateStagePositionRefusesRequestedCompositing"*.
 - Heavy but intended overlap is not a duplicate, nor are entries sharing an
   XY value; files with repeating XY values are all checked —
-  *"does not call heavily overlapping neighbours duplicates"*,
+  *"does not call heavily overlapping neighbors duplicates"*,
   *"treats stage entries sharing an XY value as one tile"*,
   *"checks every file when XY repeats across files"*,
   *"catches a duplicate next to any merged point, not just the first"*,

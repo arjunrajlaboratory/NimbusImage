@@ -93,28 +93,28 @@ Patterns already in the codebase that get this right, to copy:
     mounts one un-keyed instance, so switching tools mid-run shows tool A's
     `running`, log and Cancel under tool B, and remounting offers Compute while
     the job is still running.
-  - The 3 s timer is never cancelled, so a batch started within 3 s loses its
+  - The 3 s timer is never canceled, so a batch started within 3 s loses its
     progress display.
 
 ### J3. Pipeline run (`src/store/pipelines.ts`, `src/components/pipelines/usePipelineRun.ts`)
 
-- **Encoded as:** `runningPipelineId` (182) plus closure-local `isCancelled` /
+- **Encoded as:** `runningPipelineId` (182) plus closure-local `isCanceled` /
   `currentJob`; in the controller `activePipelineId`, `stepStatuses`, `result`,
   `lastRunWasBatch`, `batchProgress`, `runNotice`, `cancelFn`,
-  `cancelledByUser`, a 3 s timer (292).
+  `canceledByUser`, a 3 s timer (292).
 - **Problems (verified):**
   - A single run takes the lock before any await (544-548). `runPipelineBatch`
     awaits `findDatasetViews` (1007) and `batchResources` (1033) first and locks
     at 1039. In that window Run is enabled; a second click starts a second run
     and nulls the first run's `cancelFn`.
   - Those two awaits are outside the `try` (1059).
-  - Cancelled-versus-failed is tracked twice (`isCancelled` in the store,
-    `cancelledByUser` in the controller).
+  - Canceled-versus-failed is tracked twice (`isCanceled` in the store,
+    `canceledByUser` in the controller).
   - ~~`lastRunWasBatch` is set (205) before the batch branch is certain
     (208).~~ Refuted during the fix pass: `canApplyToAllDatasets` already
     requires a selected configuration, so the flag and the branch cannot
     disagree.
-  - The 3 s timer is never cancelled.
+  - The 3 s timer is never canceled.
   - `IPipelineStepRunStatus` (`pipelines.ts:56`) is unused; the controller
     redeclares it as `TStepStatus`.
 
@@ -482,7 +482,7 @@ Second pass, after the remaining fixes:
   local random-squares worker: Run double-clicked submits one job, its
   annotations arrive, the lock releases; a rejected submit reports one failed
   step and releases; Cancel during a pending submit cancels the job, reports
-  one cancelled step and releases.
+  one canceled step and releases.
 - **Snapshots movie (K8)** on a 145-frame time-lapse, with annotations:
   Download Movie double-clicked produces one ZIP, steps through the frames,
   returns to the starting time point and clears its busy state.
@@ -524,7 +524,7 @@ its view, then won. Master does the same. The first fix asked the store
 "is any navigation fetching its view?", and the second review showed that
 was too wide: a switch started by a snapshot or the breadcrumbs leaves the
 URL on the old view until it lands, so any URL write in that window (a z or
-time change) would have re-set the old view and cancelled the switch. The
+time change) would have re-set the old view and canceled the switch. The
 route mapper now tracks only its own `set` calls still in flight
 (`pendingSets` in `useRouteMapper.ts`). Live: go-back ends on S in three of
 three trials (5 to 20 ms), and a store-driven switch right after a time
@@ -581,7 +581,7 @@ A third Codex CLI pass found two P2s, both consequences of earlier fixes on
 this branch. Retiring tracked jobs at logout settles each one as not
 successful, and the "apply to all" loops (worker tool and property) took
 that for a failed dataset and submitted the next one after logout; they now
-check `sessionEndedSignal` (`batchRuns.ts`) and count the rest as cancelled.
+check `sessionEndedSignal` (`batchRuns.ts`) and count the rest as canceled.
 Pipelines already stop there, because logout clears the configuration they
 check. And a property status kept across navigation showed dataset A's
 failed run on dataset B of the same collection; a run that ends on another
@@ -628,7 +628,7 @@ fresh-context reviewers, every report checked against the code:
    failed folder read after dataset creation set `path` to null, which
    unmounted the uploader and left Upload enabled with nothing to do
    (`enterDatasetFolder`); and Cancel All pressed during a property batch's
-   closing refresh cancelled nothing and so did not stop the remaining
+   closing refresh canceled nothing and so did not stop the remaining
    properties (`runBatch` reports `cancelRequested`).
 3. **A newly added `await` its callers did not expect.** Every function that
    gained one on the branch was read with its callers; none remains.
@@ -683,8 +683,8 @@ Change any of the code below, re-check these.
   *"takes the run lock before looking up the collection's datasets"*
 - Every early exit releases the lock:
   *"releases the run lock when the dataset lookup rejects"*
-- Step status comes from the runner, cancelled included:
-  *"shows the step status the runner reports, cancelled included"*
+- Step status comes from the runner, canceled included:
+  *"shows the step status the runner reports, canceled included"*
 - *"does not let a finished batch's linger timer hide the next batch's progress"*
 
 ### Upload flow
@@ -730,7 +730,7 @@ Change any of the code below, re-check these.
   *"ignores an alt-mousedown while the previous move is saving"*,
   *"removes the ghost on unmount"*
 - A shift-capture commits only on an explicit commit:
-  *"does not consume a cancelled capture, only clears the preview"*,
+  *"does not consume a canceled capture, only clears the preview"*,
   *"a release outside the map commits the capture"*,
   *"cancels a capture whose button was released while away, without blocking pan or hover"*
 - The window listeners are removed: *"removes its window listeners on unmount"*
@@ -882,7 +882,7 @@ Jobs and runs:
   *"drops an upload failure once every file is uploaded"*
 - Upload still works after the new dataset's folder could not be read:
   *"keeps Upload working when the new dataset's folder cannot be read"*
-- Cancel All stops a run of several batches even when it cancelled no job:
+- Cancel All stops a run of several batches even when it canceled no job:
   *"reports that its cancel was called, whatever the results count"*,
   *"stops after a Cancel All that had nothing left to cancel"*
 - A cleanup that restores a value restores it only where it was captured
@@ -950,7 +950,7 @@ Session and load:
   *"going back to the value the store still holds overtakes the navigation in flight"*,
   *"going back to the current view overtakes a navigation still fetching its view"*
 - Only the mapper's own navigation counts: a store-driven switch is not
-  cancelled by an unrelated URL write:
+  canceled by an unrelated URL write:
   *"does not re-set the current value for a URL change while nothing of its own is in flight"*
 - A store change made during a route change still reaches the URL:
   *"writes a store change skipped during a route change once it settles"*

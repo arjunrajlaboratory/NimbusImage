@@ -270,7 +270,7 @@ class TestOneVariableCanDriveTwoDimensions:
     function this ports, used when a saved strategy is replayed onto the
     next dataset in a batch upload -- has no such filter. Making the backend
     reject or de-duplicate it would diverge from the component and break
-    that golden, so the behaviour stays and is documented here instead. If
+    that golden, so the behavior stays and is documented here instead. If
     it should change, it has to change in the component first.
     """
 
@@ -340,7 +340,7 @@ class TestRgbLayoutComesFromTheFirstSourceOnly:
         grey = {"bandCount": 1, "frames": [], "sizeX": 16, "sizeY": 16,
                 "dtype": "uint8"}
         result = compute_configuration(
-            ["a_colour.tif", "b_mono.tif"], [rgb, grey], [{}, {}],
+            ["a_color.tif", "b_mono.tif"], [rgb, grey], [{}, {}],
             strategy=None, split_rgb_bands=True, enable_compositing=False,
         )
         assert result["isRGBFile"] is True
