@@ -68,6 +68,17 @@ class ScalarMap(Resource):
         except ValueError as exc:
             raise RestException(str(exc), code=400)
 
+    def _mapFile(self, item):
+        """The map item's one file, or 400: an item with no file or a second
+        one is not a map (the list route skips it), whatever its metadata
+        says."""
+        files = list(Item().childFiles(item, limit=2))
+        if len(files) != 1:
+            raise RestException(
+                "A scalar map item must hold exactly one file", code=400
+            )
+        return files[0]
+
     @access.public(scope=TokenScope.DATA_READ)
     @describeRoute(
         Description("List the scalar maps saved in a dataset")
@@ -203,18 +214,14 @@ class ScalarMap(Resource):
             raise RestException(
                 "thresholdSide must be above or below", code=400
             )
-        files = list(Item().childFiles(item, limit=2))
-        if len(files) != 1:
-            raise RestException(
-                "A scalar map item must hold exactly one file", code=400
-            )
+        mapFile = self._mapFile(item)
 
         # Same caching as the annotation overview raster: the browser must
         # revalidate every tile (so READ is re-checked after a share link
         # is revoked or the user changes), and an unchanged tile is a
         # body-less 304 without loading or rendering anything.
         etag = 'W/"%s"' % hashlib.sha1(json.dumps([
-            TILE_RENDER_VERSION, scalarMapRevision(files[0], meta), location,
+            TILE_RENDER_VERSION, scalarMapRevision(mapFile, meta), location,
             level, tileX, tileY, sizeX, sizeY, maxLevel, tileSize, colormap,
             vmin, vmax, threshold, thresholdSide,
         ]).encode()).hexdigest()
@@ -229,7 +236,7 @@ class ScalarMap(Resource):
             return b""
 
         try:
-            array = loadScalarMapArray(files[0], meta, location)
+            array = loadScalarMapArray(mapFile, meta, location)
             png = renderScalarMapTile(
                 array, meta, sizeX, sizeY, tileSize, maxLevel, level,
                 tileX, tileY, colormap, vmin, vmax, threshold, thresholdSide,
@@ -243,12 +250,14 @@ class ScalarMap(Resource):
     @access.user(scope=TokenScope.DATA_WRITE)
     @describeRoute(
         Description("Delete a scalar map item")
+        .notes("Only an item the list route returns: valid "
+               "meta.%s and exactly one file." % SCALAR_MAP_META_KEY)
         .param("itemId", "The map item id", paramType="path")
         .errorResponse("The item is not a scalar map", 400)
         .errorResponse("Write access denied", 403)
     )
     def delete(self, itemId, params):
         item, _ = self._loadMap(itemId, AccessType.WRITE)
-        fileIds = [f["_id"] for f in Item().childFiles(item)]
+        mapFile = self._mapFile(item)
         Item().remove(item)
-        invalidateScalarMapFiles(fileIds)
+        invalidateScalarMapFiles([mapFile["_id"]])

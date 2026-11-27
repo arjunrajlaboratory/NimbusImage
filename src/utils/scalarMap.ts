@@ -300,14 +300,26 @@ export function formatMapValue(value: number): string {
 }
 
 /**
- * A value to copy into the worker: enough digits (9 significant) to
- * round-trip the float32 map value, trailing zeros dropped.
+ * A threshold as sent to the tile route, and as copied into the worker: the
+ * shortest string that parses back to exactly this double (JavaScript's
+ * `String(number)`). The two must be the same string. A cutoff rounded for
+ * display can land on the wrong side of a plateau: float32 0.3 is
+ * 0.30000001192092896 as a double, and "0.300000012" is above it, so the
+ * worker's inclusive `>=` would drop cells the preview selected. Very small
+ * or large values come out in exponent form ("1.5e-7"), which the tile
+ * route's `float()` and an HTML number field both accept.
  */
+export function exactNumberString(value: number): string {
+  return String(value);
+}
+
+/** A value to copy into the worker: `exactNumberString`, or "–" when not a
+ * finite number. */
 export function formatExactValue(value: number): string {
   if (!Number.isFinite(value)) {
     return "–";
   }
-  return Number(value.toPrecision(9)).toString();
+  return exactNumberString(value);
 }
 
 /**

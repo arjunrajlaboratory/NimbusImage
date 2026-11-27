@@ -2,7 +2,9 @@ import contextlib
 import io
 import json
 import math
+import struct
 import threading
+import tracemalloc
 import zipfile
 
 import numpy as np
@@ -247,6 +249,18 @@ class TestScalarMapHelpers:
         with pytest.raises(ValueError):
             colorizeScalarValues(values, "viridis", 1, 1)
 
+    def testInfiniteCellsTakeTheEndColors(self):
+        lut = colormapLut("viridis")
+        values = np.array([[np.inf, -np.inf, 0.5]])
+        rgba = colorizeScalarValues(values, "viridis", 0, 1)
+        assert tuple(rgba[0, 0]) == tuple(lut[-1]) + (255,)
+        assert tuple(rgba[0, 1]) == tuple(lut[0]) + (255,)
+        assert tuple(rgba[0, 2]) == tuple(lut[128]) + (255,)
+        # Finite bounds whose difference overflows are refused, rather
+        # than dividing inf by inf (NaN, whose integer cast is CPU-defined).
+        with pytest.raises(ValueError, match="finite"):
+            colorizeScalarValues(values, "viridis", -1e308, 1e308)
+
     def testThresholdIsInclusive(self):
         # A value exactly at the cutoff is selected on both sides: the
         # worker's `Value at least` / `Value at most` are inclusive, and the
@@ -276,6 +290,89 @@ class TestScalarMapHelpers:
         with pytest.raises(ValueError, match="larger than"):
             readScalarMapArray(_npz(**{LOCATION: good}), LOCATION,
                                [ROWS, COLS])
+
+    def testWideFloatIsRefused(self):
+        # float16/32/64 are read; a 16-byte long double is not. It exists
+        # only where the platform has one (x86-64 and aarch64 Linux; on
+        # macOS arm64 long double is float64).
+        if np.dtype(np.longdouble).itemsize <= 8:
+            pytest.skip("no long double wider than float64 here")
+        for dtype in (np.float16, np.float32, np.float64):
+            readScalarMapArray(
+                _npz(**{LOCATION: np.zeros((ROWS, COLS), dtype)}),
+                LOCATION, [ROWS, COLS],
+            )
+        wide = np.zeros((ROWS, COLS), dtype=np.longdouble)
+        with pytest.raises(ValueError, match="not a 2-D float array"):
+            readScalarMapArray(_npz(**{LOCATION: wide}), LOCATION,
+                               [ROWS, COLS])
+
+    @pytest.mark.parametrize("version", [(1, 0), (2, 0), (3, 0)])
+    def testNpyHeaderLengthIsCappedBeforeItIsRead(self, version):
+        # A deflated member declaring a 64 MiB header (and holding it:
+        # spaces compress ~1000:1). numpy would read and decode all of it
+        # before its own 10,000-byte check.
+        declared = 0xFFFF if version == (1, 0) else 64 * 1024 * 1024
+        lengthField = struct.pack(
+            "<H" if version == (1, 0) else "<I", declared
+        )
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                LOCATION + ".npy",
+                np.lib.format.magic(*version) + lengthField
+                + b" " * declared,
+            )
+        data = buffer.getvalue()
+        assert len(data) < declared // 100
+        tracemalloc.start()
+        try:
+            with pytest.raises(ValueError, match="header"):
+                readScalarMapArray(data, LOCATION, [ROWS, COLS])
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        assert peak < 1024 * 1024
+
+    def testOversizedCentralDirectoryIsRefusedBeforeParsing(
+        self, monkeypatch
+    ):
+        manyEntries = io.BytesIO()
+        with zipfile.ZipFile(manyEntries, "w") as archive:
+            # One past MAX_SCALAR_MAP_ENTRIES (16384).
+            for index in range(16385):
+                archive.writestr("e%d" % index, b"")
+        # Few entries, but names long enough to exceed the byte cap.
+        longNames = io.BytesIO()
+        with zipfile.ZipFile(longNames, "w") as archive:
+            for index in range(40):
+                archive.writestr("%d" % index + "n" * 60000, b"")
+
+        def refuse(*args, **kwargs):
+            raise AssertionError("the central directory must not be parsed")
+
+        # Neither archive is opened: no ZipInfo is built for its entries.
+        monkeypatch.setattr(zipfile, "ZipFile", refuse)
+        with pytest.raises(ValueError, match="more than 16384 entries"):
+            readScalarMapArray(manyEntries.getvalue(), LOCATION,
+                               [ROWS, COLS])
+        with pytest.raises(ValueError, match="central directory is larger"):
+            readScalarMapArray(longNames.getvalue(), LOCATION, [ROWS, COLS])
+
+    @pytest.mark.parametrize("save", [np.savez, np.savez_compressed])
+    def testNumpyArchivesWithSeveralLocationsLoad(self, save):
+        arrays = {
+            "xy%d_z0_t%d" % (xy, t): np.full((ROWS, COLS), xy * 10 + t,
+                                             dtype=np.float32)
+            for xy in range(3) for t in range(4)
+        }
+        buffer = io.BytesIO()
+        save(buffer, **arrays)
+        for key, expected in arrays.items():
+            np.testing.assert_array_equal(
+                readScalarMapArray(buffer.getvalue(), key, [ROWS, COLS]),
+                expected,
+            )
 
     def testBareNpyIsRefusedWithoutDecoding(self, monkeypatch):
         buffer = io.BytesIO()
@@ -705,6 +802,7 @@ class TestScalarMapEndpoints:
             (item, {"colormap": "jet"}, "colormap"),
             (item, {"min": 1, "max": 1}, "min must be less than max"),
             (item, {"min": 2}, "min must be less than max"),
+            (item, {"min": -1e308, "max": 1e308}, "max - min must be"),
             (item, {"min": "nan"}, "finite"),
             (item, {"max": "inf"}, "finite"),
             (item, {"threshold": "inf"}, "finite"),
@@ -984,6 +1082,33 @@ class TestScalarMapEndpoints:
         assertStatusOk(resp)
         assert Item().load(item["_id"], force=True) is None
         assert scalarMap.scalarMapCacheBytes() == 0
+
+    def testDeleteRefusesAnItemTheListSkips(self, server, admin,
+                                            fsAssetstore):
+        # An item that gained a second file is not listed and its tiles
+        # are 400: delete refuses it the same way rather than removing an
+        # item the user was never shown as a map.
+        folder = _privateDataset(admin)
+        array = np.zeros((ROWS, COLS), dtype=np.float32)
+        item = _uploadMap(admin, folder, {LOCATION: array}, _meta())
+        data = _npz(**{LOCATION: array})
+        Upload().uploadFromFile(
+            io.BytesIO(data), len(data), "extra.npz", "item", item,
+            user=admin,
+        )
+        tileResp = _tile(server, item, admin)
+        assertStatus(tileResp, 400)
+        resp = server.request("/scalar_map/%s" % item["_id"],
+                              method="DELETE", user=admin)
+        assertStatus(resp, 400)
+        assert _message(resp) == _message(tileResp)
+        assert Item().load(item["_id"], force=True) is not None
+        empty = Item().createItem("empty", admin, folder)
+        Item().setMetadata(empty, {"nimbusScalarMap": _meta()})
+        resp = server.request("/scalar_map/%s" % empty["_id"],
+                              method="DELETE", user=admin)
+        assertStatus(resp, 400)
+        assert Item().load(empty["_id"], force=True) is not None
 
     def testDefaultRangeOfConstantMap(self, server, admin, fsAssetstore):
         folder = _privateDataset(admin)

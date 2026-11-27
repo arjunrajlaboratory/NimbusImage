@@ -61,7 +61,7 @@
         :sizeX="transcriptImage.sizeX"
         :sizeY="transcriptImage.sizeY"
         :maxLevel="mapentry.params.layer.maxLevel ?? transcriptImage.levels - 1"
-        :disabled="unrolling"
+        :disabled="imageOverlaysDisabled"
       />
     </template>
     <template v-if="scalarMapsStore.hasMaps && transcriptImage">
@@ -73,7 +73,7 @@
         :sizeX="transcriptImage.sizeX"
         :sizeY="transcriptImage.sizeY"
         :maxLevel="mapentry.params.layer.maxLevel ?? transcriptImage.levels - 1"
-        :disabled="unrolling"
+        :disabled="imageOverlaysDisabled"
       />
     </template>
     <!-- Mounted ONCE, outside the per-map v-for above. In unroll layer mode
@@ -828,6 +828,16 @@ let fitAppliedDatasetId: string | null = null;
 const overview = computed(() => store.overview);
 const dataset = computed(() => store.dataset);
 const unrolling = computed(() => store.unroll);
+// The transcript and scalar map overlays draw only where the viewer can draw
+// the matching image. Unrolled, frames sit on a grid the overlays know nothing
+// about. While a dataset view loads (`sync.datasetLoading`), draw() hides the
+// image tiles: setDatasetViewId applies the incoming XY/Z/Time while
+// store.dataset (and every list keyed by it, such as the scalar maps' list)
+// is still the outgoing dataset's, so an overlay drawn then would show the
+// outgoing dataset's data at the incoming position.
+const imageOverlaysDisabled = computed(
+  () => unrolling.value || sync.datasetLoading,
+);
 const width = computed(() => (store.dataset ? store.dataset.width : 1));
 const height = computed(() => (store.dataset ? store.dataset.height : 1));
 const compositionMode = computed(() => store.compositionMode);
@@ -2610,6 +2620,7 @@ defineExpose({
   overview,
   dataset,
   unrolling,
+  imageOverlaysDisabled,
   width,
   height,
   compositionMode,

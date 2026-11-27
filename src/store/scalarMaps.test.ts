@@ -293,6 +293,44 @@ describe("scalarMaps store", () => {
     expect(scalarMapsStore.currentMaps).toHaveLength(1);
   });
 
+  it("sends one DELETE per map while it is in flight and tracks it until it settles", async () => {
+    mocks.listMaps.mockResolvedValueOnce([scalarMap("a"), scalarMap("b")]);
+    await scalarMapsStore.refreshScalarMaps();
+    const first = deferred<void>();
+    mocks.deleteMap.mockReturnValueOnce(first.promise);
+    const deleteA = scalarMapsStore.deleteScalarMap("a");
+    expect(scalarMapsStore.deletingMapIds).toEqual(["a"]);
+    // A confirmation reopened before the first settled: joins it.
+    const deleteAAgain = scalarMapsStore.deleteScalarMap("a");
+    // Another map is independent.
+    const deleteB = scalarMapsStore.deleteScalarMap("b");
+    expect(mocks.deleteMap.mock.calls).toEqual([["a"], ["b"]]);
+    expect([...scalarMapsStore.deletingMapIds].sort()).toEqual(["a", "b"]);
+    await deleteB;
+    expect(scalarMapsStore.deletingMapIds).toEqual(["a"]);
+    first.resolve();
+    await Promise.all([deleteA, deleteAAgain]);
+    expect(scalarMapsStore.deletingMapIds).toEqual([]);
+    expect(ids()).toEqual([]);
+
+    // A failure ends the state too, and the next delete is a new request.
+    mocks.listMaps.mockResolvedValueOnce([scalarMap("c")]);
+    await scalarMapsStore.refreshScalarMaps(true);
+    const failing = deferred<void>();
+    mocks.deleteMap.mockReturnValueOnce(failing.promise);
+    const deleteC = scalarMapsStore.deleteScalarMap("c");
+    const deleteCAgain = scalarMapsStore.deleteScalarMap("c");
+    failing.reject(new Error("Write access denied"));
+    await expect(deleteC).rejects.toThrow("Write access denied");
+    await expect(deleteCAgain).rejects.toThrow("Write access denied");
+    expect(scalarMapsStore.deletingMapIds).toEqual([]);
+    expect(ids()).toEqual(["c"]);
+    await scalarMapsStore.deleteScalarMap("c");
+    expect(
+      mocks.deleteMap.mock.calls.filter(([id]) => id === "c"),
+    ).toHaveLength(2);
+  });
+
   it("does not let a list captured before a delete bring the map back", async () => {
     mocks.listMaps.mockResolvedValueOnce([scalarMap("a"), scalarMap("b")]);
     await scalarMapsStore.refreshScalarMaps();

@@ -34,6 +34,7 @@ vi.mock("@/store/scalarMaps", async () => {
       colormapStops: null as Record<string, string[]> | null,
       scalarMapsError: null as string | null,
       loading: false,
+      deletingMapIds: [] as string[],
       refreshScalarMaps: mocks.refreshMaps,
       ensureScalarMapColormapStops: mocks.ensureColormapStops,
       deleteScalarMap: mocks.deleteMap,
@@ -119,7 +120,20 @@ describe("ScalarMapsPanel", () => {
     (scalarMapsStore as any).display = { a: display() };
     (scalarMapsStore as any).colormapStops = null;
     (scalarMapsStore as any).scalarMapsError = null;
+    (scalarMapsStore as any).deletingMapIds = [];
   });
+
+  // The store's contract (scalarMaps.test.ts): an item id is in
+  // `deletingMapIds` from the DELETE until it settles.
+  function deleteThatTracksPending(request: Promise<void>) {
+    return (itemId: string) => {
+      const pending = (scalarMapsStore as any).deletingMapIds as string[];
+      pending.push(itemId);
+      return request.finally(() => {
+        pending.splice(pending.indexOf(itemId), 1);
+      });
+    };
+  }
 
   it("lists maps only while shown, and again for a new dataset", async () => {
     const wrapper = mount(false);
@@ -314,10 +328,12 @@ describe("ScalarMapsPanel", () => {
   it("applies a delete's result only to the confirmation that started it", async () => {
     const vm = mount().vm as any;
     let reject!: (error: unknown) => void;
-    mocks.deleteMap.mockReturnValueOnce(
-      new Promise((_resolve, rejectDelete) => {
-        reject = rejectDelete;
-      }),
+    mocks.deleteMap.mockImplementationOnce(
+      deleteThatTracksPending(
+        new Promise((_resolve, rejectDelete) => {
+          reject = rejectDelete;
+        }),
+      ),
     );
     vm.askDelete(MAP);
     const inFlight = vm.confirmDelete();
@@ -325,11 +341,42 @@ describe("ScalarMapsPanel", () => {
     vm.deleteDialog = false;
     await nextTick();
     vm.askDelete(MAP);
+    // Still running: the reopened confirmation shows it.
+    expect(vm.deleting).toBe(true);
     reject(new Error("Write access denied"));
-    await inFlight;
+    await inFlight.catch(() => {});
+    await nextTick();
     expect(vm.deleteDialog).toBe(true);
     expect(vm.deleteError).toBeNull();
     expect(vm.deleting).toBe(false);
+  });
+
+  it("sends one DELETE when the confirmation is closed mid-delete, reopened and confirmed", async () => {
+    const vm = mount().vm as any;
+    let resolve!: () => void;
+    mocks.deleteMap.mockImplementationOnce(
+      deleteThatTracksPending(
+        new Promise<void>((resolveDelete) => {
+          resolve = resolveDelete;
+        }),
+      ),
+    );
+    vm.askDelete(MAP);
+    const inFlight = vm.confirmDelete();
+    expect(vm.deleting).toBe(true);
+    // Escape while the DELETE runs.
+    vm.deleteDialog = false;
+    await nextTick();
+    expect(vm.deleting).toBe(true);
+    vm.askDelete(MAP);
+    expect(vm.deleteDialog).toBe(true);
+    expect(vm.deleting).toBe(true);
+    await vm.confirmDelete();
+    expect(mocks.deleteMap).toHaveBeenCalledTimes(1);
+    resolve();
+    await inFlight;
+    expect(vm.deleting).toBe(false);
+    expect(mocks.deleteMap).toHaveBeenCalledTimes(1);
   });
 
   it("offers delete only to sessions that can write", () => {

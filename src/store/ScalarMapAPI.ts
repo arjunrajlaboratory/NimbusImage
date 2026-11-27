@@ -4,6 +4,7 @@ import {
   TScalarMapColormap,
   TScalarMapThresholdSide,
 } from "./model";
+import { exactNumberString } from "@/utils/scalarMap";
 
 export interface IScalarMapTileUrlOptions {
   itemId: string;
@@ -65,7 +66,8 @@ export default class ScalarMapAPI {
     params.set("min", options.min.toString());
     params.set("max", options.max.toString());
     if (options.threshold !== null) {
-      params.set("threshold", options.threshold.toString());
+      // The same string the panel offers to copy into the worker.
+      params.set("threshold", exactNumberString(options.threshold));
       params.set("thresholdSide", options.thresholdSide);
     }
     if (options.version) {

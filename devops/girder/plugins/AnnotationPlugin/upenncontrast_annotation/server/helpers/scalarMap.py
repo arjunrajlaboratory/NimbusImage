@@ -19,6 +19,7 @@ import hashlib
 import io
 import json
 import math
+import struct
 import threading
 import zipfile
 import zlib
@@ -317,13 +318,23 @@ def colorizeScalarValues(values, colormap, vmin, vmax, threshold=None,
     drawn at THRESHOLD_DIM_ALPHA."""
     if not vmin < vmax:
         raise ValueError("min must be less than max")
+    # Finite min and max can still be too far apart to subtract
+    # (-1e308, 1e308); an infinite span would turn an infinite cell into
+    # inf / inf = NaN, whose integer cast is CPU-dependent.
+    span = float(vmax) - float(vmin)
+    if not math.isfinite(span):
+        raise ValueError("max - min must be a finite number")
     if thresholdSide not in ("above", "below"):
         raise ValueError("thresholdSide must be 'above' or 'below'")
     lut = colormapLut(colormap)
     valid = ~np.isnan(values)
-    fraction = np.clip(
-        (np.where(valid, values, vmin) - vmin) / (vmax - vmin), 0, 1
-    )
+    # A +-inf cell is a valid value past one end and gets that end's color,
+    # like any other out-of-range value: with a finite span the quotient is
+    # +-inf (never NaN), which np.clip brings to 1 or 0.
+    with np.errstate(over="ignore", invalid="ignore"):
+        fraction = np.clip(
+            (np.where(valid, values, vmin) - vmin) / span, 0, 1
+        )
     index = np.round(fraction * (COLORMAP_LUT_SIZE - 1)).astype(np.int64)
     rgba = np.zeros(values.shape + (4,), dtype=np.uint8)
     rgba[..., :3] = lut[index]
@@ -370,9 +381,29 @@ _ARCHIVE_ERRORS = (
     zipfile.BadZipFile, zlib.error, EOFError, OSError, RuntimeError,
 )
 # What np.savez and np.savez_compressed write. bzip2 and LZMA decompress a
-# chunk without an output bound, possibly while the .npy header is read,
-# before the shape and cell caps can apply.
+# chunk without an output bound. Deflate is bounded per read, but only by
+# the size the caller asks for, so every read made before the shape and
+# cell caps apply (the .npy header, in _readNpyHeader) asks for a capped
+# size itself.
 ALLOWED_COMPRESSION = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+# Longest .npy header read. numpy refuses a longer one too, but only after
+# reading and decoding the length it declares (up to 4 GiB in .npy v2/v3);
+# this is checked against the declared length first. A 2-D float header is
+# ~128 bytes; 10,000 is numpy's own limit (`max_header_size`).
+NPY_MAX_HEADER_BYTES = 10000
+# The .npy header's length field, by format version.
+_NPY_HEADER_LENGTH_FORMATS = {(1, 0): "<H", (2, 0): "<I", (3, 0): "<I"}
+# Opening an archive parses its whole central directory (one ZipInfo per
+# entry) before any member is looked up. A map holds one entry per location,
+# ~70 directory bytes each with its name, so 16,384 locations (64 XY x 256
+# time points, say) in 2 MiB (128 bytes per entry) leave headroom while
+# bounding what one request makes zipfile build. The byte cap is the binding
+# one: zipfile walks the directory by its size, not by the entry count the
+# end record claims.
+MAX_SCALAR_MAP_ENTRIES = 16384
+MAX_CENTRAL_DIRECTORY_BYTES = 2 * 1024 * 1024
+# The shortest ZIP: an end-of-central-directory record alone.
+_ZIP_END_RECORD_BYTES = 22
 
 
 class ScalarMapStorageError(Exception):
@@ -381,18 +412,70 @@ class ScalarMapStorageError(Exception):
     caller's 400."""
 
 
+def _readHeaderBytes(member, size):
+    data = member.read(size)
+    if len(data) != size:
+        raise ValueError(
+            "The map array has an unreadable header: it is truncated"
+        )
+    return data
+
+
 def _readNpyHeader(member):
     """(shape, fortranOrder, dtype) from an open .npy stream, leaving it at
-    the start of the data."""
+    the start of the data. The declared header length is checked against
+    NPY_MAX_HEADER_BYTES before the header is read, and numpy parses only
+    those bounded bytes."""
     try:
         version = np.lib.format.read_magic(member)
-        if version == (1, 0):
-            return np.lib.format.read_array_header_1_0(member)
-        if version in ((2, 0), (3, 0)):
-            return np.lib.format.read_array_header_2_0(member)
     except ValueError as exc:
         raise ValueError("The map array has an unreadable header: %s" % exc)
-    raise ValueError("unsupported .npy version %s" % (version,))
+    lengthFormat = _NPY_HEADER_LENGTH_FORMATS.get(version)
+    if lengthFormat is None:
+        raise ValueError("unsupported .npy version %s" % (version,))
+    lengthField = _readHeaderBytes(member, struct.calcsize(lengthFormat))
+    (headerLength,) = struct.unpack(lengthFormat, lengthField)
+    if headerLength > NPY_MAX_HEADER_BYTES:
+        raise ValueError(
+            "The map array has a %d-byte header, more than %d"
+            % (headerLength, NPY_MAX_HEADER_BYTES)
+        )
+    bounded = io.BytesIO(lengthField + _readHeaderBytes(member, headerLength))
+    try:
+        # read_array_header_2_0 reads the 4-byte length field of v2 and v3.
+        if version == (1, 0):
+            return np.lib.format.read_array_header_1_0(bounded)
+        return np.lib.format.read_array_header_2_0(bounded)
+    except ValueError as exc:
+        raise ValueError("The map array has an unreadable header: %s" % exc)
+
+
+def _checkCentralDirectory(source):
+    """Refuse an archive whose central directory is larger than a map's can
+    be, before zipfile parses it, and rewind the source.
+
+    Uses zipfile's own end-record reader, `zipfile._EndRecData` (private,
+    but unchanged across many Python releases), so the size checked is the
+    one ZipFile then reads, a zip64 end record included (it substitutes the
+    64-bit fields). numpy writes zip64 directories only for members over
+    4 GiB, which the file cap excludes, but one within the caps is bounded
+    the same way."""
+    source.seek(0, io.SEEK_END)
+    if source.tell() < _ZIP_END_RECORD_BYTES:
+        raise zipfile.BadZipFile("File is not a zip file")
+    endRecord = zipfile._EndRecData(source)
+    if endRecord is None:
+        raise zipfile.BadZipFile("File is not a zip file")
+    if endRecord[zipfile._ECD_ENTRIES_TOTAL] > MAX_SCALAR_MAP_ENTRIES:
+        raise ValueError(
+            "The map file has more than %d entries" % MAX_SCALAR_MAP_ENTRIES
+        )
+    if endRecord[zipfile._ECD_SIZE] > MAX_CENTRAL_DIRECTORY_BYTES:
+        raise ValueError(
+            "The map file's central directory is larger than %d bytes"
+            % MAX_CENTRAL_DIRECTORY_BYTES
+        )
+    source.seek(0)
 
 
 def _readExactly(member, size):
@@ -417,13 +500,16 @@ def readScalarMapArray(source, locationKey, expectedShape):
 
     The source is opened strictly as a ZIP (a bare .npy is refused, not
     decoded), and the one explicit member `<locationKey>.npy` is both
-    checked (2-D float, the metadata's shape, within the cell cap) and
+    checked (2-D float16/32/64, the metadata's shape, the cell cap) and
     decoded, reading only as many bytes as its checked header allows. Only
-    that member is decompressed; the archive is never held in memory."""
+    that member is decompressed; the archive is never held in memory. The
+    central directory (entry count and size) and the member's .npy header
+    length are capped before either is parsed."""
     if isinstance(source, (bytes, bytearray)):
         source = io.BytesIO(source)
     memberName = locationKey + ".npy"
     try:
+        _checkCentralDirectory(source)
         with zipfile.ZipFile(source) as archive:
             if memberName not in archive.namelist():
                 raise ValueError(
@@ -439,7 +525,12 @@ def readScalarMapArray(source, locationKey, expectedShape):
                 )
             with archive.open(memberName) as member:
                 shape, fortranOrder, dtype = _readNpyHeader(member)
-                if dtype.kind != "f" or len(shape) != 2:
+                # float16/32/64 only: a 16-byte long double would double
+                # the decode buffer for precision float32 drops anyway.
+                if (
+                    dtype.kind != "f" or dtype.itemsize > 8
+                    or len(shape) != 2
+                ):
                     raise ValueError(
                         "The map array for %s is not a 2-D float array"
                         % locationKey

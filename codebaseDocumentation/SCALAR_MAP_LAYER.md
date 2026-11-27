@@ -60,7 +60,7 @@ Files: `server/api/scalarMap.py` (routes), `server/helpers/scalarMap.py`
 |---|---|---|
 | `GET scalar_map?datasetId=` | READ on the folder | `[{itemId, updated, revision, meta}]`, oldest first. One `Item().find` on the folder plus one batched `File().find` (`$in`). Items whose metadata does not validate, or that do not hold exactly one file, are skipped. |
 | `GET scalar_map/{itemId}/tiles/{z}/{x}/{y}` | READ, cookie auth (GeoJS loads tiles through `<img>`); share links send `token=` | PNG. Params: `location`, `sizeX`, `sizeY`, `maxLevel`, `tileSize` (256/512/1024), `colormap`, `min`, `max`, `threshold?`, `thresholdSide?`. |
-| `DELETE scalar_map/{itemId}` | WRITE | Removes the item and drops its cached arrays. 400 for an item that is not a map. |
+| `DELETE scalar_map/{itemId}` | WRITE | Removes the item and drops its cached arrays. 400 for an item the list would skip: invalid metadata, or not exactly one file (the same check and message as the tile route, `_mapFile`). |
 
 `revision` (`scalarMapRevision`) is
 `<file id>-<size>-<file created, %Y%m%d%H%M%S%f>[-<sha512 prefix>]-<metadata digest>`.
@@ -89,14 +89,38 @@ not constrained.
 
 - **Strict ZIP, one explicit member.** The bytes are opened only as a ZIP; a
   bare `.npy` is refused without being decoded. The member `<location>.npy` is
-  the one both checked (header: 2-D float, the metadata's shape, within the
-  cell cap) and decoded, and only as many bytes as the checked header allows
-  are read. Fortran-order arrays are supported. Only `ZIP_STORED` and
+  the one both checked (header: 2-D float16/32/64, the metadata's shape,
+  within the cell cap) and decoded, and only as many bytes as the checked
+  header allows are read. A wider float (a 16-byte long double) is refused:
+  it would double the decode buffer for precision the float32 cache drops.
+  Fortran-order arrays are supported. Only `ZIP_STORED` and
   `ZIP_DEFLATED` members are read (what `np.savez` and
   `np.savez_compressed` write), checked before the member is opened: bzip2
-  and LZMA decompress a chunk without an output bound, possibly while the
-  header is read, before the shape and cell caps apply. An encrypted member
-  (zipfile's `RuntimeError`) is a 400 like any other bad file.
+  and LZMA decompress a chunk without an output bound, before the shape and
+  cell caps apply. An encrypted member (zipfile's `RuntimeError`) is a 400
+  like any other bad file.
+- **Every read before the caps is bounded.** Deflate is bounded only by the
+  size asked for, so the reads that precede the shape and cell checks cap
+  their own size:
+  - *The `.npy` header.* numpy's header readers read and decode the length
+    the file declares (a uint32 in `.npy` v2/v3) before applying their own
+    10,000-byte limit; a 260 KB deflated member declaring a 256 MiB header
+    made one tile request allocate over 256 MiB. `_readNpyHeader` reads the
+    magic and the length field itself, refuses a length above
+    `NPY_MAX_HEADER_BYTES` (10,000, numpy's limit; a 2-D float header is
+    ~128 bytes) before reading the header, and hands numpy only those bytes.
+  - *The central directory.* Opening a ZIP parses its whole central directory
+    (one `ZipInfo` per entry) first; a 47 MB file with a million entries cost
+    357 MiB and 1.9 s per request. `_checkCentralDirectory` reads the end
+    record with zipfile's own `_EndRecData` (private but long stable; a zip64
+    end record's 64-bit fields are what it returns, so zip64 is bounded the
+    same way) and refuses more than `MAX_SCALAR_MAP_ENTRIES` (16,384) entries
+    or a directory above `MAX_CENTRAL_DIRECTORY_BYTES` (2 MiB, 128 bytes per
+    entry; a map entry is ~70) before `ZipFile` is constructed. The byte cap
+    is the binding one, since zipfile walks the directory by its size.
+
+  Failures are not cached, so either read would otherwise repeat on every
+  tile request.
 - **Storage failures are server errors.** An `OSError` from the file handle
   (disk, or S3 and other network assetstores; `requests` exceptions are
   `OSError`s) is re-raised by `_BoundedReads` as `ScalarMapStorageError`,
@@ -154,7 +178,11 @@ metadata can change under a cached array.
   `valueRange`; a constant map is widened to `[v - pad, v + pad]` with
   `pad = max(0.5, abs(v) * 1e-6)` (a fixed 0.5 rounds back to `v` from
   2^53), the same rule as the client's `displayValueRange`; `min >= max` is
-  a 400.
+  a 400, and so is a finite pair whose difference overflows (`min=-1e308&
+  max=1e308`), which would otherwise turn an infinite cell into `inf / inf`
+  = NaN and a CPU-dependent LUT index (an `IndexError` on x86, color 0 on
+  arm64). A `+inf` or `-inf` cell takes the top or bottom color, like any
+  value past `[min, max]`.
 - **Threshold.** Inclusive on both sides: `value >= threshold` is selected for
   `above`, `value <= threshold` for `below`, matching the worker's `Value at
   least` / `Value at most`. Unselected pixels are drawn at alpha 64.
@@ -249,7 +277,15 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
   the layer and requests nothing. Layers of deleted maps or another dataset
   are deleted on the next sync; all are deleted on unmount, and only while
   the map still holds them (an unroll toggle replaces the map).
-- Disabled while unrolled, like the transcript overlay.
+- Disabled (layers deleted) while unrolled and while a dataset view loads
+  (`sync.datasetLoading`), like the transcript overlay: ImageViewer passes
+  both through one `imageOverlaysDisabled` computed. During a view load
+  `setDatasetViewId` applies the incoming XY/Z/Time while `store.dataset`,
+  and so `currentMaps` (keyed by `mapsDatasetId` against `store.dataset`),
+  is still the outgoing dataset's; drawing then would request the outgoing
+  map at the incoming position over hidden image tiles. Once the incoming
+  dataset lands `currentMaps` is empty until its own list arrives, so the
+  outgoing list can never be drawn against it.
 - **Layer order.** The util registers every overlay layer (the scalar maps,
   and the transcript heat maps and point layer). `ImageViewer.draw()` calls
   `orderLayersAboveImages` to keep image layers at the bottom, then the
@@ -311,10 +347,16 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
   percentiles and that makes the selected share differ from the request does
   the readout add "50% requested, more selected because of ties at the
   cutoff".
-- **Worker forms.** The value form prints the cutoff with 9 significant digits
-  (round-trips float32). The percent form is exact only when it is a whole
-  percentile whose stored value is the cutoff (the worker thresholds `Top
-  percent N` at `percentiles[100 - N]`); otherwise it is marked approximate.
+- **Worker forms.** The value form prints the cutoff in full precision, as
+  the same string the tile URL's `threshold` carries (`exactNumberString`,
+  JavaScript's shortest round-trip `String(n)`; very small or large values
+  come out in exponent form, which `float()` and a number field accept). A
+  rounded cutoff can miss a plateau: float32 0.3 is 0.30000001192092896, and
+  the nine-digit "0.300000012" is above it, so the worker's inclusive `>=`
+  would drop cells the preview selected. The percent form is exact only
+  when it is a whole percentile whose stored value is the cutoff (the worker
+  thresholds `Top percent N` at `percentiles[100 - N]`); otherwise it is
+  marked approximate.
   A share the user set is shown as set (`formatRequestedShare`: "12.5", not
   "13", which is a different percentile than the one previewed), in both the
   readout and the copyable form; only a share estimated from a value is
@@ -332,6 +374,12 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
   the dataset unchanged) and the target leaving the list (a job's re-list)
   each end the session; a request's result applies only to the session that
   started it; and only a map of the dataset on screen can be confirmed.
+  Ending a session does not end the request: the store tracks each map's
+  DELETE (`deletingMapIds`) from send until it settles, the dialog's
+  `deleting` is read from it, and a second `deleteScalarMap` for the same
+  map joins the request in flight. Escape and reopening the same map's
+  confirmation therefore shows it still deleting and cannot send a second
+  DELETE (which would fail for the item the first removed).
 - **Descriptive fields are optional.** `name`, `statistic`, `property` and
   `radius` are not validated, so the card falls back to "Untitled map" and
   leaves out absent parts of the subtitle rather than printing "undefined".
@@ -354,6 +402,7 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **A list error belongs to its dataset.** Dataset B's failure never shows over dataset A's list. — *"never shows another dataset's list error over this dataset's list"*
 - [ ] **One malformed map never loses the list.** Percentiles are required (101 finite, non-decreasing) on both sides. — *"skips a malformed map instead of losing the list"*, *"rejects %s"*, *"testMetaValidation"*
 - [ ] **Delete beats an in-flight list.** A list response captured before a delete must not bring the map back. — *"does not let a list captured before a delete bring the map back"*
+- [ ] **One DELETE per map until it settles.** A second delete of a map whose DELETE is in flight joins it; `deletingMapIds` holds the map from send until success or failure, and other maps are independent. — *"sends one DELETE per map while it is in flight and tracks it until it settles"*
 - [ ] **Display state resets with the dataset, survives a re-list, and is re-derived for a rewritten file or edited metadata** (the server's revision changes on any metadata edit). — *"resets with the dataset and keeps display settings across a re-list"*, *"re-derives range and threshold when a map's file changes, keeping how it is shown"*, *"re-derives a map's settings after a metadata edit removes a location"*
 - [ ] **A worker re-run's replacement keeps how the map was shown** (visible, opacity, colormap) when exactly one dropped and one new item share `meta.toolId`, and the overlay shows it with no user action; an ambiguous or other-tool match carries nothing. — *"carries how a map is shown to its replacement from a worker re-run"*, *"carries nothing over when the replacement is ambiguous or another tool's"*, *"shows a worker re-run's replacement map without user action"*
 
@@ -369,6 +418,7 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 ### Access
 
 - [ ] **List and tiles need READ; delete needs WRITE and refuses non-maps.** — *"testListReturnsOnlyValidMapsAndEnforcesRead"*, *"testTileEnforcesRead"*, *"testDeleteNeedsWriteAndRefusesNonMaps"*
+- [ ] **Delete removes only what the list shows.** An item with map metadata but no file or a second file is refused with the tile route's 400 (one `_mapFile` check), not removed. — *"testDeleteRefusesAnItemTheListSkips"*
 - [ ] **Revalidated tiles re-check READ.** A 304 is answered only after the access check. — *"testTilesRevalidateWithEtag"*
 - [ ] **Share views put their token on the tile URL.** — *"adds the threshold, version and share-view token only when set"*
 - [ ] **Delete is offered only to sessions that can write.** — *"offers delete only to sessions that can write"*
@@ -383,6 +433,7 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **A replaced file is never served stale**, by the server cache, the ETag or the client URL. — *"testCacheNotStaleAfterFileReplaced"*, *"re-syncs at once when the file's revision or the share-view token changes"*
 - [ ] **A same-size in-place replacement on an assetstore without checksums is not stale.** The file identity includes the file's `created`, which Girder rewrites on in-place replacement. — *"testSameSizeReplacementWithoutChecksumIsNotStale"*
 - [ ] **Any metadata-only edit changes the revision and the ETag**: the geometry (so browsers do not revalidate onto misplaced tiles), and `locations`, `valueRange` and `percentiles` (so a re-list re-derives layers, range and cutoff). The digest covers the whole validated object as canonical JSON. — *"testMetadataOnlyEditChangesRevisionAndEtag"*, *"testRevisionCoversTheWholeMetadata"*
+- [ ] **Infinite cells and overflowing ranges never reach the LUT as NaN.** A `+-inf` cell takes the end color; finite `min`/`max` whose difference overflows are a 400. Asserted on colors, not on the CPU's NaN-to-int cast. — *"testInfiniteCellsTakeTheEndColors"*, *"testTileBadRequests"*
 - [ ] **The legend comes from the server's colormap tables**, the ones the tiles are rendered from. — *"draws the legend from the server's colormap table"*, *"loads the legend tables once and retries after a failure"*, *"testColormapEndpointsMatchAnchors"*
 
 ### Reading and cost
@@ -393,7 +444,10 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **The array cache stays within its byte budget.** — *"testCacheStaysWithinBudget"*
 - [ ] **The file is read strictly as a ZIP with one explicit member**, checked and decoded from the same member. — *"testBareNpyIsRefusedWithoutDecoding"*, *"testChecksAndDecodesTheSameExplicitMember"*, *"testReadRejectsBadArrays"*, *"testFortranOrderMember"*
 - [ ] **A crafted archive is a 400, not a 500**: an encrypted member or an unknown compression method. — *"testEncryptedMemberIsRefused"*, *"testUnsupportedCompressionIsRefused"*, *"testCraftedArchiveIs400"*
-- [ ] **Only stored and deflated members are read**, checked before opening: bzip2 and LZMA expand without an output bound, possibly before the header caps apply. — *"testOnlyNumpysCompressionMethodsAreRead"*
+- [ ] **Only stored and deflated members are read**, checked before opening: bzip2 and LZMA expand without an output bound, before the header caps apply. — *"testOnlyNumpysCompressionMethodsAreRead"*
+- [ ] **The `.npy` header length is checked before the header is read.** A deflated member declaring a 64 MiB header is refused with peak allocation under 1 MiB (numpy alone reads and decodes it all first). — *"testNpyHeaderLengthIsCappedBeforeItIsRead"*
+- [ ] **The central directory is capped before ZipFile parses it** (16,384 entries, 2 MiB), and ordinary `np.savez` / `np.savez_compressed` files with several locations still load. — *"testOversizedCentralDirectoryIsRefusedBeforeParsing"*, *"testNumpyArchivesWithSeveralLocationsLoad"*
+- [ ] **Only float16/32/64 arrays are read**; a 16-byte long double is refused (skipped where long double is float64, e.g. macOS arm64). — *"testWideFloatIsRefused"*
 - [ ] **A storage failure is a server error, not a bad map**: an `OSError` from the file handle becomes `ScalarMapStorageError` (a 500), never "not a readable .npz". — *"testStorageFailureIsNotABadFile"*, *"testStorageFailureIsAServerError"*
 - [ ] **A location without data requests nothing.** — *"never creates a layer for a map with no data at the current location"*, *"follows the viewer's location and requests nothing where the map has no data"*
 - [ ] **Opacity is a restyle only**: no URL change, no new layer. — *"only restyles on an opacity change"*
@@ -408,11 +462,13 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **A new overlay is placed below the overview raster and worker preview at once**, not only at the next viewer draw, and that draw then moves nothing. — *"places a new overlay below the overview raster at once, without a viewer draw"*, *"goes under the annotation layer before the viewer has ordered the map"*
 - [ ] **The ordering compares relative order, so a deleted overlay's z-index gap does not make every later draw re-raise every layer.** — *"stops moving layers after an overlay is shown, hidden and drawn twice"*
 - [ ] **A metadata edit that removes the current location hides the layer and requests nothing.** — *"hides the layer and requests nothing when a metadata edit removes the current location"*
+- [ ] **Disabled while a dataset view loads, not only while unrolled**, so the outgoing dataset's map is never requested at the incoming location (the transcript overlay shares the same gate). — *"disables the scalar map and transcript overlays while a dataset view loads"*
 
 ### Panel semantics
 
 - [ ] **Sliders over map values use integer positions**, so a tiny range (1e-7) does not round to 0 in Vuetify. — *"maps integer positions over [%d, %d] without losing values"*, *"drives value sliders with integer positions, even on a tiny range"*, *"gives a constant map a usable slider range"*
 - [ ] **The copyable worker threshold reproduces the preview.** The value form is exact; a percent form that is not a whole stored percentile is marked approximate. — *"gives a whole percentile exactly and the value at full precision"*, *"marks a fractional or derived percent as approximate"*, *"gives the worker the exact cutoff, and marks an inexact percent"*
+- [ ] **The copied value cutoff is the exact string the tile URL sends** (full precision, one shared `exactNumberString`), so a float32 plateau selected by the preview is not excluded by the worker's inclusive `>=`. — *"copies the exact cutoff the tile route is sent, not a rounded one"*
 - [ ] **A share the user set is shown and copied exactly as set** (12.5, never rounded to 13); only an estimated share is rounded. — *"shows and offers to copy a set share exactly as set"*
 - [ ] **The picked share is state; the value is derived from it, never the reverse.** — *"keeps the requested share and derives the value; setting a value clears it"*, *"keeps the chosen share as state when set by percent"*
 - [ ] **Ties are reported, not hidden, and only real ties.** The readout labels the share as an estimate over all positions, and mentions ties only when the cutoff sits on a run of equal percentiles. — *"counts tied values with the selected side, as the inclusive cutoff does"*, *"says when ties select more tissue than was asked for"*, *"calls a difference a tie only when the cutoff sits on a run of equal percentiles"*, *"reads the threshold as a value and as a share of tissue"*
@@ -420,6 +476,7 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **Every whole percent maps exactly to its stored percentile, reported exact** (no float noise at 7, 14, 28, 29, 55–58), and a tie run starting there is included. — *"maps every whole percent to exactly its stored percentile, reported exact"*, *"includes a tie run that starts at a whole percentile"*
 - [ ] **The range thumbs stay one position apart** instead of a collapsed range being dropped. — *"keeps the range thumbs at least one position apart instead of dropping the update"*, *"keeps the range one position wide instead of dropping a collapsed range"*
 - [ ] **A delete confirmation belongs to its dataset, its palette and its session.** A dataset switch, hiding the palette or the target leaving the list closes it; a map not on screen is never deleted; and a late result never closes or writes into a later confirmation. — *"closes a pending confirmation on a dataset switch and never deletes the previous dataset's map"*, *"ends a confirmation when the palette is hidden"*, *"ends a confirmation when its map leaves the list"*, *"applies a delete's result only to the confirmation that started it"*
+- [ ] **Closing a confirmation does not end its DELETE.** Reopening the same map's confirmation mid-delete shows it still deleting and cannot send a second DELETE. — *"sends one DELETE when the confirmation is closed mid-delete, reopened and confirmed"*
 - [ ] **A map missing descriptive fields still shows sensibly** ("Untitled map", absent parts left out) and is not rejected. — *"falls back for a map missing its descriptive fields"*
 
 ### Symmetric pairs — change one, check the other
@@ -430,6 +487,9 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 | the range slider | the value-threshold slider (both on integer positions) |
 | the percent slider | the value slider (which one owns `threshold`) |
 | a delete's effect on the list | a list request already in flight |
+| a delete confirmation's session (dialog open/closed) | the DELETE request it started (per item, in the store) |
+| the tile URL's `threshold` | the copyable worker value (one `exactNumberString`) |
+| ImageViewer hiding image tiles while a view loads | the overlays drawn over them (`imageOverlaysDisabled`) |
 | the tile ETag inputs | the client's URL inputs (revision, token, every display parameter) |
 | `TranscriptOverlay` density layers | `ScalarMapOverlay` layers (one shared setup util) |
 | the app-bar button's availability | the command-palette entry's `isAvailable` |

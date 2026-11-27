@@ -323,7 +323,15 @@ const thresholdUnits = ref<"share" | "value">("share");
 
 const deleteDialog = ref(false);
 const pendingDelete = ref<IScalarMap | null>(null);
-const deleting = ref(false);
+// Whether the map this confirmation names has a DELETE in flight. Read from
+// the store, which holds it per item until the request settles: the request
+// outlives the dialog (Escape while deleting), so a flag reset on close let
+// a reopened confirmation send a second DELETE for the same map.
+const deleting = computed(
+  () =>
+    pendingDelete.value !== null &&
+    scalarMapsStore.deletingMapIds.includes(pendingDelete.value.itemId),
+);
 const deleteError = ref<string | null>(null);
 
 // The server enforces WRITE; this only hides the control from sessions that
@@ -440,16 +448,17 @@ function workerForms(map: IScalarMap) {
 
 // One confirmation is one session. The palette is mounted for the app's
 // lifetime, so a dialog can outlive its dataset (browser Back/Forward) and a
-// request can outlive its dialog (Escape while deleting): a result applies
-// only to the session that started it, and closing the dialog or switching
-// datasets ends the session.
+// request can outlive its dialog (Escape while deleting): a result (closing
+// the dialog, or its error) applies only to the session that started it,
+// and closing the dialog or switching datasets ends the session. Ending a
+// session does not end the request: `deleting` stays true for that map until
+// the store says it settled.
 let deleteSession = 0;
 
 // `pendingDelete` is kept so the closing dialog does not flash an empty
 // name; confirmDelete refuses a map that is not on screen anyway.
 function endDeleteSession() {
   deleteSession++;
-  deleting.value = false;
   deleteError.value = null;
 }
 
@@ -462,8 +471,11 @@ function askDelete(map: IScalarMap) {
 async function confirmDelete() {
   const map = pendingDelete.value;
   // Only a map of the dataset on screen: the confirmation names one of them.
+  // Never a map already being deleted (the store would join that request,
+  // but this session did not start it).
   if (
     !map ||
+    deleting.value ||
     !scalarMapsStore.currentMaps.some(
       (candidate) => candidate.itemId === map.itemId,
     )
@@ -471,7 +483,6 @@ async function confirmDelete() {
     return;
   }
   const session = deleteSession;
-  deleting.value = true;
   deleteError.value = null;
   try {
     await scalarMapsStore.deleteScalarMap(map.itemId);
@@ -482,10 +493,6 @@ async function confirmDelete() {
     logError("Failed to delete the saved map:", error);
     if (session === deleteSession) {
       deleteError.value = extractErrorMessage(error);
-    }
-  } finally {
-    if (session === deleteSession) {
-      deleting.value = false;
     }
   }
 }

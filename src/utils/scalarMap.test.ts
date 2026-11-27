@@ -20,6 +20,7 @@ import {
   workerThresholdForms,
 } from "./scalarMap";
 import { IScalarMapMeta } from "@/store/model";
+import ScalarMapAPI from "@/store/ScalarMapAPI";
 
 // 0th..100th percentiles of a uniform 0..200 distribution: p[i] = 2i.
 const LINEAR = Array.from({ length: 101 }, (_, i) => 2 * i);
@@ -119,8 +120,43 @@ describe("scalarMap worker threshold forms", () => {
     const cutoff = percentiles[80];
     expect(workerThresholdForms(percentiles, cutoff, "above", 20)).toEqual([
       { type: "Top percent of tissue", threshold: "20", approximate: false },
-      { type: "Value at least", threshold: "19.7530862", approximate: false },
+      { type: "Value at least", threshold: String(cutoff), approximate: false },
     ]);
+  });
+
+  it("copies the exact cutoff the tile route is sent, not a rounded one", () => {
+    // float32 0.3 as a double. Nine significant digits gave "0.300000012",
+    // above this plateau, so the worker's inclusive >= would exclude cells
+    // the preview selected at this cutoff.
+    const plateau = Math.fround(0.3);
+    expect(plateau).toBe(0.30000001192092896);
+    const percentiles = LINEAR.map((_, i) => (i <= 50 ? 0 : plateau));
+    const [, valueForm] = workerThresholdForms(
+      percentiles,
+      plateau,
+      "above",
+      null,
+    );
+    expect(valueForm.threshold).toBe("0.30000001192092896");
+    expect(Number(valueForm.threshold)).toBe(plateau);
+    const tileUrl = new ScalarMapAPI({
+      apiRoot: "http://host/api/v1",
+    } as any).tileTemplateUrl({
+      itemId: "item1",
+      location: "xy0_z0_t0",
+      sizeX: 1024,
+      sizeY: 1024,
+      tileSize: 256,
+      maxLevel: 2,
+      colormap: "viridis",
+      min: 0,
+      max: 1,
+      threshold: plateau,
+      thresholdSide: "above",
+    });
+    expect(new URL(tileUrl).searchParams.get("threshold")).toBe(
+      valueForm.threshold,
+    );
   });
 
   it("marks a fractional or derived percent as approximate", () => {
@@ -253,7 +289,8 @@ describe("scalarMap display helpers", () => {
     expect(formatMapValue(0)).toBe("0");
     expect(formatMapValue(NaN)).toBe("–");
     expect(formatMapValue(2.5e6)).toBe("2.50e+6");
-    expect(formatExactValue(0.1 + 0.2)).toBe("0.3");
+    // Full precision: exactly the double, never rounded.
+    expect(formatExactValue(0.1 + 0.2)).toBe("0.30000000000000004");
     expect(formatExactValue(1.23456789e-7)).toBe("1.23456789e-7");
     expect(formatShare(4.56)).toBe("4.6");
     expect(formatShare(42.4)).toBe("42");

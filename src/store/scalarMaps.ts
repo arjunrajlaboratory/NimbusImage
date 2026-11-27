@@ -35,6 +35,11 @@ let listInFlight: {
   promise: Promise<void>;
 } | null = null;
 let colormapStopsRequest: Promise<void> | null = null;
+// The DELETE in flight per item id, so a second request for the same map
+// (a confirmation closed with Escape and opened again before the first
+// settled) shares the first instead of failing on an item it already
+// removed. Mirrored in the reactive `deletingMapIds` for the UI.
+const deletesInFlight = new Map<string, Promise<void>>();
 
 // A finished list request stops being shareable (only if it is still the
 // current one: a newer request may have replaced it).
@@ -130,6 +135,14 @@ export class ScalarMaps extends VuexModule {
   // (server/helpers/colormaps.py), which the tile route samples, read
   // through color_by_property/options. null until loaded.
   colormapStops: Record<string, string[]> | null = null;
+  // Item ids with a DELETE in flight. A state per item: absent (idle) or
+  // present (deleting). Only `deleteScalarMap` writes it: added when the
+  // request is sent, removed when it settles (success or failure). Nothing
+  // else ends it: closing the confirmation, hiding the palette or switching
+  // datasets does not cancel the request, so the map stays "deleting" until
+  // the server answers. Several maps may be deleting at once; a second
+  // delete of the same map joins the first.
+  deletingMapIds: string[] = [];
 
   get currentMaps(): IScalarMap[] {
     return this.mapsDatasetId !== null &&
@@ -360,6 +373,14 @@ export class ScalarMaps extends VuexModule {
   }
 
   @Mutation
+  setScalarMapDeleting(payload: { itemId: string; deleting: boolean }) {
+    const others = this.deletingMapIds.filter((id) => id !== payload.itemId);
+    this.deletingMapIds = payload.deleting
+      ? [...others, payload.itemId]
+      : others;
+  }
+
+  @Mutation
   removeScalarMap(itemId: string) {
     this.maps = this.maps.filter((map) => map.itemId !== itemId);
     const display = { ...this.display };
@@ -426,20 +447,38 @@ export class ScalarMaps extends VuexModule {
     await promise;
   }
 
-  /** Delete a saved map (WRITE on the item); throws the server's reason. */
+  /**
+   * Delete a saved map (WRITE on the item); throws the server's reason. A
+   * call for a map whose DELETE is still in flight joins that request (and
+   * its outcome) instead of sending another.
+   */
   @Action({ rawError: true })
   async deleteScalarMap(itemId: string): Promise<void> {
-    await main.scalarMapAPI.deleteMap(itemId);
-    // A list response captured before the delete would bring the map back:
-    // invalidate it, and list again if one was pending (it may carry a map
-    // saved meanwhile).
-    const wasListing = listInFlight !== null;
-    listRequestGeneration++;
-    listInFlight = null;
-    this.removeScalarMap(itemId);
-    if (wasListing) {
-      void this.refreshScalarMaps(true);
+    const pending = deletesInFlight.get(itemId);
+    if (pending) {
+      return pending;
     }
+    const request = (async () => {
+      this.setScalarMapDeleting({ itemId, deleting: true });
+      try {
+        await main.scalarMapAPI.deleteMap(itemId);
+      } finally {
+        deletesInFlight.delete(itemId);
+        this.setScalarMapDeleting({ itemId, deleting: false });
+      }
+      // A list response captured before the delete would bring the map
+      // back: invalidate it, and list again if one was pending (it may
+      // carry a map saved meanwhile).
+      const wasListing = listInFlight !== null;
+      listRequestGeneration++;
+      listInFlight = null;
+      this.removeScalarMap(itemId);
+      if (wasListing) {
+        void this.refreshScalarMaps(true);
+      }
+    })();
+    deletesInFlight.set(itemId, request);
+    await request;
   }
 }
 

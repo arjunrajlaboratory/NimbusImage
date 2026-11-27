@@ -38,7 +38,9 @@ const props = defineProps<{
   sizeX: number;
   sizeY: number;
   maxLevel: number;
-  // Unrolled views place frames on a grid the map knows nothing about.
+  // Unrolled views place frames on a grid the map knows nothing about; a
+  // loading dataset view pairs the incoming location with the outgoing
+  // dataset (and its listed maps). ImageViewer sets this in both cases.
   disabled: boolean;
 }>();
 
@@ -101,7 +103,8 @@ function sync() {
   for (const map of maps) {
     const display = scalarMapsStore.display[map.itemId];
     if (!display?.visible || props.disabled) {
-      // Hidden by the user (or unrolled): free the canvas and tile cache.
+      // Hidden by the user, or disabled (unrolled, or a dataset view
+      // loading): free the canvas and tile cache.
       dropLayer(map.itemId);
       continue;
     }
