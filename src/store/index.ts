@@ -797,12 +797,19 @@ function createNotLoggedInNotification() {
 // at it. Resolves to whether the dataset or collection itself was deleted:
 // the caller navigates away on that answer, so it must not depend on the view
 // cleanup.
-// - The views are listed first, deleted only after the delete succeeded. A
+// - Nothing is awaited before the delete request, so it goes out under the
+//   session the user confirmed in.
+// - The views are listed and deleted only after the delete succeeded. A
 //   refused or failed delete must leave them alone, or the page the user stays
-//   on would list views that are gone.
+//   on would list views that are gone. Listing afterwards (the endpoint
+//   filters on the stored ids and does not load the parent) also picks up a
+//   view another tab added in the meantime.
 // - A failed delete is shown as a notification: the caller keeps its confirm
 //   dialog open, and the sync indicator is behind that dialog's scrim.
 // - View cleanup is best effort. A failure is flagged on the sync indicator.
+// - onDeleted, which clears what the calling page is showing, runs last: the
+//   page's confirm button stays clickable until this resolves, and a second
+//   click must still find the dataset or collection it names.
 async function deleteWithItsDatasetViews({
   api,
   what,
@@ -817,13 +824,6 @@ async function deleteWithItsDatasetViews({
   onDeleted: () => Promise<void>;
 }): Promise<boolean> {
   sync.setSaving(true);
-  let views: IDatasetView[] = [];
-  let cleanupError: Error | null = null;
-  try {
-    views = await api.findDatasetViews(viewFilter);
-  } catch (error) {
-    cleanupError = error as Error;
-  }
   try {
     await deleteIt();
   } catch (error) {
@@ -836,13 +836,19 @@ async function deleteWithItsDatasetViews({
     });
     return false;
   }
-  await onDeleted();
-  const failedCleanup = (
-    await Promise.allSettled(views.map(({ id }) => api.deleteDatasetView(id)))
-  ).find((result) => result.status === "rejected");
-  if (failedCleanup) {
-    cleanupError = (failedCleanup as PromiseRejectedResult).reason;
+  let cleanupError: Error | null = null;
+  try {
+    const views: IDatasetView[] = await api.findDatasetViews(viewFilter);
+    const failedCleanup = (
+      await Promise.allSettled(views.map(({ id }) => api.deleteDatasetView(id)))
+    ).find((result) => result.status === "rejected");
+    if (failedCleanup) {
+      cleanupError = (failedCleanup as PromiseRejectedResult).reason;
+    }
+  } catch (error) {
+    cleanupError = error as Error;
   }
+  await onDeleted();
   sync.setSaving(cleanupError ?? false);
   return true;
 }

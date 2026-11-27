@@ -1286,6 +1286,7 @@ describe("delete actions report whether they deleted", () => {
   // dialog: its views must be untouched (the page still lists them) and the
   // reason must be shown where the user can see it.
   function expectFailedDeleteReported(what: string) {
+    expect(main.api.findDatasetViews).not.toHaveBeenCalled();
     expect(main.api.deleteDatasetView).not.toHaveBeenCalled();
     expect(setSaving).toHaveBeenLastCalledWith(boom);
     expect(createNotification).toHaveBeenCalledTimes(1);
@@ -1297,6 +1298,30 @@ describe("delete actions report whether they deleted", () => {
       }),
     );
   }
+
+  it("deleteDataset sends the delete first and clears the open dataset last", async () => {
+    // Nothing may be awaited before the delete request (it must go out under
+    // the session the user confirmed in), and the open dataset must survive
+    // until the view cleanup is done: the page's confirm button stays
+    // clickable until the action resolves and reads that dataset.
+    const dataset = { id: "ds1" } as any;
+    const state = (rootStore.state as any).main;
+    state.dataset = dataset;
+    let datasetDuringCleanup: unknown = "not called";
+    vi.spyOn(main.api, "deleteDatasetView").mockImplementation((async () => {
+      datasetDuringCleanup = state.dataset;
+    }) as any);
+    try {
+      await expect(main.deleteDataset(state.dataset)).resolves.toBe(true);
+      const order = (method: "deleteDataset" | "findDatasetViews") =>
+        vi.mocked(main.api[method]).mock.invocationCallOrder[0];
+      expect(order("deleteDataset")).toBeLessThan(order("findDatasetViews"));
+      expect(toRaw(datasetDuringCleanup)).toBe(dataset);
+      expect(state.dataset).toBeNull();
+    } finally {
+      state.dataset = null;
+    }
+  });
 
   it("deleteDataset resolves to true after deleting, and removes its views", async () => {
     await expect(main.deleteDataset({ id: "ds1" } as any)).resolves.toBe(true);
