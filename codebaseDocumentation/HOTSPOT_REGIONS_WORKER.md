@@ -336,6 +336,14 @@ folder and describe it in the item's metadata. Part B reads only this.
   and the file at most 512 MiB. See `SCALAR_MAP_LAYER.md`.
 - `Replace previous run` deletes the tool's previous map item (match on
   `nimbusScalarMap.toolId`) before uploading.
+- **`toolId` is also how the layer recognizes a re-run.** The new item has a
+  new id, so the layer matches it to the one it replaces by `toolId` and
+  carries over whether the map is shown, its opacity, its colormap and its
+  place in the stacking order (range and threshold are derived again from
+  the new values). That works only when the match is unambiguous: exactly
+  one item with that `toolId` dropped and exactly one added. Always write a
+  non-empty `toolId`, and keep one map per tool; a user who wants two maps
+  side by side (two radii, two properties) uses two tool instances.
 - Upload with `gc.uploadFileToFolder` + `gc.addMetadataToItem`, as
   `histogram_matching` does.
 
@@ -445,15 +453,28 @@ regression checklist.
   names are module-specific (`setScalarMaps`, ...): store modules are not
   namespaced, and a shared name runs in every module that declares it.
 - The list is fetched whenever a dataset is opened in the viewer, when the
-  palette is shown, after any worker job on the open dataset succeeds, and
-  from the palette's Refresh button, so a map the worker just saved appears
-  without a reload.
+  palette is shown, about a second after any job on the open dataset ends
+  (in any terminal state: a failed or canceled run may already have deleted
+  the previous map), and from the palette's Refresh button, so a map the
+  worker just saved appears without a reload. A re-list keeps how each map
+  is shown, and a re-run's new item inherits it through `toolId` (§5.8).
+- Several maps can be shown at once, blended by their opacities. They stack
+  in the palette's list order, the first card on top, whichever was turned
+  on last; cards are dragged by a handle to reorder. The order is
+  session-only state in the store (the order of `maps`), like the per-map
+  display settings: nothing is saved to the configuration. New maps go
+  last; a re-run's map takes the slot of the one it replaces.
 - `ScalarMapOverlay.vue`, mounted by `ImageViewer` beside `TranscriptOverlay`:
   one GeoJS `osm` layer per visible map, under the annotation layer,
   `keepLower = false`, opacity as a restyle (never a refetch). Factor the
   shared layer setup out of `TranscriptOverlay.vue` instead of copying it.
   Follows the viewer's current XY/Z/Time; a map with no array for the current
-  location shows nothing.
+  location shows nothing. A tile that fails to load marks the map's card,
+  and Refresh requests the failed tiles again.
+- The maps draw under the cells (outlines, or the overview raster when
+  zoomed out). The palette's **Show objects** checkbox is the viewer's
+  existing object switch (hotkey A), offered there so the cells can be
+  hidden to see a map on its own.
 - `ScalarMapsPanel.vue`, the **Map Layers** palette: list of maps (name,
   statistic, radius), visibility, opacity, colormap, range, a threshold slider
   that can be read as a value or as "top N% of tissue" (from `percentiles`),
@@ -480,7 +501,8 @@ transparent NaN, colors at known values, threshold dimming, 400s on bad
 params and out-of-pyramid tiles; delete needs WRITE. Frontend (vitest): the
 overlay creates/removes layers with visibility, changes URL on
 range/threshold/location change and only restyles on opacity; percent ↔ value
-conversion. Live check with real clicks on a dataset that has a saved map.
+conversion; stacking in list order, reordering, and the order kept across a
+re-list. Live check with real clicks on a dataset that has a saved map.
 Done: `codebaseDocumentation/SCALAR_MAP_LAYER.md` (with the regression
 checklist) and the `scalar_map` row in `CLAUDE.md`'s endpoint table.
 

@@ -132,7 +132,7 @@ const DraggableStub = defineComponent({
     itemKey: { type: String, default: "" },
     handle: { type: String, default: "" },
   },
-  emits: ["update:modelValue"],
+  emits: ["update:modelValue", "start", "end"],
   setup(props, { slots }) {
     return () =>
       h(
@@ -549,6 +549,53 @@ describe("ScalarMapsPanel", () => {
       ).toEqual(["a", "b"]);
       list.vm.$emit("update:modelValue", [MAP_B, MAP]);
       expect(mocks.reorderMaps).toHaveBeenCalledWith(["b", "a"]);
+    });
+
+    it("ignores a drop on a list that changed during the drag and mounts the list again", async () => {
+      const MAP_C = { ...MAP, itemId: "c" };
+      (scalarMapsStore as any).currentMaps = [MAP, MAP_B, MAP_C];
+      (scalarMapsStore as any).display = {
+        a: display(),
+        b: display(),
+        c: display(),
+      };
+      const wrapper = mountWithCards();
+      const list = () => wrapper.findComponent(DraggableStub);
+      const mounted = list().vm;
+      list().vm.$emit("start");
+      // A re-list after a job ended drops the first map mid-drag.
+      (scalarMapsStore as any).currentMaps = [MAP_B, MAP_C];
+      await nextTick();
+      list().vm.$emit("update:modelValue", [MAP_C, MAP_B]);
+      expect(mocks.reorderMaps).not.toHaveBeenCalled();
+      list().vm.$emit("end");
+      await nextTick();
+      expect(list().vm).not.toBe(mounted);
+      // The next drag is a new session.
+      list().vm.$emit("start");
+      list().vm.$emit("update:modelValue", [MAP_C, MAP_B]);
+      expect(mocks.reorderMaps).toHaveBeenCalledWith(["c", "b"]);
+    });
+
+    it("keeps the list mounted after an ordinary drop", async () => {
+      (scalarMapsStore as any).currentMaps = [MAP, MAP_B];
+      (scalarMapsStore as any).display = { a: display(), b: display() };
+      // The store applies the order, as the real mutation does.
+      mocks.reorderMaps.mockImplementation((ids: string[]) => {
+        (scalarMapsStore as any).currentMaps = ids.map((id) =>
+          id === "a" ? MAP : MAP_B,
+        );
+      });
+      const wrapper = mountWithCards();
+      const list = () => wrapper.findComponent(DraggableStub);
+      const mounted = list().vm;
+      list().vm.$emit("start");
+      list().vm.$emit("update:modelValue", [MAP_B, MAP]);
+      list().vm.$emit("end");
+      await nextTick();
+      expect(mocks.reorderMaps).toHaveBeenCalledWith(["b", "a"]);
+      expect(list().vm).toBe(mounted);
+      mocks.reorderMaps.mockReset();
     });
 
     it("offers the drag handle and its hint only with more than one map", async () => {

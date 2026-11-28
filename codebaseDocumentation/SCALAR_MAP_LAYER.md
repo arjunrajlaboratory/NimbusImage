@@ -433,7 +433,8 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
   `reorderScalarMaps` with the new id order. Cards drag only by their handle
   (`handle: ".map-drag-handle"`), so the sliders, the checkbox and text
   selection inside a card keep working. The handle and the caption appear
-  only with more than one map. Unit tests stub `draggable` with a component
+  only with more than one map. A drop is ignored when the list changed
+  during the drag (`dragStartIds`; see the checklist). Unit tests stub `draggable` with a component
   that renders its `#item` slot per element: `shallowMount`'s own stub
   renders no cards.
 - **Ties.** The selection is inclusive, so a value shared by many cells counts
@@ -594,6 +595,8 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **Closing a confirmation does not end its DELETE.** Reopening the same map's confirmation mid-delete shows it still deleting and cannot send a second DELETE. — *"sends one DELETE when the confirmation is closed mid-delete, reopened and confirmed"*
 - [ ] **A closed palette does no per-frame rendering** (card bodies gated on `visible`), reopening shows current values at once, and the delete dialog still works. — *"does no per-frame rendering while hidden, and shows current values when reopened"*, *"keeps the delete confirmation working with the card bodies gated"*
 - [ ] **Dragging a card commits the new order, by its handle only, and the handle and caption appear only with more than one map.** — *"commits the new order when a card is dropped"*, *"offers the drag handle and its hint only with more than one map"*
+- [ ] **A drop on a list that changed during the drag is ignored.** vuedraggable moves the element at the index it captured at drag start, so after a re-list or a delete lands mid-drag the drop would move another map and leave the DOM order unlike the list. The panel remembers the listed ids at `start` (`dragStartIds`, cleared at `end`), ignores a drop when they differ, and mounts the list again; an ordinary drop does not remount it. — *"ignores a drop on a list that changed during the drag and mounts the list again"*, *"keeps the list mounted after an ordinary drop"*
+- [ ] **Show objects is the viewer's object switch, not a copy of it**: it reads `store.drawAnnotations`, writes through `setDrawAnnotations`, and follows a change made by hotkey A or the settings panel. — *"shows and sets the viewer's object switch"*
 - [ ] **A map missing descriptive fields still shows sensibly** ("Untitled map", absent parts left out) and is not rejected. — *"falls back for a map missing its descriptive fields"*
 
 ### Symmetric pairs — change one, check the other

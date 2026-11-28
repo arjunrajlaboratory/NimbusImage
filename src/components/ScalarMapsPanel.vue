@@ -78,10 +78,13 @@
          selection inside a card keep working. The order is the store's
          (`reorderScalarMaps`), and the overlay stacks by it. -->
     <draggable
+      :key="listRemounts"
       :model-value="maps"
       item-key="itemId"
       handle=".map-drag-handle"
       :animation="150"
+      @start="onDragStart"
+      @end="onDragEnd"
       @update:model-value="reorder"
     >
       <template #item="{ element: map }">
@@ -413,7 +416,47 @@ function update(
 // A drop: the whole list in its new order (vuedraggable never changes the
 // array it is given). Session-only, like `display`.
 function reorder(reordered: IScalarMap[]) {
-  scalarMapsStore.reorderScalarMaps(reordered.map((map) => map.itemId));
+  if (listChangedDuringDrag()) {
+    return;
+  }
+  const itemIds = reordered.map((map) => map.itemId);
+  scalarMapsStore.reorderScalarMaps(itemIds);
+  // The drop's own change is not a change made under the drag.
+  dragStartIds.value = itemIds;
+}
+
+// A drag in progress: the listed ids when it started, or null when no card
+// is being dragged. Set by the list's `start`, cleared by its `end`; a drop
+// (`reorder`, which runs before `end`) moves it to the order it committed.
+// It exists because the list can change under a drag (a re-list after a job
+// ends, a delete settling): vuedraggable moves the element at the index it
+// captured at drag start, so on a changed list the drop would move another
+// map and leave the DOM order unlike the list. Such a drop is ignored and
+// the list is mounted again from the store. A drag whose `end` never fires
+// (the palette is unmounted) leaves nothing behind: the next `start`
+// overwrites it, and `reorder` only runs during a drag.
+const dragStartIds = ref<string[] | null>(null);
+// Bumped to mount the list again after an ignored drop.
+const listRemounts = ref(0);
+
+function listChangedDuringDrag(): boolean {
+  const started = dragStartIds.value;
+  return (
+    started !== null &&
+    (started.length !== maps.value.length ||
+      maps.value.some((map, index) => map.itemId !== started[index]))
+  );
+}
+
+function onDragStart() {
+  dragStartIds.value = maps.value.map((map) => map.itemId);
+}
+
+function onDragEnd() {
+  if (listChangedDuringDrag()) {
+    listRemounts.value++;
+  }
+  dragStartIds.value = null;
 }
 
 // Refresh lists the maps again and requests every failed tile again: GeoJS
