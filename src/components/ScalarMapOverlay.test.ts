@@ -141,7 +141,24 @@ function makeMap() {
         failTile: (tile: any) => layer.failureHandlers.get(tile)?.(),
         purge: (tile: any) => cache.delete(tile.toString()),
         opacity: vi.fn(),
-        zIndex: vi.fn(),
+        // GeoJS's rules (geojs/src/layer.js): a new layer gets the top
+        // z-index; a set without allowDuplicate bumps a sibling holding the
+        // value (recursively).
+        _z: held.length ? Math.max(...held.map((other) => other._z)) + 1 : 0,
+        zIndex: vi.fn((value?: number, allowDuplicate?: boolean) => {
+          if (value === undefined) {
+            return layer._z;
+          }
+          if (!allowDuplicate) {
+            [...held].reverse().forEach((other) => {
+              if (other !== layer && other._z === value) {
+                other.zIndex(value + 1);
+              }
+            });
+          }
+          layer._z = value;
+          return layer;
+        }),
         node: () => ({ css: vi.fn() }),
       };
       osmLayers.push(layer);
@@ -353,6 +370,66 @@ describe("ScalarMapOverlay", () => {
     expect(osmLayers[0].url).not.toHaveBeenCalledWith(
       expect.stringContaining("min=2"),
     );
+  });
+
+  describe("stacking", () => {
+    // Creation indices of the held layers, top first.
+    const stackOf = (osmLayers: any[], held: any[]) =>
+      [...held]
+        .sort((x, y) => y._z - x._z)
+        .map((layer) => osmLayers.indexOf(layer));
+
+    it("draws the first listed map on top, whichever was turned on last", async () => {
+      mocks.maps.currentMaps = [scalarMap("a"), scalarMap("b")];
+      mocks.maps.display = { a: display({ visible: false }), b: display() };
+      const { osmLayers, held } = mount();
+      // b's layer (index 0) first, then a's (index 1), which GeoJS puts on
+      // the same slot as b's (beneath the annotation layer), bumping b up.
+      mocks.maps.display.a = display();
+      await nextTick();
+      expect(osmLayers).toHaveLength(2);
+      expect(stackOf(osmLayers, held)).toEqual([1, 0]);
+      // A later sync (a scrub) moves no layer.
+      osmLayers.forEach((layer) => layer.zIndex.mockClear());
+      mocks.store.time = 0.5;
+      await nextTick();
+      mocks.store.time = 0;
+      await nextTick();
+      osmLayers.forEach((layer) =>
+        expect(
+          layer.zIndex.mock.calls.filter(
+            ([value]: any[]) => value !== undefined,
+          ),
+        ).toEqual([]),
+      );
+    });
+
+    it("restacks on a reorder without recreating layers or changing URLs", async () => {
+      mocks.maps.currentMaps = [scalarMap("a"), scalarMap("b")];
+      mocks.maps.display = { a: display(), b: display() };
+      const { map, osmLayers, held } = mount();
+      // a's layer is 0, b's is 1.
+      expect(stackOf(osmLayers, held)).toEqual([0, 1]);
+      osmLayers.forEach((layer) => {
+        layer.url.mockClear();
+        layer.zIndex.mockClear();
+      });
+      mocks.maps.currentMaps = [scalarMap("b"), scalarMap("a")];
+      await nextTick();
+      vi.advanceTimersByTime(200);
+      expect(stackOf(osmLayers, held)).toEqual([1, 0]);
+      expect(map.createLayer).toHaveBeenCalledTimes(2);
+      expect(map.deleteLayer).not.toHaveBeenCalled();
+      osmLayers.forEach((layer) => {
+        expect(layer.url).not.toHaveBeenCalled();
+        // Only swaps the held slots: never bumps another layer.
+        layer.zIndex.mock.calls
+          .filter(([value]: any[]) => value !== undefined)
+          .forEach(([, allowDuplicate]: any[]) =>
+            expect(allowDuplicate).toBe(true),
+          );
+      });
+    });
   });
 
   it("does not delete layers again from a map that already exited them", () => {

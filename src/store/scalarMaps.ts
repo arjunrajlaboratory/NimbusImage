@@ -123,6 +123,7 @@ export function defaultScalarMapDisplay(map: IScalarMap): IScalarMapDisplay {
  */
 @Module({ dynamic: true, store, name: "scalarMaps" })
 export class ScalarMaps extends VuexModule {
+  // In the user's order: the first map draws on top (`reorderScalarMaps`).
   maps: IScalarMap[] = [];
   mapsDatasetId: string | null = null;
   loading = false;
@@ -219,6 +220,12 @@ export class ScalarMaps extends VuexModule {
    *   both share `meta.toolId` and the match is unambiguous (exactly one
    *   dropped and one new item for that tool). Without this, every
    *   iteration (tweak the radius, re-run, look again) came back hidden.
+   *
+   * The list order (the overlay's stacking, first on top; see
+   * `reorderScalarMaps`) carries over a re-list of the same dataset too: a
+   * map keeps its position, a worker re-run's replacement takes the
+   * position of the item it replaces, and maps not listed before go after,
+   * in the server's order. Another dataset starts in the server's order.
    */
   @Mutation
   setScalarMaps(payload: { datasetId: string; maps: unknown[] }) {
@@ -235,6 +242,20 @@ export class ScalarMaps extends VuexModule {
     const replacedBy = sameDataset
       ? replacementsByTool(this.maps, maps)
       : new Map<string, string>();
+    if (sameDataset) {
+      const position = new Map(
+        this.maps.map((map, index) => [map.itemId, index]),
+      );
+      const positionOf = (map: IScalarMap) =>
+        position.get(map.itemId) ??
+        position.get(replacedBy.get(map.itemId) ?? "") ??
+        Infinity;
+      // Stable: maps not listed before keep the server's order, last.
+      maps.sort((a, b) => {
+        const [pa, pb] = [positionOf(a), positionOf(b)];
+        return pa === pb ? 0 : pa < pb ? -1 : 1;
+      });
+    }
     const display: Record<string, IScalarMapDisplay> = {};
     for (const map of maps) {
       const kept = sameDataset
@@ -260,6 +281,26 @@ export class ScalarMaps extends VuexModule {
     this.tileFailedMapIds = sameDataset
       ? this.tileFailedMapIds.filter((itemId) => itemId in display)
       : [];
+  }
+
+  /**
+   * Put the listed maps in this order (session-only, like `display`): the
+   * first draws on top of the others (ScalarMapOverlay). Unknown ids are
+   * ignored; listed maps left out keep their relative order after the named
+   * ones. Assigns nothing when the order is unchanged.
+   */
+  @Mutation
+  reorderScalarMaps(itemIds: string[]) {
+    const byId = new Map(this.maps.map((map) => [map.itemId, map]));
+    const named = [...new Set(itemIds)]
+      .filter((itemId) => byId.has(itemId))
+      .map((itemId) => byId.get(itemId)!);
+    const namedSet = new Set(named);
+    const next = [...named, ...this.maps.filter((map) => !namedSet.has(map))];
+    if (next.every((map, index) => map === this.maps[index])) {
+      return;
+    }
+    this.maps = next;
   }
 
   @Mutation

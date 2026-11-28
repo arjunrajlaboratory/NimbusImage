@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { nextTick } from "vue";
+import { defineComponent, h, nextTick } from "vue";
 import { shallowMount, enableAutoUnmount } from "@vue/test-utils";
 
 enableAutoUnmount(afterEach);
@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   setThresholdValue: vi.fn(),
   requestTileRetry: vi.fn(),
   locationKey: null as any,
+  setDrawAnnotations: vi.fn(),
+  reorderMaps: vi.fn(),
 }));
 
 // Spy on the per-card position lookup (the only part of a card that reads
@@ -31,6 +33,8 @@ vi.mock("@/store", async () => ({
     xy: 0,
     z: 0,
     time: 0,
+    drawAnnotations: true,
+    setDrawAnnotations: mocks.setDrawAnnotations,
   }),
 }));
 
@@ -55,6 +59,7 @@ vi.mock("@/store/scalarMaps", async () => {
       setScalarMapThresholdValue: mocks.setThresholdValue,
       setScalarMapThresholdSide: vi.fn(),
       resetScalarMapRange: vi.fn(),
+      reorderScalarMaps: mocks.reorderMaps,
     }),
   };
 });
@@ -118,8 +123,35 @@ function display(overrides: Record<string, any> = {}) {
   };
 }
 
+// shallowMount's own stub of vuedraggable renders no `#item` slot, so no
+// card: this one renders it for each element, as vuedraggable does.
+const DraggableStub = defineComponent({
+  name: "draggable",
+  props: {
+    modelValue: { type: Array, default: () => [] },
+    itemKey: { type: String, default: "" },
+    handle: { type: String, default: "" },
+  },
+  emits: ["update:modelValue"],
+  setup(props, { slots }) {
+    return () =>
+      h(
+        "div",
+        { class: "draggable-stub" },
+        props.modelValue.map((element, index) =>
+          slots.item?.({ element, index }),
+        ),
+      );
+  },
+});
+
+const stubs = { draggable: DraggableStub };
+
 function mount(visible = true) {
-  return shallowMount(ScalarMapsPanel, { props: { visible } });
+  return shallowMount(ScalarMapsPanel, {
+    props: { visible },
+    global: { stubs },
+  });
 }
 
 describe("ScalarMapsPanel", () => {
@@ -145,6 +177,7 @@ describe("ScalarMapsPanel", () => {
     (store as any).time = 0;
     mocks.requestTileRetry.mockClear();
     mocks.locationKey.mockClear();
+    mocks.reorderMaps.mockClear();
   });
 
   // Renders the slots of the stubbed Vuetify children, so the card bodies
@@ -152,7 +185,7 @@ describe("ScalarMapsPanel", () => {
   function mountWithCards(visible = true) {
     return shallowMount(ScalarMapsPanel, {
       props: { visible },
-      global: { renderStubDefaultSlot: true },
+      global: { renderStubDefaultSlot: true, stubs },
     });
   }
 
@@ -434,6 +467,22 @@ describe("ScalarMapsPanel", () => {
     (store as any).girderUser = null;
     expect((mount().vm as any).canDelete).toBe(false);
   });
+  it("shows and sets the viewer's object switch", async () => {
+    (store as any).drawAnnotations = true;
+    mocks.setDrawAnnotations.mockClear();
+    const wrapper = mount();
+    const toggle = () =>
+      wrapper.find(".objects-toggle").findComponent({ name: "VCheckboxBtn" });
+    expect(toggle().props("modelValue")).toBe(true);
+    toggle().vm.$emit("update:modelValue", false);
+    expect(mocks.setDrawAnnotations).toHaveBeenCalledWith(false);
+    // Follows the store, which hotkey A and the settings panel also write.
+    (store as any).drawAnnotations = false;
+    await nextTick();
+    expect(toggle().props("modelValue")).toBe(false);
+    (store as any).drawAnnotations = true;
+  });
+
   it("Refresh lists the maps again and requests failed tiles again", () => {
     (mount().vm as any).refresh();
     expect(mocks.requestTileRetry).toHaveBeenCalledTimes(1);
@@ -482,5 +531,42 @@ describe("ScalarMapsPanel", () => {
     await vm.confirmDelete();
     expect(mocks.deleteMap).toHaveBeenCalledWith("a");
     expect(vm.deleteDialog).toBe(false);
+  });
+
+  describe("map order", () => {
+    const MAP_B = { ...scalarMap(), itemId: "b" };
+
+    it("commits the new order when a card is dropped", () => {
+      (scalarMapsStore as any).currentMaps = [MAP, MAP_B];
+      (scalarMapsStore as any).display = { a: display(), b: display() };
+      const wrapper = mountWithCards();
+      const list = wrapper.findComponent(DraggableStub);
+      expect(list.props("handle")).toBe(".map-drag-handle");
+      expect(
+        wrapper
+          .findAll(".map-card")
+          .map((card) => card.attributes("data-map-id")),
+      ).toEqual(["a", "b"]);
+      list.vm.$emit("update:modelValue", [MAP_B, MAP]);
+      expect(mocks.reorderMaps).toHaveBeenCalledWith(["b", "a"]);
+    });
+
+    it("offers the drag handle and its hint only with more than one map", async () => {
+      const wrapper = mountWithCards();
+      expect(wrapper.find(".map-card").exists()).toBe(true);
+      expect(wrapper.find(".map-drag-handle").exists()).toBe(false);
+      expect(wrapper.find(".reorder-hint").exists()).toBe(false);
+      (scalarMapsStore as any).currentMaps = [MAP, MAP_B];
+      (scalarMapsStore as any).display = { a: display(), b: display() };
+      await nextTick();
+      const handles = wrapper.findAll(".map-drag-handle");
+      expect(handles).toHaveLength(2);
+      expect(handles[0].attributes("aria-label")).toBe(
+        "Drag to reorder Area mean, 50 µm",
+      );
+      expect(wrapper.find(".reorder-hint").text()).toBe(
+        "Drag to reorder. The top map is drawn on top.",
+      );
+    });
   });
 });

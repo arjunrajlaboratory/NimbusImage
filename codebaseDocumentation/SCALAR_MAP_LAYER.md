@@ -29,10 +29,22 @@ deployment. Unlike the spatial plugin's routes, the client does not check
   loads and after listing failed, so a network blip does not hide the
   feature; without maps it is not offered (nor is its command-palette entry),
   and a later re-list of such a dataset does not flash it.
+- **Show objects**, at the top, is the viewer's own object switch (hotkey A,
+  `store.drawAnnotations`): cells are drawn above the maps, as vectors or as
+  the overview raster, and this hides both. It is a second control for the
+  same state as the Object display settings, not a setting of its own.
 - Each map shows its name and statistic · property · radius. The checkbox
   shows it in the viewer. While shown, the card offers opacity, colormap
   (viridis, magma, inferno, gray), a color bar, the display range (with
   Reset), and a threshold preview.
+- **Order.** Maps shown together stack in the list's order: the first map is
+  drawn on top, the last at the bottom, whichever was turned on last. With
+  more than one map, each card has a drag handle (`mdi-drag-vertical`, left
+  of its checkbox) and a caption says "Drag to reorder. The top map is drawn
+  on top."; dragging a card by its handle reorders the list and the stacking
+  follows at once. The order lasts for the session, like the display
+  settings: it is not saved, survives a re-list of the same dataset, and
+  starts in the server's order on another dataset.
 - **Threshold preview.** Pick a side (Above / Below) and set the cutoff either
   as a share of tissue ("% of tissue") or as a value. The readout gives both,
   e.g. "Value ≥ 160 µm² · ≈ top 20% of tissue (all positions)"; the share is
@@ -287,6 +299,15 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
   `meta.toolId` (`replacementsByTool`), the new item inherits visible,
   opacity and colormap the same way, so the iterate loop (tweak, re-run,
   look) does not come back hidden. Ambiguous matches carry nothing.
+- **The list order is the order of `maps`**, session-only like `display`
+  (nothing is saved). `reorderScalarMaps(itemIds)` puts the maps in that
+  order: unknown ids are ignored, listed maps left out keep their relative
+  order after the named ones, and an unchanged order assigns nothing. A
+  re-list of the same dataset keeps the user's order: a map keeps its
+  position, a worker re-run's replacement (`replacementsByTool`) takes the
+  position of the item it replaces, and maps not listed before go after, in
+  the server's order. Another dataset starts in the server's order. A delete
+  keeps the order of the rest.
 - Display defaults: hidden, opacity 0.7, viridis, range = `valueRange`
   (widened when constant), threshold off but preset to the worker's default
   (top 20%).
@@ -359,6 +380,19 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
     closes, so an absolute-index check failed on every draw after any overlay
     had been hidden, re-raising every layer for the life of the viewer.
     Nothing moves when the order is already right.
+  - **Among the scalar maps, the list order.** GeoJS gives a new layer the
+    top slot, so without more the map turned on last drew on top. At the end
+    of every `sync()`, `orderOverlayLayersAmongThemselves` stacks the
+    existing scalar map layers so the first listed map is topmost: it hands
+    those layers the z-indices they already hold, sorted, with
+    `zIndex(z, true)` (without `allowDuplicate` GeoJS bumps a sibling that
+    holds the value, moving layers outside the group). Their slots relative
+    to the transcript layers, the images and the annotation stack do not
+    change, and `orderLayersAboveImages` keeps overlays in their current
+    relative order, so the viewer's draws keep this order. It sets nothing
+    when the order is already right, so steady-state syncs move no layer.
+    `structureSignature` includes the list order, so a drag restacks at once
+    (no layer recreated, no URL changed).
 - **Location.** A map follows the viewer's global XY/Z/Time, as annotations
   do, not per-layer Z offsets or max-merge slices.
 - **One renderer per map.** Each shown map is its own GeoJS layer with its
@@ -394,6 +428,14 @@ rule shared with the command), `ImageViewer.vue` (overlay), `jobs.ts`
   counted on the plane on screen; the readout says so ("≈ top 20% of tissue
   (all positions)"). With two cells valued 0 and 1, "top 20%" is the cutoff
   0.8, which selects one cell of two; that is not a tie.
+- **Reordering.** The cards render through `vuedraggable` (`item-key`
+  `itemId`, `:model-value` the listed maps); a drop commits
+  `reorderScalarMaps` with the new id order. Cards drag only by their handle
+  (`handle: ".map-drag-handle"`), so the sliders, the checkbox and text
+  selection inside a card keep working. The handle and the caption appear
+  only with more than one map. Unit tests stub `draggable` with a component
+  that renders its `#item` slot per element: `shallowMount`'s own stub
+  renders no cards.
 - **Ties.** The selection is inclusive, so a value shared by many cells counts
   with the selected side. Only when the cutoff sits on a run of equal
   percentiles and that makes the selected share differ from the request does
@@ -466,6 +508,7 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **One DELETE per map until it settles.** A second delete of a map whose DELETE is in flight joins it; `deletingMapIds` holds the map from send until success or failure, and other maps are independent. — *"sends one DELETE per map while it is in flight and tracks it until it settles"*
 - [ ] **Display state resets with the dataset, survives a re-list, and is re-derived for a rewritten file or edited metadata** (the server's revision changes on any metadata edit). — *"resets with the dataset and keeps display settings across a re-list"*, *"re-derives range and threshold when a map's file changes, keeping how it is shown"*, *"re-derives a map's settings after a metadata edit removes a location"*
 - [ ] **A worker re-run's replacement keeps how the map was shown** (visible, opacity, colormap) when exactly one dropped and one new item share `meta.toolId`, and the overlay shows it with no user action; an ambiguous or other-tool match carries nothing. — *"carries how a map is shown to its replacement from a worker re-run"*, *"carries nothing over when the replacement is ambiguous or another tool's"*, *"shows a worker re-run's replacement map without user action"*
+- [ ] **The list order is session state that survives a re-list of the same dataset**: a map keeps its position, a re-run's replacement takes the replaced map's position, new maps go last in the server's order; another dataset uses the server's order; a delete keeps the rest in order. A reorder ignores unknown ids, keeps maps left out after the named ones, and assigns nothing when unchanged. — *"reorders the listed maps and assigns nothing when the order is unchanged"*, *"ignores unknown ids and keeps maps left out after the named ones"*, *"keeps the user's order across a re-list of the same dataset, a replacement taking the replaced map's place and new maps going last"*, *"uses the server's order for another dataset"*, *"keeps the order of the remaining maps after a delete"*
 
 ### List freshness
 
@@ -531,6 +574,7 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **Overlays stay above display layers added after them** (scalar maps and transcript heat maps and points), and under the annotation stack; nothing moves when the order is already right. — *"keeps overlays above display layers added after them"*, *"keeps several overlays in their order and any registered layer counts"*, *"does nothing when the order is already right"*, *"orders the annotation stack above the images as before when there is no overlay"*
 - [ ] **A new overlay is placed below the overview raster and worker preview at once**, not only at the next viewer draw, and that draw then moves nothing. — *"places a new overlay below the overview raster at once, without a viewer draw"*, *"goes under the annotation layer before the viewer has ordered the map"*
 - [ ] **The ordering compares relative order, so a deleted overlay's z-index gap does not make every later draw re-raise every layer.** — *"stops moving layers after an overlay is shown, hidden and drawn twice"*
+- [ ] **Scalar maps stack in list order, the first on top, whichever was turned on last; a reorder restacks at once without recreating layers or changing URLs.** The restack only swaps the z-indices the map layers hold (`allowDuplicate`), so no other layer moves and the viewer's next draw keeps it; it sets nothing when already ordered, so steady-state syncs move no layer. — *"draws the first listed map on top, whichever was turned on last"*, *"restacks on a reorder without recreating layers or changing URLs"*, *"restacks the given overlays in their own slots and leaves every other layer alone"*, *"sets no z-index when the order is already right or there is one layer"*
 - [ ] **Overlay levels keep a partial edge pixel** (rounded up like the image layer), so a coarse level never crops a rendered edge or a sub-pixel image to nothing; shared with the transcript density layer. — *"keeps a partial edge pixel at coarse levels instead of cropping it away"*
 - [ ] **A metadata edit that removes the current location hides the layer and requests nothing.** — *"hides the layer and requests nothing when a metadata edit removes the current location"*
 - [ ] **Disabled while a dataset view loads, not only while unrolled**, so the outgoing dataset's map is never requested at the incoming location (the transcript overlay keeps master's unroll-only gate), and the layers go in the same flush as the prop change. — *"disables the scalar map overlay while a dataset view loads, leaving transcripts to the unroll gate"*, *"deletes its layers as soon as it is disabled, and a pending slider update cannot redraw them"*
@@ -549,6 +593,7 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 - [ ] **A delete confirmation belongs to its dataset, its palette and its session.** A dataset view starting to load, a dataset switch, hiding the palette or the target leaving the list closes it; nothing is deleted while a view loads (the outgoing dataset's maps are still listed then); a map not on screen is never deleted; and a late result never closes or writes into a later confirmation. — *"closes a pending confirmation when a dataset view starts loading and sends no DELETE while it loads"*, *"closes a pending confirmation on a dataset switch and never deletes the previous dataset's map"*, *"ends a confirmation when the palette is hidden"*, *"ends a confirmation when its map leaves the list"*, *"applies a delete's result only to the confirmation that started it"*
 - [ ] **Closing a confirmation does not end its DELETE.** Reopening the same map's confirmation mid-delete shows it still deleting and cannot send a second DELETE. — *"sends one DELETE when the confirmation is closed mid-delete, reopened and confirmed"*
 - [ ] **A closed palette does no per-frame rendering** (card bodies gated on `visible`), reopening shows current values at once, and the delete dialog still works. — *"does no per-frame rendering while hidden, and shows current values when reopened"*, *"keeps the delete confirmation working with the card bodies gated"*
+- [ ] **Dragging a card commits the new order, by its handle only, and the handle and caption appear only with more than one map.** — *"commits the new order when a card is dropped"*, *"offers the drag handle and its hint only with more than one map"*
 - [ ] **A map missing descriptive fields still shows sensibly** ("Untitled map", absent parts left out) and is not rejected. — *"falls back for a map missing its descriptive fields"*
 
 ### Symmetric pairs — change one, check the other
@@ -568,6 +613,8 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 | the app-bar button's availability | the command-palette entry's `isAvailable` |
 | a job that succeeds | a job that fails or is canceled (both re-list) |
 | the annotation stack in the viewer's ordering step | the registered overlays (raised first) |
+| the panel's card order | the overlay's stacking (one list, `maps`; first on top) |
+| a re-list carrying display settings to a replacement | the same re-list carrying the list position to it |
 | the range slider's low thumb | its high thumb (whichever moved is the one held back) |
 
 ### Process rules this feature proved

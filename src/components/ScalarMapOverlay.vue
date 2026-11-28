@@ -18,6 +18,7 @@ import {
   createImageTileOverlayLayer,
   deleteLayerIfHeld,
   hookTileFailures,
+  orderOverlayLayersAmongThemselves,
 } from "@/utils/imageTileOverlayLayer";
 import { scalarMapLocationKey } from "@/utils/scalarMap";
 
@@ -28,6 +29,10 @@ import { scalarMapLocationKey } from "@/utils/scalarMap";
  * heat map). It follows the viewer's XY/Z/Time through the map's `location`
  * key; a map with no array for the current location shows nothing and
  * requests nothing.
+ *
+ * Layers stack in the list's order, the first map on top; the palette
+ * reorders the list (`reorderScalarMaps`), and `structureSignature`
+ * includes the order, so a reorder restacks at once.
  *
  * Opacity is a restyle. Range, colormap, threshold and location change the
  * tile URL of the existing layer; slider-driven URL changes are debounced.
@@ -170,6 +175,20 @@ function sync() {
   }
   // Deleted maps, and every map of a previous dataset.
   [...layers.keys()].filter((itemId) => !listed.has(itemId)).forEach(dropLayer);
+  // Stack in list order, the first map on top (GeoJS put the layer turned
+  // on last on top). Only swaps the slots these layers hold, and sets
+  // nothing when they are already in order.
+  if (layers.size > 1) {
+    const held = props.map.layers();
+    orderOverlayLayersAmongThemselves(
+      maps
+        .map((map) => layers.get(map.itemId)?.layer)
+        .filter(
+          (layer): layer is IGeoJSOsmLayer => !!layer && held.includes(layer),
+        )
+        .reverse(),
+    );
+  }
 }
 
 const scheduleSync = debounce(sync, URL_DEBOUNCE_MS);

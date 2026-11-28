@@ -1,5 +1,25 @@
 <template>
   <div class="scalar-maps-panel pa-3">
+    <!-- The viewer's own object switch (hotkey A, Object display settings),
+         offered here too: cells drawn over a map hide it. One piece of state,
+         held in the main store; this is a second control for it. -->
+    <div class="text-caption text-medium-emphasis mb-1">Objects</div>
+    <div class="d-flex align-center mb-3 objects-toggle">
+      <v-checkbox-btn
+        :model-value="store.drawAnnotations"
+        color="primary"
+        density="compact"
+        aria-label="Show objects"
+        class="flex-grow-0 mr-1"
+        @update:model-value="store.setDrawAnnotations(!!$event)"
+      />
+      <div>
+        <div class="text-body-2 font-weight-medium">Show objects</div>
+        <div class="text-caption text-medium-emphasis">
+          Cells and other annotations, drawn over the maps (hotkey A)
+        </div>
+      </div>
+    </div>
     <div class="d-flex align-center mb-1">
       <span class="text-caption text-medium-emphasis">Saved maps</span>
       <v-spacer />
@@ -48,209 +68,235 @@
         one.
       </p>
     </template>
-    <v-card
-      v-for="map in maps"
-      :key="map.itemId"
-      variant="outlined"
-      class="mb-3 pa-2 map-card"
-      :data-map-id="map.itemId"
+    <p
+      v-if="maps.length > 1"
+      class="text-caption text-medium-emphasis mb-2 reorder-hint"
     >
-      <div class="d-flex align-start">
-        <v-checkbox-btn
-          :model-value="displayOf(map).visible"
-          color="primary"
-          density="compact"
-          :aria-label="`Show ${scalarMapTitle(map.meta)}`"
-          class="flex-grow-0 mr-1"
-          @update:model-value="update(map, { visible: !!$event })"
-        />
-        <div class="flex-grow-1 map-title">
-          <div class="text-body-2 font-weight-medium">
-            {{ scalarMapTitle(map.meta) }}
+      Drag to reorder. The top map is drawn on top.
+    </p>
+    <!-- Dragged only by the handle, so the sliders, the checkbox and text
+         selection inside a card keep working. The order is the store's
+         (`reorderScalarMaps`), and the overlay stacks by it. -->
+    <draggable
+      :model-value="maps"
+      item-key="itemId"
+      handle=".map-drag-handle"
+      :animation="150"
+      @update:model-value="reorder"
+    >
+      <template #item="{ element: map }">
+        <v-card
+          variant="outlined"
+          class="mb-3 pa-2 map-card"
+          :data-map-id="map.itemId"
+        >
+          <div class="d-flex align-start">
+            <span
+              v-if="maps.length > 1"
+              class="map-drag-handle flex-grow-0 mr-1 mt-1"
+              role="img"
+              :aria-label="`Drag to reorder ${scalarMapTitle(map.meta)}`"
+              title="Drag to reorder"
+            >
+              <v-icon icon="mdi-drag-vertical" size="small" />
+            </span>
+            <v-checkbox-btn
+              :model-value="displayOf(map).visible"
+              color="primary"
+              density="compact"
+              :aria-label="`Show ${scalarMapTitle(map.meta)}`"
+              class="flex-grow-0 mr-1"
+              @update:model-value="update(map, { visible: !!$event })"
+            />
+            <div class="flex-grow-1 map-title">
+              <div class="text-body-2 font-weight-medium">
+                {{ scalarMapTitle(map.meta) }}
+              </div>
+              <div
+                v-if="scalarMapSummary(map.meta)"
+                class="text-caption text-medium-emphasis"
+              >
+                {{ scalarMapSummary(map.meta) }}
+              </div>
+            </div>
+            <v-btn
+              v-if="canDelete"
+              variant="text"
+              color="error"
+              size="small"
+              icon="mdi-delete"
+              :aria-label="`Delete ${scalarMapTitle(map.meta)}`"
+              @click="askDelete(map)"
+            />
           </div>
-          <div
-            v-if="scalarMapSummary(map.meta)"
-            class="text-caption text-medium-emphasis"
-          >
-            {{ scalarMapSummary(map.meta) }}
-          </div>
-        </div>
-        <v-btn
-          v-if="canDelete"
-          variant="text"
-          color="error"
-          size="small"
-          icon="mdi-delete"
-          :aria-label="`Delete ${scalarMapTitle(map.meta)}`"
-          @click="askDelete(map)"
-        />
-      </div>
 
-      <!-- Only while the palette is shown: FloatingPalette keeps it mounted
+          <!-- Only while the palette is shown: FloatingPalette keeps it mounted
            (display:none) when closed, and the body reads the viewer's
            position, so every scrub would re-render every shown map's card. -->
-      <template v-if="visible && displayOf(map).visible">
-        <p
-          v-if="!hasDataHere(map)"
-          class="text-caption text-warning mt-1 mb-0 no-data-here"
-        >
-          This map has no data at the current position.
-        </p>
-        <p
-          v-if="scalarMapsStore.tileFailedMapIds.includes(map.itemId)"
-          class="text-caption text-warning mt-1 mb-0 tiles-failed"
-        >
-          Some tiles of this map failed to load. Press Refresh to try again.
-        </p>
+          <template v-if="visible && displayOf(map).visible">
+            <p
+              v-if="!hasDataHere(map)"
+              class="text-caption text-warning mt-1 mb-0 no-data-here"
+            >
+              This map has no data at the current position.
+            </p>
+            <p
+              v-if="scalarMapsStore.tileFailedMapIds.includes(map.itemId)"
+              class="text-caption text-warning mt-1 mb-0 tiles-failed"
+            >
+              Some tiles of this map failed to load. Press Refresh to try again.
+            </p>
 
-        <div class="text-caption mt-2">
-          Opacity {{ Math.round(displayOf(map).opacity * 100) }}%
-        </div>
-        <v-slider
-          :model-value="displayOf(map).opacity"
-          :min="0.05"
-          :max="1"
-          :step="0.05"
-          density="compact"
-          hide-details
-          @update:model-value="update(map, { opacity: $event })"
-        />
+            <div class="text-caption mt-2">
+              Opacity {{ Math.round(displayOf(map).opacity * 100) }}%
+            </div>
+            <v-slider
+              :model-value="displayOf(map).opacity"
+              :min="0.05"
+              :max="1"
+              :step="0.05"
+              density="compact"
+              hide-details
+              @update:model-value="update(map, { opacity: $event })"
+            />
 
-        <v-select
-          :model-value="displayOf(map).colormap"
-          :items="SCALAR_MAP_COLORMAPS"
-          item-title="title"
-          item-value="value"
-          label="Colormap"
-          density="compact"
-          variant="outlined"
-          hide-details
-          class="mt-2"
-          @update:model-value="update(map, { colormap: $event })"
-        />
-
-        <div
-          v-if="legendGradient(displayOf(map).colormap)"
-          class="color-bar mt-2"
-          :style="{ background: legendGradient(displayOf(map).colormap)! }"
-        />
-        <div class="d-flex text-caption color-bar-labels">
-          <span>{{ formatMapValue(displayOf(map).min) }}</span>
-          <v-spacer />
-          <span v-if="map.meta.units" class="text-medium-emphasis">{{
-            map.meta.units
-          }}</span>
-          <v-spacer />
-          <span>{{ formatMapValue(displayOf(map).max) }}</span>
-        </div>
-
-        <div class="d-flex align-center text-caption mt-2">
-          Display range
-          <v-spacer />
-          <v-btn
-            variant="text"
-            size="small"
-            @click="scalarMapsStore.resetScalarMapRange(map.itemId)"
-            >Reset</v-btn
-          >
-        </div>
-        <!-- Integer positions, never a float step: see SLIDER_POSITIONS. -->
-        <v-range-slider
-          :model-value="rangePositions(map)"
-          :min="0"
-          :max="SLIDER_POSITIONS"
-          :step="1"
-          density="compact"
-          hide-details
-          @update:model-value="onRange(map, $event)"
-        />
-
-        <v-switch
-          :model-value="displayOf(map).thresholdEnabled"
-          label="Preview a threshold"
-          color="primary"
-          density="compact"
-          hide-details
-          class="mt-1"
-          @update:model-value="update(map, { thresholdEnabled: !!$event })"
-        />
-        <template v-if="displayOf(map).thresholdEnabled">
-          <div class="d-flex align-center flex-wrap ga-2 mb-1">
-            <v-btn-toggle
-              :model-value="displayOf(map).thresholdSide"
-              mandatory
+            <v-select
+              :model-value="displayOf(map).colormap"
+              :items="SCALAR_MAP_COLORMAPS"
+              item-title="title"
+              item-value="value"
+              label="Colormap"
               density="compact"
               variant="outlined"
-              divided
-              @update:model-value="
-                scalarMapsStore.setScalarMapThresholdSide({
-                  itemId: map.itemId,
-                  side: $event,
-                })
-              "
-            >
-              <v-btn value="above" size="small">Above</v-btn>
-              <v-btn value="below" size="small">Below</v-btn>
-            </v-btn-toggle>
-            <v-btn-toggle
-              v-model="thresholdUnits"
-              mandatory
-              density="compact"
-              variant="outlined"
-              divided
-            >
-              <v-btn value="share" size="small">% of tissue</v-btn>
-              <v-btn value="value" size="small">Value</v-btn>
-            </v-btn-toggle>
-          </div>
-          <v-slider
-            v-if="thresholdUnits === 'share'"
-            :model-value="shareOf(map).requested ?? shareOf(map).selected"
-            :min="0"
-            :max="100"
-            :step="0.5"
-            density="compact"
-            hide-details
-            @update:model-value="onShare(map, $event)"
-          />
-          <v-slider
-            v-else
-            :model-value="thresholdPosition(map)"
-            :min="0"
-            :max="SLIDER_POSITIONS"
-            :step="1"
-            density="compact"
-            hide-details
-            @update:model-value="onThresholdPosition(map, $event)"
-          />
-          <div class="text-caption threshold-readout">
-            {{ thresholdText(map) }}
-          </div>
-          <div class="text-caption text-medium-emphasis mt-1">
-            For the Hotspot Regions tool:
-          </div>
-          <!-- Two rows per form, label beside its value, so a phrase never
-               wraps away from its number. -->
-          <div
-            v-for="form in workerForms(map)"
-            :key="form.type"
-            class="text-caption worker-form"
-          >
-            <span class="worker-form-label">Threshold type</span>
-            <code class="worker-form-value">{{ form.type }}</code>
-            <span class="worker-form-label">Threshold</span>
-            <span>
-              <code class="worker-form-value">{{ form.threshold }}</code>
-              <span
-                v-if="form.approximate"
-                class="ml-1 text-medium-emphasis approximate"
-                >(≈ approximate)</span
+              hide-details
+              class="mt-2"
+              @update:model-value="update(map, { colormap: $event })"
+            />
+
+            <div
+              v-if="legendGradient(displayOf(map).colormap)"
+              class="color-bar mt-2"
+              :style="{ background: legendGradient(displayOf(map).colormap)! }"
+            />
+            <div class="d-flex text-caption color-bar-labels">
+              <span>{{ formatMapValue(displayOf(map).min) }}</span>
+              <v-spacer />
+              <span v-if="map.meta.units" class="text-medium-emphasis">{{
+                map.meta.units
+              }}</span>
+              <v-spacer />
+              <span>{{ formatMapValue(displayOf(map).max) }}</span>
+            </div>
+
+            <div class="d-flex align-center text-caption mt-2">
+              Display range
+              <v-spacer />
+              <v-btn
+                variant="text"
+                size="small"
+                @click="scalarMapsStore.resetScalarMapRange(map.itemId)"
+                >Reset</v-btn
               >
-            </span>
-          </div>
-        </template>
+            </div>
+            <!-- Integer positions, never a float step: see SLIDER_POSITIONS. -->
+            <v-range-slider
+              :model-value="rangePositions(map)"
+              :min="0"
+              :max="SLIDER_POSITIONS"
+              :step="1"
+              density="compact"
+              hide-details
+              @update:model-value="onRange(map, $event)"
+            />
+
+            <v-switch
+              :model-value="displayOf(map).thresholdEnabled"
+              label="Preview a threshold"
+              color="primary"
+              density="compact"
+              hide-details
+              class="mt-1"
+              @update:model-value="update(map, { thresholdEnabled: !!$event })"
+            />
+            <template v-if="displayOf(map).thresholdEnabled">
+              <div class="d-flex align-center flex-wrap ga-2 mb-1">
+                <v-btn-toggle
+                  :model-value="displayOf(map).thresholdSide"
+                  mandatory
+                  density="compact"
+                  variant="outlined"
+                  divided
+                  @update:model-value="
+                    scalarMapsStore.setScalarMapThresholdSide({
+                      itemId: map.itemId,
+                      side: $event,
+                    })
+                  "
+                >
+                  <v-btn value="above" size="small">Above</v-btn>
+                  <v-btn value="below" size="small">Below</v-btn>
+                </v-btn-toggle>
+                <v-btn-toggle
+                  v-model="thresholdUnits"
+                  mandatory
+                  density="compact"
+                  variant="outlined"
+                  divided
+                >
+                  <v-btn value="share" size="small">% of tissue</v-btn>
+                  <v-btn value="value" size="small">Value</v-btn>
+                </v-btn-toggle>
+              </div>
+              <v-slider
+                v-if="thresholdUnits === 'share'"
+                :model-value="shareOf(map).requested ?? shareOf(map).selected"
+                :min="0"
+                :max="100"
+                :step="0.5"
+                density="compact"
+                hide-details
+                @update:model-value="onShare(map, $event)"
+              />
+              <v-slider
+                v-else
+                :model-value="thresholdPosition(map)"
+                :min="0"
+                :max="SLIDER_POSITIONS"
+                :step="1"
+                density="compact"
+                hide-details
+                @update:model-value="onThresholdPosition(map, $event)"
+              />
+              <div class="text-caption threshold-readout">
+                {{ thresholdText(map) }}
+              </div>
+              <div class="text-caption text-medium-emphasis mt-1">
+                For the Hotspot Regions tool:
+              </div>
+              <!-- Two rows per form, label beside its value, so a phrase never
+               wraps away from its number. -->
+              <div
+                v-for="form in workerForms(map)"
+                :key="form.type"
+                class="text-caption worker-form"
+              >
+                <span class="worker-form-label">Threshold type</span>
+                <code class="worker-form-value">{{ form.type }}</code>
+                <span class="worker-form-label">Threshold</span>
+                <span>
+                  <code class="worker-form-value">{{ form.threshold }}</code>
+                  <span
+                    v-if="form.approximate"
+                    class="ml-1 text-medium-emphasis approximate"
+                    >(≈ approximate)</span
+                  >
+                </span>
+              </div>
+            </template>
+          </template>
+        </v-card>
       </template>
-    </v-card>
+    </draggable>
 
     <v-dialog v-model="deleteDialog" max-width="420">
       <v-card>
@@ -289,6 +335,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import draggable from "vuedraggable";
 import store from "@/store";
 import scalarMapsStore, { defaultScalarMapDisplay } from "@/store/scalarMaps";
 import sync from "@/store/sync";
@@ -361,6 +408,12 @@ function update(
   >[0]["changes"],
 ) {
   scalarMapsStore.updateScalarMapDisplay({ itemId: map.itemId, changes });
+}
+
+// A drop: the whole list in its new order (vuedraggable never changes the
+// array it is given). Session-only, like `display`.
+function reorder(reordered: IScalarMap[]) {
+  scalarMapsStore.reorderScalarMaps(reordered.map((map) => map.itemId));
 }
 
 // Refresh lists the maps again and requests every failed tile again: GeoJS
@@ -596,6 +649,11 @@ defineExpose({
 <style lang="scss" scoped>
 .scalar-maps-panel {
   width: 100%;
+}
+
+.map-drag-handle {
+  cursor: grab;
+  display: inline-flex;
 }
 
 .map-title {

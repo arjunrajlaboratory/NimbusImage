@@ -11,6 +11,7 @@ import {
   deleteLayerIfHeld,
   isImageOverlayLayer,
   orderLayersAboveImages,
+  orderOverlayLayersAmongThemselves,
   registerImageOverlayLayer,
 } from "./imageTileOverlayLayer";
 
@@ -205,6 +206,71 @@ describe("orderLayersAboveImages", () => {
       "image3",
       ...STACK,
     ]);
+  });
+});
+
+describe("orderOverlayLayersAmongThemselves", () => {
+  // Spies on every zIndex set (a call with a value) of the map's layers.
+  function spyOnSets(parts: ReturnType<typeof viewer>) {
+    const sets: [string, number, boolean | undefined][] = [];
+    parts.layers.forEach((layer: any) => {
+      const zIndex = layer.zIndex;
+      layer.zIndex = (value?: number, allowDuplicate?: boolean) => {
+        if (value !== undefined) {
+          sets.push([layer.name, value, allowDuplicate]);
+        }
+        return zIndex(value, allowDuplicate);
+      };
+    });
+    return sets;
+  }
+
+  it("restacks the given overlays in their own slots and leaves every other layer alone", () => {
+    const parts = viewer();
+    parts.draw();
+    const mapA = overlay(parts, "mapA");
+    overlay(parts, "points");
+    const mapB = overlay(parts, "mapB");
+    const zBefore = new Map(
+      parts.layers.map((layer: any) => [layer.name, layer.zIndex()]),
+    );
+    const sets = spyOnSets(parts);
+    // mapB below mapA: the two swap their slots, around the points layer.
+    orderOverlayLayersAmongThemselves([mapB, mapA]);
+    expect(parts.order()).toEqual([
+      "image0",
+      "image1",
+      "mapB",
+      "points",
+      "mapA",
+      ...STACK,
+    ]);
+    expect(mapB.zIndex()).toBe(zBefore.get("mapA"));
+    expect(mapA.zIndex()).toBe(zBefore.get("mapB"));
+    parts.layers
+      .filter((layer: any) => !["mapA", "mapB"].includes(layer.name))
+      .forEach((layer: any) => {
+        expect(layer.zIndex()).toBe(zBefore.get(layer.name));
+      });
+    expect(sets.every(([, , allowDuplicate]) => allowDuplicate === true)).toBe(
+      true,
+    );
+    // The viewer's next draw keeps the new order and moves nothing.
+    parts.clearMoves();
+    parts.draw();
+    expect(parts.moves()).toBe(0);
+  });
+
+  it("sets no z-index when the order is already right or there is one layer", () => {
+    const parts = viewer();
+    parts.draw();
+    const mapA = overlay(parts, "mapA");
+    const mapB = overlay(parts, "mapB");
+    const sets = spyOnSets(parts);
+    orderOverlayLayersAmongThemselves([mapA, mapB]);
+    orderOverlayLayersAmongThemselves([mapB]);
+    orderOverlayLayersAmongThemselves([]);
+    expect(sets).toEqual([]);
   });
 });
 

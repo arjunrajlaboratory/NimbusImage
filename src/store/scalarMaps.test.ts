@@ -545,4 +545,67 @@ describe("scalarMaps store", () => {
     scalarMapsStore.setScalarMapTilesFailed({ itemId: "a", failed: false });
     expect(scalarMapsStore.tileFailedMapIds).toEqual([]);
   });
+
+  describe("list order", () => {
+    const listOf = (...items: string[]) =>
+      items.map((itemId) => withTool(itemId, `tool-${itemId}`));
+
+    it("reorders the listed maps and assigns nothing when the order is unchanged", async () => {
+      mocks.listMaps.mockResolvedValueOnce(listOf("a", "b", "c"));
+      await scalarMapsStore.refreshScalarMaps();
+      scalarMapsStore.reorderScalarMaps(["c", "a", "b"]);
+      expect(ids()).toEqual(["c", "a", "b"]);
+      const before = scalarMapsStore.maps;
+      scalarMapsStore.reorderScalarMaps(["c", "a", "b"]);
+      expect(scalarMapsStore.maps).toBe(before);
+    });
+
+    it("ignores unknown ids and keeps maps left out after the named ones", async () => {
+      mocks.listMaps.mockResolvedValueOnce(listOf("a", "b", "c", "d"));
+      await scalarMapsStore.refreshScalarMaps();
+      scalarMapsStore.reorderScalarMaps(["zzz", "c", "c", "a"]);
+      expect(ids()).toEqual(["c", "a", "b", "d"]);
+    });
+
+    it("keeps the user's order across a re-list of the same dataset, a replacement taking the replaced map's place and new maps going last", async () => {
+      mocks.listMaps.mockResolvedValueOnce([
+        withTool("a", "tool1"),
+        withTool("b", "tool2"),
+        withTool("c", "tool3"),
+      ]);
+      await scalarMapsStore.refreshScalarMaps();
+      scalarMapsStore.reorderScalarMaps(["c", "b", "a"]);
+      // The server's order is unchanged; "b" was re-run as "b2" (same tool),
+      // and "n1", "n2" are new.
+      mocks.listMaps.mockResolvedValueOnce([
+        withTool("n2", "tool9"),
+        withTool("a", "tool1"),
+        withTool("b2", "tool2"),
+        withTool("c", "tool3"),
+        withTool("n1", "tool8"),
+      ]);
+      await scalarMapsStore.refreshScalarMaps(true);
+      expect(ids()).toEqual(["c", "b2", "a", "n2", "n1"]);
+    });
+
+    it("uses the server's order for another dataset", async () => {
+      mocks.listMaps.mockResolvedValueOnce(listOf("a", "b"));
+      await scalarMapsStore.refreshScalarMaps();
+      scalarMapsStore.reorderScalarMaps(["b", "a"]);
+      mocks.main.dataset = { id: "ds2" };
+      mocks.listMaps.mockResolvedValueOnce(listOf("a", "b"));
+      await scalarMapsStore.refreshScalarMaps();
+      expect(ids()).toEqual(["a", "b"]);
+    });
+
+    it("keeps the order of the remaining maps after a delete", async () => {
+      mocks.listMaps.mockResolvedValueOnce(listOf("a", "b", "c"));
+      await scalarMapsStore.refreshScalarMaps();
+      scalarMapsStore.reorderScalarMaps(["c", "a", "b"]);
+      await scalarMapsStore.deleteScalarMap("a");
+      expect(ids()).toEqual(["c", "b"]);
+      scalarMapsStore.removeScalarMap("c");
+      expect(ids()).toEqual(["b"]);
+    });
+  });
 });

@@ -214,6 +214,33 @@ export function orderLayersAboveImages(
 }
 
 /**
+ * Stack some overlays among themselves, bottom to top as given, by handing
+ * them the z-indices they already hold, sorted ascending. Their slots stay
+ * where they were relative to every other layer (other overlays such as the
+ * transcript layers, the image layers and the annotation stack), so
+ * orderLayersAboveImages, which keeps overlays in their current relative
+ * order, keeps this order too. Each set passes `allowDuplicate`: without it
+ * GeoJS shifts a sibling that holds the value up, moving layers outside this
+ * group. Sets nothing when the order is already right (steady-state draws
+ * move no layers) or there are fewer than two layers.
+ */
+export function orderOverlayLayersAmongThemselves(
+  layersBottomToTop: IGeoJSLayer[],
+): void {
+  if (layersBottomToTop.length < 2) {
+    return;
+  }
+  const slots = layersBottomToTop
+    .map((layer) => layer.zIndex() as number)
+    .sort((a, b) => a - b);
+  layersBottomToTop.forEach((layer, index) => {
+    if (layer.zIndex() !== slots[index]) {
+      layer.zIndex(slots[index], true);
+    }
+  });
+}
+
+/**
  * Delete a layer only while the map still holds it: when ImageViewer
  * replaces the map (an unroll toggle), the old map has already exited its
  * layers, and GeoJS's deleteLayer would exit them a second time.
