@@ -524,6 +524,7 @@ Run `pnpm test src/utils/imageTileOverlayLayer.test.ts src/utils/scalarMap.test.
 ### Access
 
 - [ ] **List and tiles need READ; delete needs WRITE and refuses non-maps.** — *"testListReturnsOnlyValidMapsAndEnforcesRead"*, *"testTileEnforcesRead"*, *"testDeleteNeedsWriteAndRefusesNonMaps"*
+- [ ] **A public dataset lists and renders without a login; a read-only token (what a share link holds) lists and renders but cannot delete; the auth cookie works for tiles only.** — *"testPublicDatasetReadsAnonymouslyButDeleteNeedsLogin"*, *"testReadOnlyTokenAndCookieReadButCannotDelete"*
 - [ ] **Delete removes only what the list shows.** An item with map metadata but no file or a second file is refused with the tile route's 400 (one `_mapFile` check), not removed. — *"testDeleteRefusesAnItemTheListSkips"*
 - [ ] **A map whose one file is a Girder link file is not listed, and its tile and delete are the same 400** (not a 500 from `File().open()`): the list's batched file query and `_mapFile` share `isScalarMapFileSet` (one assetstore-backed file). — *"testLinkFileMapIsNotListedAndItsTileAndDeleteAre400"*
 - [ ] **Revalidated tiles re-check READ.** A 304 is answered only after the access check. — *"testTilesRevalidateWithEtag"*

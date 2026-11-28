@@ -13,10 +13,11 @@ from PIL import Image
 
 from pytest_girder.assertions import assertStatus, assertStatusOk
 
-from girder.constants import AccessType
+from girder.constants import AccessType, TokenScope
 from girder.models.file import File
 from girder.models.folder import Folder
 from girder.models.item import Item
+from girder.models.token import Token
 from girder.models.upload import Upload
 
 from ..server.helpers import scalarMap
@@ -1221,6 +1222,65 @@ class TestScalarMapEndpoints:
         assertStatusOk(resp)
         assert Item().load(item["_id"], force=True) is None
         assert scalarMap.scalarMapCacheBytes() == 0
+
+    def testPublicDatasetReadsAnonymouslyButDeleteNeedsLogin(
+        self, server, admin, fsAssetstore
+    ):
+        folder = _privateDataset(admin)
+        array = np.zeros((ROWS, COLS), dtype=np.float32)
+        item = _uploadMap(admin, folder, {LOCATION: array}, _meta())
+        Folder().setPublic(folder, True, save=True)
+
+        resp = server.request("/scalar_map",
+                              params={"datasetId": str(folder["_id"])})
+        assertStatusOk(resp)
+        assert [entry["itemId"] for entry in resp.json] == [
+            str(item["_id"])
+        ]
+        _rgba(_tile(server, item, None))
+        resp = server.request("/scalar_map/%s" % item["_id"],
+                              method="DELETE")
+        assertStatus(resp, 401)
+        assert Item().load(item["_id"], force=True) is not None
+
+    def testReadOnlyTokenAndCookieReadButCannotDelete(
+        self, server, admin, fsAssetstore
+    ):
+        # What a share link holds: a token with the read scope only. It
+        # lists and renders; delete refuses it although its user (here the
+        # owner) has WRITE. The auth cookie works for tiles alone, so a
+        # cross-site request cannot delete with it.
+        folder = _privateDataset(admin)
+        array = np.zeros((ROWS, COLS), dtype=np.float32)
+        item = _uploadMap(admin, folder, {LOCATION: array}, _meta())
+        readOnly = Token().createToken(
+            admin, scope=[TokenScope.DATA_READ]
+        )
+        tilePath = "/scalar_map/%s/tiles/0/0/0" % item["_id"]
+        query = {"location": LOCATION, "sizeX": SIZE_X, "sizeY": SIZE_Y,
+                 "maxLevel": 0}
+
+        resp = server.request("/scalar_map", token=readOnly,
+                              params={"datasetId": str(folder["_id"])})
+        assertStatusOk(resp)
+        assert len(resp.json) == 1
+        _rgba(server.request(tilePath, token=readOnly, params=query,
+                             isJson=False))
+        resp = server.request("/scalar_map/%s" % item["_id"],
+                              method="DELETE", token=readOnly)
+        assertStatus(resp, 401)
+
+        session = Token().createToken(admin)
+        cookie = "girderToken={}".format(session["_id"])
+        _rgba(server.request(tilePath, cookie=cookie, params=query,
+                             isJson=False))
+        resp = server.request("/scalar_map/%s" % item["_id"],
+                              method="DELETE", cookie=cookie)
+        assertStatus(resp, 401)
+        resp = server.request("/scalar_map", cookie=cookie,
+                              params={"datasetId": str(folder["_id"])})
+        assertStatus(resp, 401)
+        assert Item().load(item["_id"], force=True) is not None
 
     def testDeleteRefusesAnItemTheListSkips(self, server, admin,
                                             fsAssetstore):
