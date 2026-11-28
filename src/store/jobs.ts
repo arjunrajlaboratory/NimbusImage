@@ -488,6 +488,22 @@ export class Jobs extends VuexModule {
     }
     jobInfo.successResolve(success);
     this.removeJobInfo(jobId);
+    // A worker on the open dataset may have saved, replaced or removed a
+    // scalar map (the Hotspot Regions worker does), whatever its outcome: it
+    // deletes the previous map before uploading the new one, so a failed or
+    // canceled run can still have removed a listed map. List them again so
+    // the Map Layers palette follows without a reload and no layer keeps
+    // requesting tiles for a deleted item. Debounced there: a batch of jobs
+    // ending together is one GET.
+    const openDatasetId = main.dataset?.id;
+    if (
+      openDatasetId &&
+      jobInfo.listeners.some((listener) => listener.datasetId === openDatasetId)
+    ) {
+      void import("./scalarMaps").then(({ scheduleScalarMapsRefresh }) =>
+        scheduleScalarMapsRefresh(),
+      );
+    }
     // A job is done, add badge to annotation panel if it is closed
     if (!main.isAnnotationPanelOpen) {
       main.setAnnotationPanelBadge(true);

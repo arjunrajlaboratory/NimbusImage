@@ -172,6 +172,16 @@ Rules:
 - Diagnose live: `layer.cache._cache` sizes vs `read_network_requests`; the
   counterfactual `layer.queue._needed = () => true` + `layer.reset()` +
   `layer.draw()` making tiles load proves this mechanism.
+- A rejection is not always a failed request. When the queue outgrows its
+  track size, `next_item` rejects every queued tile the cache no longer
+  holds (a pan or zoom purged it), and so does any queued tile after
+  `reset()` or a URL change. To report real failures, act only when
+  `layer.cache.get(tile.toString(), true) === tile` at rejection time
+  (`hookTileFailures` in `src/utils/imageTileOverlayLayer.ts` does; the
+  scalar map layer uses it to mark maps with failed tiles).
+- A rejected tile that stays cached is never requested again: to retry,
+  `layer.reset()` then `layer.map().draw()` (a layer `draw()` only renders
+  what it has), or change the URL, which does both.
 
 ## Tile URL changes already reset the GeoJS cache
 

@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => {
     statuses: {} as Record<string, number>,
     get: vi.fn(),
     createNotification: vi.fn(),
+    refreshMaps: vi.fn(),
   };
 });
 
@@ -44,6 +45,10 @@ vi.mock("@/store/index", () => ({
 
 vi.mock("@/store/progress", () => ({
   default: { createNotification: mocks.createNotification },
+}));
+
+vi.mock("@/store/scalarMaps", () => ({
+  scheduleScalarMapsRefresh: (...args: any[]) => mocks.refreshMaps(...args),
 }));
 
 vi.mock("@/utils/log", () => ({ logError: vi.fn(), logWarning: vi.fn() }));
@@ -305,6 +310,42 @@ describe("jobs store: settling tracked jobs when the stream fails", () => {
       status: ERROR,
     });
     expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
+  describe("saved scalar maps after a job", () => {
+    afterEach(() => {
+      (main as any).dataset = undefined;
+    });
+
+    it.each([
+      ["succeeds", SUCCESS, true],
+      ["fails", ERROR, false],
+    ])(
+      "lists the open dataset's maps again when a job on it %s",
+      async (_label, status, outcome) => {
+        (main as any).dataset = { id: "ds" };
+        mocks.refreshMaps.mockClear();
+        const job = await track(`map-job-${status}`);
+        mocks.statuses[`map-job-${status}`] = status;
+        await failConnection(4);
+        await expect(job.completion).resolves.toBe(outcome);
+        await microtasks();
+        await vi.dynamicImportSettled();
+        expect(mocks.refreshMaps).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it("does not list for another dataset's job", async () => {
+      mocks.refreshMaps.mockClear();
+      (main as any).dataset = { id: "other" };
+      const elsewhere = await track("other-map-job");
+      mocks.statuses["other-map-job"] = SUCCESS;
+      await failConnection(4);
+      await expect(elsewhere.completion).resolves.toBe(true);
+      await microtasks();
+      await vi.dynamicImportSettled();
+      expect(mocks.refreshMaps).not.toHaveBeenCalled();
+    });
   });
 
   it("keeps tracking a job whose status read fails on the network", async () => {

@@ -56,6 +56,28 @@ vi.mock("@/store/transcripts", async () => {
   };
 });
 
+vi.mock("@/store/scalarMaps", async () => {
+  const { reactive } = await import("vue");
+  return {
+    default: reactive({
+      hasMaps: false,
+      scalarMapsError: null as string | null,
+      loading: false,
+      scalarMapsListed: false,
+      // The store's rule (tested in scalarMaps.test.ts), mirrored so App's
+      // binding to it is exercised.
+      get scalarMapsAvailable(): boolean {
+        return (
+          this.hasMaps ||
+          this.scalarMapsError !== null ||
+          (this.loading && !this.scalarMapsListed)
+        );
+      },
+      refreshScalarMaps: vi.fn(),
+    }),
+  };
+});
+
 vi.mock("axios", () => ({
   default: {
     get: vi
@@ -84,6 +106,7 @@ import store from "@/store";
 import propertyStore from "@/store/properties";
 import filterStore from "@/store/filters";
 import transcriptsStore from "@/store/transcripts";
+import scalarMapsStore from "@/store/scalarMaps";
 import axios from "axios";
 import { logError } from "@/utils/log";
 
@@ -162,10 +185,66 @@ describe("App", () => {
     (filterStore as any).activeAnalysisGateCount = 0;
     (transcriptsStore as any).error = null;
     (transcriptsStore as any).loading = false;
+    (scalarMapsStore as any).hasMaps = false;
+    (scalarMapsStore as any).scalarMapsError = null;
+    (scalarMapsStore as any).loading = false;
+    (scalarMapsStore as any).scalarMapsListed = false;
     (axios.get as any) = vi
       .fn()
       .mockResolvedValue({ data: [{ name: "Tool1", type: "create" }] });
     mockRouter.push = vi.fn();
+  });
+
+  it("forces a fresh map lookup when the viewer reopens a dataset, never joining a request from before it left", async () => {
+    (store as any).dataset = { id: "ds1", name: "Dataset" };
+    const providedRoute = routeProvider({ ...mockRoute, name: "datasetview" });
+    const route = providedRoute[routeLocationKey as symbol];
+    const wrapper = mountComponent({}, renderAppBarStubs, providedRoute);
+    expect(scalarMapsStore.refreshScalarMaps).toHaveBeenCalledTimes(1);
+    expect(scalarMapsStore.refreshScalarMaps).toHaveBeenLastCalledWith(true);
+    // Leave the viewer while that list request is still in flight...
+    Object.assign(route, { name: "root" });
+    await nextTick();
+    expect(scalarMapsStore.refreshScalarMaps).toHaveBeenCalledTimes(1);
+    // ...and come back to the same dataset: a new request, not a join of
+    // the earlier one, whose answer may predate a map saved since.
+    Object.assign(route, { name: "datasetview" });
+    await nextTick();
+    expect(scalarMapsStore.refreshScalarMaps).toHaveBeenCalledTimes(2);
+    expect(scalarMapsStore.refreshScalarMaps).toHaveBeenLastCalledWith(true);
+    wrapper.unmount();
+  });
+
+  it("offers Map Layers only with saved maps, and keeps it reachable after a failed lookup", async () => {
+    const wrapper = mountWithAppBar();
+    expect(scalarMapsStore.refreshScalarMaps).toHaveBeenCalledTimes(1);
+    // Reopening the same dataset (a reload swaps the object) lists again: a
+    // worker may have saved a map since.
+    (store as any).dataset = { id: "ds1", name: "Dataset" };
+    await nextTick();
+    expect(scalarMapsStore.refreshScalarMaps).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(false);
+    (scalarMapsStore as any).scalarMapsError =
+      "Could not read the dataset's saved maps.";
+    await nextTick();
+    await wrapper.get('[aria-label="Map Layers"]').trigger("click");
+    expect((wrapper.vm as any).scalarMapsPanel).toBe(true);
+    (scalarMapsStore as any).scalarMapsError = null;
+    (scalarMapsStore as any).hasMaps = true;
+    await nextTick();
+    expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(true);
+    (scalarMapsStore as any).hasMaps = false;
+    await nextTick();
+    expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(false);
+    // The first list for a dataset offers it while loading; a re-list of a
+    // dataset already known to have no maps does not flash it.
+    (scalarMapsStore as any).loading = true;
+    await nextTick();
+    expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(true);
+    (scalarMapsStore as any).scalarMapsListed = true;
+    await nextTick();
+    expect(wrapper.find('[aria-label="Map Layers"]').exists()).toBe(false);
+    wrapper.unmount();
   });
 
   // -- Computed: routeName --

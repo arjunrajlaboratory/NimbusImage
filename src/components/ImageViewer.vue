@@ -64,6 +64,18 @@
         :disabled="unrolling"
       />
     </template>
+    <template v-if="scalarMapsStore.hasMaps && transcriptImage">
+      <scalar-map-overlay
+        v-for="mapentry in annotationViewerMaps"
+        :key="'scalar-map-overlay-' + mapKey(mapentry.map)"
+        :map="mapentry.map"
+        :annotationLayer="mapentry.annotationLayer"
+        :sizeX="transcriptImage.sizeX"
+        :sizeY="transcriptImage.sizeY"
+        :maxLevel="mapentry.params.layer.maxLevel ?? transcriptImage.levels - 1"
+        :disabled="imageOverlaysDisabled"
+      />
+    </template>
     <!-- Mounted ONCE, outside the per-map v-for above. In unroll layer mode
          ImageViewer renders one AnnotationViewer per layer group, so a panel
          living inside that loop appeared N times over and registered N global
@@ -244,6 +256,9 @@ import { createHasher } from "@/utils/signatures";
 import { debounce } from "lodash";
 import transcriptsStore from "@/store/transcripts";
 import TranscriptOverlay from "@/components/TranscriptOverlay.vue";
+import scalarMapsStore from "@/store/scalarMaps";
+import ScalarMapOverlay from "@/components/ScalarMapOverlay.vue";
+import { orderLayersAboveImages } from "@/utils/imageTileOverlayLayer";
 import connectionListStore from "@/store/connectionList";
 import { TOUR_ANCHORS } from "@/tours/anchors";
 import progressStore from "@/store/progress";
@@ -747,9 +762,10 @@ const maps = computed({
   set: (value: IMapEntry[]) => store.setMaps(value),
 });
 
-// A stable key per GeoJS map object. The transcript overlay binds its pan
-// listener and layers to its map on mount, so when _setupMap replaces the
-// map at an index (an unroll toggle) the overlay must remount, not be reused.
+// A stable key per GeoJS map object. The transcript and scalar map overlays
+// bind their listeners and layers to their map on mount, so when _setupMap
+// replaces the map at an index (an unroll toggle) an overlay must remount,
+// not be reused.
 const mapKeys = new WeakMap<object, number>();
 let nextMapKey = 0;
 function mapKey(map: IGeoJSMap): number {
@@ -762,8 +778,8 @@ function mapKey(map: IGeoJSMap): number {
   return key;
 }
 
-// The image the transcript density pyramid is sized to: the same one the
-// annotation overview uses.
+// The image the transcript density pyramid and the scalar map layer are
+// sized to: the same one the annotation overview uses.
 const transcriptImage = computed(
   () => layerStackImages.value.find((lsi) => lsi.images[0])?.images[0] ?? null,
 );
@@ -812,6 +828,18 @@ let fitAppliedDatasetId: string | null = null;
 const overview = computed(() => store.overview);
 const dataset = computed(() => store.dataset);
 const unrolling = computed(() => store.unroll);
+// The scalar map overlay draws only where the viewer can draw the matching
+// image. Unrolled, frames sit on a grid the overlay knows nothing about.
+// While a dataset view loads (`sync.datasetLoading`), draw() hides the image
+// tiles: setDatasetViewId applies the incoming XY/Z/Time while store.dataset
+// (and the scalar maps listed for it) is still the outgoing dataset's, so a
+// map drawn then would show the outgoing dataset's data at the incoming
+// position. The transcript overlay keeps the unrolled-only gate: it handles
+// `disabled` through its pan debounce, so this gate would leave its points
+// up after the image hides.
+const imageOverlaysDisabled = computed(
+  () => unrolling.value || sync.datasetLoading,
+);
 const width = computed(() => (store.dataset ? store.dataset.width : 1));
 const height = computed(() => (store.dataset ? store.dataset.height : 1));
 const compositionMode = computed(() => store.compositionMode);
@@ -2162,37 +2190,20 @@ function draw() {
       map.size({ width: nodeWidth, height: nodeHeight });
     }
     _setupTileLayers(mll, mllidx, someImage, baseLayerIndex);
-    const overviewOffset = mapentry.annotationOverviewLayer ? 1 : 0;
-    if (
-      (mapentry.annotationOverviewLayer &&
-        mapentry.annotationOverviewLayer.zIndex() !== mll.length * 2) ||
-      mapentry.workerPreviewLayer.zIndex() !==
-        mll.length * 2 + overviewOffset ||
-      mapentry.annotationLayer.zIndex() !==
-        mll.length * 2 + 1 + overviewOffset ||
-      mapentry.textLayer.zIndex() !== mll.length * 2 + 2 + overviewOffset ||
-      mapentry.timelapseLayer.zIndex() !==
-        mll.length * 2 + 3 + overviewOffset ||
-      mapentry.timelapseTextLayer.zIndex() !==
-        mll.length * 2 + 4 + overviewOffset ||
-      mapentry.interactionLayer.zIndex() !==
-        mll.length * 2 + 5 + overviewOffset ||
-      (mapentry.uiLayer &&
-        mapentry.uiLayer.zIndex() !== mll.length * 2 + 6 + overviewOffset)
-    ) {
-      if (mapentry.annotationOverviewLayer) {
-        mapentry.annotationOverviewLayer.moveToTop();
-      }
-      mapentry.workerPreviewLayer.moveToTop();
-      mapentry.annotationLayer.moveToTop();
-      mapentry.textLayer.moveToTop();
-      mapentry.timelapseLayer.moveToTop();
-      mapentry.timelapseTextLayer.moveToTop();
-      mapentry.interactionLayer.moveToTop();
-      if (mapentry.uiLayer) {
-        mapentry.uiLayer.moveToTop();
-      }
-    }
+    // Image layers, then the overlays drawn over the image (scalar maps,
+    // transcripts), then the annotation stack. New image layers are created
+    // on top, so without the overlays in this step a display layer added
+    // while an overlay is shown would cover it.
+    orderLayersAboveImages(map, [
+      mapentry.annotationOverviewLayer,
+      mapentry.workerPreviewLayer,
+      mapentry.annotationLayer,
+      mapentry.textLayer,
+      mapentry.timelapseLayer,
+      mapentry.timelapseTextLayer,
+      mapentry.interactionLayer,
+      mapentry.uiLayer,
+    ]);
     _setTileUrls(mll, mllidx, someImage, baseLayerIndex);
     baseLayerIndex += mll.length;
     map.draw();
@@ -2611,6 +2622,7 @@ defineExpose({
   overview,
   dataset,
   unrolling,
+  imageOverlaysDisabled,
   width,
   height,
   compositionMode,

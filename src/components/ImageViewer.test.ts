@@ -263,9 +263,21 @@ vi.mock("@/pipelines/computePipeline", () => ({
   NoOutput: Symbol("NoOutput"),
 }));
 
+// Only the template reads these (whether to mount each overlay).
+vi.mock("@/store/scalarMaps", () => {
+  const { reactive } = require("vue");
+  return { default: reactive({ hasMaps: false }) };
+});
+vi.mock("@/store/transcripts", () => {
+  const { reactive } = require("vue");
+  return { default: reactive({ hasTranscripts: false }) };
+});
+
 import store from "@/store";
 import sync from "@/store/sync";
 import annotationStore from "@/store/annotation";
+import scalarMapsStore from "@/store/scalarMaps";
+import transcriptsStore from "@/store/transcripts";
 import annotationListServer from "@/store/annotationListServer";
 import progressStore from "@/store/progress";
 import { ProgressType } from "@/store/model";
@@ -1408,6 +1420,54 @@ describe("ImageViewer", () => {
         false,
       );
       // Should not throw
+    });
+  });
+
+  describe("image overlays during a dataset transition", () => {
+    afterEach(() => {
+      sync.setDatasetLoading(false);
+      (scalarMapsStore as any).hasMaps = false;
+      (transcriptsStore as any).hasTranscripts = false;
+    });
+
+    function overlayDisabledProps(name: string) {
+      return wrapper
+        .findAllComponents({ name })
+        .map((overlay) => overlay.props("disabled"));
+    }
+
+    it("disables the scalar map overlay while a dataset view loads, leaving transcripts to the unroll gate", async () => {
+      (scalarMapsStore as any).hasMaps = true;
+      (transcriptsStore as any).hasTranscripts = true;
+      mockedStore.layerStackImages = [createLayerStackImage()];
+      mockedStore.maps = [
+        {
+          map: mockMap(),
+          annotationLayer: mockLayer(),
+          imageLayers: [mockLayer(), mockLayer()],
+          lowestLayer: 0,
+          params: { layer: {} },
+        } as any,
+      ];
+      sync.setDatasetLoading(false);
+      wrapper = mountComponent();
+      await nextTick();
+      expect(overlayDisabledProps("ScalarMapOverlay")).toEqual([false]);
+      expect(overlayDisabledProps("TranscriptOverlay")).toEqual([false]);
+
+      // setDatasetViewId applies the incoming location while store.dataset
+      // (and the scalar maps listed for it) is still the outgoing one.
+      sync.setDatasetLoading(true);
+      await nextTick();
+      expect(overlayDisabledProps("ScalarMapOverlay")).toEqual([true]);
+      // TranscriptOverlay applies `disabled` through its pan debounce, so it
+      // keeps master's unroll-only gate.
+      expect(overlayDisabledProps("TranscriptOverlay")).toEqual([false]);
+
+      sync.setDatasetLoading(false);
+      await nextTick();
+      expect(overlayDisabledProps("ScalarMapOverlay")).toEqual([false]);
+      expect(overlayDisabledProps("TranscriptOverlay")).toEqual([false]);
     });
   });
 

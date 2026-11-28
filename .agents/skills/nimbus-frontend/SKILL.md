@@ -184,6 +184,35 @@ Note the *array* convention differs: `annotations` is a plain reactive array of
 `markRaw`ed items (`setAnnotations` does `annotations.map(markRaw)`), so
 `markRaw` goes on the items there, not the array.
 
+### Mutation and action names are global: give them a module prefix
+
+Every store module is `@Module({ dynamic: true, store, name })` with no
+`namespaced`, so vuex-module-decorators commits and dispatches by the bare
+name, and Vuex keeps **one handler list per name across all modules**. A
+`@Mutation` or `@Action` whose name another module also declares runs in
+**both**, silently, with whatever payload the caller passed. The scalar map
+store's first `setMaps` also ran the main store's GeoJS `setMaps`, which threw
+`TypeError: maps.map is not a function` inside `index.ts`. Every list then
+"failed" in the live app, while every unit test (one module, in isolation)
+passed. The reverse commit would have wiped the scalar map list.
+
+- Name every mutation and action with a module-specific prefix
+  (`setScalarMaps`, `refreshScalarMaps`), not only the ones that collide
+  today. Generic names (`setLoading`, `setError`, `setStatus`, `reset`) are the
+  ones that collide.
+- Getters are global too: a duplicate getter keeps the first and logs
+  `[vuex] duplicate getter key`.
+- Isolated store tests cannot see this. Guard a module with a static check
+  like `src/store/__tests__/scalarMapsNameCollisions.test.ts`, and verify in
+  the live app.
+- **Known debt** (cross-firing today, not yet fixed): `setLoading` in
+  `annotationListServer`, `spatial`, `sync` and `transcripts` (each commit also
+  moves `sync`'s in-flight load counter); `setError` in `spatial` and
+  `transcripts`; `setStatus` in `toolSuggestions` and `transcripts`.
+  (`setCurrentLargeImage` is an action in `girderResources` and a mutation in
+  `index.ts`; actions and mutations are separate registries, so those two do
+  not cross-fire.)
+
 ### Store Edits Break HMR — Hard-Reload
 
 Editing any `src/store/*.ts` while `pnpm run dev` runs corrupts the store: vuex-module-decorators registers getters at import time with no HMR accept handler, so a hot re-import double-registers → `[vuex] duplicate getter key` cascade and broken state (e.g. annotations stuck at 0). **Hard-reload the page after every store-module edit** before trusting any in-browser behavior. Component `.vue` edits HMR fine — prefer putting temporary instrumentation in `.vue` files.

@@ -120,6 +120,7 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         from .server.api.zenodo import Zenodo
         from .server.api.zenodo_credentials import ZenodoCredentials
         from .server.api.shareLink import ShareLink
+        from .server.api.scalarMap import ScalarMap
 
         ModelImporter.registerModel(
             "upenn_annotation", AnnotationModel, "upenncontrast_annotation"
@@ -186,6 +187,7 @@ class UPennContrastAnnotationAPIPlugin(GirderPlugin):
         info["apiRoot"].zenodo = Zenodo()
         info["apiRoot"].zenodo_credentials = ZenodoCredentials()
         info["apiRoot"].share_link = ShareLink()
+        info["apiRoot"].scalar_map = ScalarMap()
         shareLinkGuards.bind()
         system.addSystemEndpoints(info["apiRoot"])
 

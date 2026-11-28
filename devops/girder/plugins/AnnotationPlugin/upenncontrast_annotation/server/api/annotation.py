@@ -20,6 +20,11 @@ from girder.exceptions import RestException
 from girder.models.folder import Folder
 
 from ..helpers.access_helpers import requireDatasetsAccess
+from ..helpers.constants import (
+    MAX_OVERLAY_IMAGE_EDGE,
+    MAX_OVERLAY_PYRAMID_LEVEL,
+    OVERLAY_TILE_SIZES,
+)
 from ..helpers.colormaps import (
     CATEGORICAL_PALETTE,
     CONTINUOUS_COLORMAPS,
@@ -909,14 +914,20 @@ class Annotation(Resource):
         )
 
         for field, value in (("sizeX", sizeX), ("sizeY", sizeY)):
-            if value < 1 or value > 131072:
+            if value < 1 or value > MAX_OVERLAY_IMAGE_EDGE:
                 raise RestException(
-                    "%s must be between 1 and 131072" % field, 400
+                    "%s must be between 1 and %d"
+                    % (field, MAX_OVERLAY_IMAGE_EDGE), 400
                 )
-        if tileSize not in (256, 512, 1024):
-            raise RestException("tileSize must be 256, 512, or 1024", 400)
-        if maxLevel < 0 or maxLevel > 30:
-            raise RestException("maxLevel must be between 0 and 30", 400)
+        if tileSize not in OVERLAY_TILE_SIZES:
+            raise RestException(
+                "tileSize must be one of %s" % (OVERLAY_TILE_SIZES,), 400
+            )
+        if maxLevel < 0 or maxLevel > MAX_OVERLAY_PYRAMID_LEVEL:
+            raise RestException(
+                "maxLevel must be between 0 and %d"
+                % MAX_OVERLAY_PYRAMID_LEVEL, 400
+            )
         if lineWidth < 1 or lineWidth > 10:
             raise RestException("lineWidth must be between 1 and 10", 400)
         if pointRadius < 0.5 or pointRadius > 20:
